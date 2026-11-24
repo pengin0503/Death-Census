@@ -14,7 +14,6 @@ import net.neoforged.neoforge.common.util.FakePlayer;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 
-import javax.annotation.Nullable;
 
 /** Records player deaths (server side) and keeps name/baseline state fresh. */
 public final class DeathTracker {
@@ -78,7 +77,7 @@ public final class DeathTracker {
         boolean attackerIsPlayer = attacker instanceof net.minecraft.world.entity.player.Player;
         String category = CauseClassifier.classify(causeId, attackerIsPlayer);
 
-        Entity killer = direct != null ? direct : attacker;
+        Entity killer = attacker != null ? attacker : direct;
         String killerType = "";
         String killerName = "";
         if (killer != null) {
@@ -135,10 +134,5 @@ public final class DeathTracker {
             // fall through to the message id
         }
         return "minecraft:" + source.type().msgId();
-    }
-
-    @Nullable
-    static ServerPlayer unused() {
-        return null;
     }
 }

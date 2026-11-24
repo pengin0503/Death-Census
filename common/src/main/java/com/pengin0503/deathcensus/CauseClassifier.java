@@ -45,8 +45,8 @@ public final class CauseClassifier {
             case "starve" -> "starve";
             case "in_wall", "dry_out", "cramming" -> "suffocate";
             case "cactus", "sweet_berry_bush" -> "cactus";
-            case "explosion", "player_explosion", "fireball" -> "explosion";
-            case "magic", "indirect_magic", "dragon_breath", "wither", "wither_skull" -> "magic";
+            case "explosion", "player_explosion", "fireball", "bad_respawn_point" -> "explosion";
+            case "magic", "indirect_magic", "dragon_breath", "wither", "wither_skull", "sonic_boom" -> "magic";
             case "arrow", "trident", "fireworks", "thrown", "projectile" -> "projectile";
             case "player_attack" -> attackerIsPlayer ? "player" : "mob";
             case "mob", "mob_attack", "mob_attack_no_aggro", "spit", "sting", "thorns" -> "mob";
