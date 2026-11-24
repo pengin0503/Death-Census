@@ -1,0 +1,96 @@
+package com.pengin0503.deathcensus;
+
+import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class DiscordLogicTest {
+
+    private static DeathEntry entry(String name, long epoch, long day, int survival, String cause, String msg) {
+        return new DeathEntry(
+                "u-" + name, name, epoch, day, survival + 10, survival,
+                "minecraft:overworld", 0, 64, 0,
+                cause, "minecraft:" + cause, msg,
+                "", "", "survival", 0
+        );
+    }
+
+    @Test
+    void deathContentUsesMessageOrFallback() {
+        DeathEntry withMsg = entry("Alice", 1000L, 12L, 72000 + 2400, "fall", "Alice fell from a high place");
+        assertEquals(
+                "Alice fell from a high place — Day 12 · minecraft:overworld · survived 1h 2m 0s",
+                DiscordLogic.deathContent(withMsg)
+        );
+
+        DeathEntry blankMsg = entry("Bob", 1000L, 3L, 400, "lava", "   ");
+        assertEquals(
+                "Bob died (lava) — Day 3 · minecraft:overworld · survived 20s",
+                DiscordLogic.deathContent(blankMsg)
+        );
+    }
+
+    @Test
+    void digestContentEmptyAndNonEmpty() {
+        long since = Instant.parse("2026-11-20T00:00:00Z").toEpochMilli();
+        long before = Instant.parse("2026-11-19T12:00:00Z").toEpochMilli();
+        long after1 = Instant.parse("2026-11-21T00:00:00Z").toEpochMilli();
+        long after2 = Instant.parse("2026-11-22T00:00:00Z").toEpochMilli();
+
+        PlayerDeaths onlyOld = new PlayerDeaths("u1", "Alice", false, List.of(
+                entry("Alice", before, 1L, 100, "fall", "Alice fell")
+        ));
+        assertEquals("", DiscordLogic.digestContent(List.of(onlyOld), since));
+        assertEquals("", DiscordLogic.digestContent(List.of(), since));
+
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u1", "Alice", false, List.of(
+                        entry("Alice", before, 1L, 100, "void", "old"),
+                        entry("Alice", after1, 2L, 100, "lava", "m1"),
+                        entry("Alice", after2, 3L, 200, "lava", "m2")
+                )),
+                new PlayerDeaths("u2", "Bob", false, List.of(
+                        entry("Bob", after1, 2L, 100, "fall", "m3")
+                ))
+        );
+
+        String digest = DiscordLogic.digestContent(players, since);
+        String[] lines = digest.split("\n");
+        assertEquals(3, lines.length);
+        assertEquals("Death Census digest: 3 death(s) since 2026-11-20", lines[0]);
+        assertEquals("Top causes: lava x2, fall x1", lines[1]);
+        assertEquals("Most deaths: Alice (2), Bob (1)", lines[2]);
+    }
+
+    @Test
+    void webhookUrlValidation() {
+        assertTrue(DiscordLogic.isValidWebhookUrl("https://discord.com/api/webhooks/123456/abcdef"));
+        assertTrue(DiscordLogic.isValidWebhookUrl("https://discordapp.com/api/webhooks/123456/abcdef"));
+        assertFalse(DiscordLogic.isValidWebhookUrl("https://discord.com/api/webhooks/"));
+        assertFalse(DiscordLogic.isValidWebhookUrl("https://discord.com/api/webhooks/   "));
+        assertFalse(DiscordLogic.isValidWebhookUrl("https://discord.com/api/webhooks/123 456"));
+        assertFalse(DiscordLogic.isValidWebhookUrl("http://discord.com/api/webhooks/123/abc"));
+        assertFalse(DiscordLogic.isValidWebhookUrl("https://example.com/api/webhooks/123/abc"));
+        assertFalse(DiscordLogic.isValidWebhookUrl(null));
+    }
+
+    @Test
+    void resolveWebhookUrlHandlesPlainAndEnv() {
+        assertEquals("", DiscordLogic.resolveWebhookUrl(null));
+        assertEquals("", DiscordLogic.resolveWebhookUrl("   "));
+        assertEquals(
+                "https://discord.com/api/webhooks/1/a",
+                DiscordLogic.resolveWebhookUrl("  https://discord.com/api/webhooks/1/a  ")
+        );
+        assertEquals(
+                "",
+                DiscordLogic.resolveWebhookUrl("env:DEATH_CHRONICLE_DEFINITELY_UNSET_VAR_987654321")
+        );
+        assertEquals("", DiscordLogic.resolveWebhookUrl("env:"));
+    }
+}

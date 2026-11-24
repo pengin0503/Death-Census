@@ -1,4 +1,4 @@
-# Death Chronicle — Design (v1.0.0)
+# Death Census — Design (v1.0.0)
 
 Status: approved by pen 2026-11-24 (design outline reported in the implementation
 chat and accepted with "proceed with that"). This document is the specification
@@ -9,7 +9,7 @@ document wins for implementation details; the README wins for positioning.
 
 - Server-side only NeoForge mod. Vanilla clients can join; nothing is required
   on the client. No custom GUI screens in 1.0.0 — everything is chat output.
-- The differentiator is the **server-wide permanent chronicle plus analytics**:
+- The differentiator is the **server-wide permanent census plus analytics**:
   every death of every player, death-cause statistics, leaderboards, Discord
   sharing and HTML/JSON/CSV exports. Existing mods are personal/client-side
   (DeathLog, Fabric/Quilt, ~720k DL) or minimal (Server Death Logger,
@@ -62,7 +62,7 @@ document wins for implementation details; the README wins for positioning.
 | gameMode | String | `survival` / `adventure` / `creative` / `spectator` |
 | experienceLevel | int | XP level at death |
 
-### 3.2 Per-player state (`PlayerChronicle`, version storage)
+### 3.2 Per-player state (`PlayerCensus`, version storage)
 
 - `lastKnownName` (updated on login and on death)
 - `optOutPublic` boolean (privacy, §8; default false)
@@ -73,8 +73,8 @@ document wins for implementation details; the README wins for positioning.
 
 ### 3.3 Storage
 
-- Per-world `SavedData` named for this mod (`deathchronicle_data` on 1.21.1;
-  a `SavedDataType` with ID `deathchronicle:deaths` on 26.x), stored on the
+- Per-world `SavedData` named for this mod (`deathcensus_data` on 1.21.1;
+  a `SavedDataType` with ID `deathcensus:deaths` on 26.x), stored on the
   overworld data storage so it is per world / per server and survives restarts.
 - Plus one server-level value: `lastDigestEpochMillis` (Discord digest, §7).
 - **Limits and generations:** config `maxRecordsPerPlayer` (default 10000,
@@ -109,7 +109,7 @@ Recording hook: server-side `LivingDeathEvent` for `ServerPlayer`
 (verify the exact event class per version — in 26.x it may be a player
 death event; the version code isolates this). Skip fake players. Record in
 all game modes (creative/spectator deaths are rare but real deaths count;
-this is a chronicle, not a progression tracker — a config switch
+this is a census, not a progression tracker — a config switch
 `recordCreativeDeaths` default true allows turning creative off).
 
 Also on death: update `lastDeathPlayTicks`, `lastKnownName`, mark dirty,
@@ -128,7 +128,7 @@ broadcast by default (the vanilla death message already broadcasts).
 
 ## 6. Commands
 
-Root: `/deathchronicle`, alias `/dc` (two root literals registering the same
+Root: `/deathcensus`, alias `/dc` (two root literals registering the same
 tree). All output is chat text built with the server-language helper (bundled
 en/ja fallbacks so vanilla clients see real text, like IML's ServerLang).
 Page size 10 everywhere.
@@ -157,9 +157,9 @@ Page size 10 everywhere.
 
 - `/dc lookup <player> [page]` — like history but ignores opt-out
 - `/dc export html|json|csv [player]` — write an export file (§7.2) under
-  `<world>/deathchronicle/exports/` (or for one player) and report the path
+  `<world>/deathcensus/exports/` (or for one player) and report the path
 - `/dc backup` — write a timestamped backup copy of the current data file
-  to `<world>/deathchronicle/backups/` (generations kept: config,
+  to `<world>/deathcensus/backups/` (generations kept: config,
   default 5) and report the path
 - `/dc discordtest` — send a test Discord message if a webhook is set
 - `/dc reload` — re-read config-dependent state (digest schedule) and confirm
@@ -167,7 +167,7 @@ Page size 10 everywhere.
 ### 6.3 Not in 1.0.0
 
 No record deletion/reset commands, no editing of records, no GUI, no
-in-mod HTTP API. (Keeps the chronicle trustworthy and the scope shippable.)
+in-mod HTTP API. (Keeps the census trustworthy and the scope shippable.)
 
 ## 7. Discord and exports
 
@@ -200,7 +200,7 @@ in-mod HTTP API. (Keeps the chronicle trustworthy and the scope shippable.)
   optOutPublic, deaths: [DeathEntry...]}]}` with proper JSON escaping.
 - **CSV**: one row per death, header row, RFC-4180 quoting:
   `player_uuid,player_name,epoch_millis,datetime_iso,game_day,play_ticks,survival_ticks,dimension,x,y,z,cause_category,cause_id,killer_type,killer_name,game_mode,experience_level,death_message`.
-- File names: `deathchronicle-<yyyyMMdd-HHmmss>.<ext>` (plus `-<player>`
+- File names: `deathcensus-<yyyyMMdd-HHmmss>.<ext>` (plus `-<player>`
   for single-player exports), sanitized player names.
 
 ## 8. Privacy
