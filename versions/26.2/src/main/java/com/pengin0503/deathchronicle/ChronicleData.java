@@ -1,6 +1,11 @@
 package com.pengin0503.deathchronicle;
 
+import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.DataResult;
+import com.mojang.serialization.DynamicOps;
+import com.mojang.serialization.MapLike;
+import com.mojang.serialization.RecordBuilder;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
@@ -34,25 +39,69 @@ public class ChronicleData extends SavedData {
         public int lastDeathPlayTicks = -1;
     }
 
-    private static final Codec<DeathEntry> ENTRY_CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            Codec.STRING.fieldOf("playerUuid").forGetter(DeathEntry::playerUuid),
-            Codec.STRING.optionalFieldOf("playerName", "").forGetter(DeathEntry::playerName),
-            Codec.LONG.fieldOf("epochMillis").forGetter(DeathEntry::epochMillis),
-            Codec.LONG.optionalFieldOf("gameDay", 0L).forGetter(DeathEntry::gameDay),
-            Codec.INT.fieldOf("playTicks").forGetter(DeathEntry::playTicks),
-            Codec.INT.optionalFieldOf("survivalTicks", 0).forGetter(DeathEntry::survivalTicks),
-            Codec.STRING.optionalFieldOf("dimension", "").forGetter(DeathEntry::dimension),
-            Codec.DOUBLE.optionalFieldOf("x", 0.0).forGetter(DeathEntry::x),
-            Codec.DOUBLE.optionalFieldOf("y", 0.0).forGetter(DeathEntry::y),
-            Codec.DOUBLE.optionalFieldOf("z", 0.0).forGetter(DeathEntry::z),
-            Codec.STRING.optionalFieldOf("causeCategory", "other").forGetter(DeathEntry::causeCategory),
-            Codec.STRING.optionalFieldOf("causeId", "").forGetter(DeathEntry::causeId),
-            Codec.STRING.optionalFieldOf("deathMessage", "").forGetter(DeathEntry::deathMessage),
-            Codec.STRING.optionalFieldOf("killerType", "").forGetter(DeathEntry::killerType),
-            Codec.STRING.optionalFieldOf("killerName", "").forGetter(DeathEntry::killerName),
-            Codec.STRING.optionalFieldOf("gameMode", "").forGetter(DeathEntry::gameMode),
-            Codec.INT.optionalFieldOf("experienceLevel", 0).forGetter(DeathEntry::experienceLevel)
-    ).apply(instance, DeathEntry::new));
+    // DeathEntry has 17 components, more than RecordCodecBuilder's 16-field
+    // group limit, so its codec is written manually.
+    private static final Codec<DeathEntry> ENTRY_CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<T> encode(DeathEntry e, DynamicOps<T> ops, T prefix) {
+            RecordBuilder<T> b = ops.mapBuilder();
+            b.add("playerUuid", ops.createString(e.playerUuid()));
+            b.add("playerName", ops.createString(e.playerName()));
+            b.add("epochMillis", ops.createLong(e.epochMillis()));
+            b.add("gameDay", ops.createLong(e.gameDay()));
+            b.add("playTicks", ops.createInt(e.playTicks()));
+            b.add("survivalTicks", ops.createInt(e.survivalTicks()));
+            b.add("dimension", ops.createString(e.dimension()));
+            b.add("x", ops.createDouble(e.x()));
+            b.add("y", ops.createDouble(e.y()));
+            b.add("z", ops.createDouble(e.z()));
+            b.add("causeCategory", ops.createString(e.causeCategory()));
+            b.add("causeId", ops.createString(e.causeId()));
+            b.add("deathMessage", ops.createString(e.deathMessage()));
+            b.add("killerType", ops.createString(e.killerType()));
+            b.add("killerName", ops.createString(e.killerName()));
+            b.add("gameMode", ops.createString(e.gameMode()));
+            b.add("experienceLevel", ops.createInt(e.experienceLevel()));
+            return b.build(prefix);
+        }
+
+        @Override
+        public <T> DataResult<Pair<DeathEntry, T>> decode(DynamicOps<T> ops, T input) {
+            return ops.getMap(input).map(map -> Pair.of(new DeathEntry(
+                    str(ops, map, "playerUuid"),
+                    str(ops, map, "playerName"),
+                    lng(ops, map, "epochMillis"),
+                    lng(ops, map, "gameDay"),
+                    (int) lng(ops, map, "playTicks"),
+                    (int) lng(ops, map, "survivalTicks"),
+                    str(ops, map, "dimension"),
+                    dbl(ops, map, "x"),
+                    dbl(ops, map, "y"),
+                    dbl(ops, map, "z"),
+                    str(ops, map, "causeCategory"),
+                    str(ops, map, "causeId"),
+                    str(ops, map, "deathMessage"),
+                    str(ops, map, "killerType"),
+                    str(ops, map, "killerName"),
+                    str(ops, map, "gameMode"),
+                    (int) lng(ops, map, "experienceLevel")), input));
+        }
+
+        private <T> String str(DynamicOps<T> ops, MapLike<T> map, String key) {
+            T v = map.get(key);
+            return v == null ? "" : ops.getStringValue(v).result().orElse("");
+        }
+
+        private <T> long lng(DynamicOps<T> ops, MapLike<T> map, String key) {
+            T v = map.get(key);
+            return v == null ? 0L : ops.getNumberValue(v).result().map(Number::longValue).orElse(0L);
+        }
+
+        private <T> double dbl(DynamicOps<T> ops, MapLike<T> map, String key) {
+            T v = map.get(key);
+            return v == null ? 0.0 : ops.getNumberValue(v).result().map(Number::doubleValue).orElse(0.0);
+        }
+    };
 
     private static PlayerChronicle playerFromCodec(String name, boolean optOut, int baseline, int lastDeath,
                                                      List<DeathEntry> deaths) {
