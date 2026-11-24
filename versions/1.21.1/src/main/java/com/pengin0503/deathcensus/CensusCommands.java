@@ -298,7 +298,9 @@ public final class CensusCommands {
         if (server == null) {
             return 0;
         }
-        List<PlayerDeaths> all = CensusData.get(server).snapshot();
+        List<PlayerDeaths> all = CensusData.get(server).snapshot().stream()
+                .filter(p -> !p.optOutPublic())
+                .toList();
         int total = CensusStats.totalDeaths(all);
         send(ctx, "command.deathcensus.server_stats.header");
         send(ctx, "command.deathcensus.stats.deaths", total);

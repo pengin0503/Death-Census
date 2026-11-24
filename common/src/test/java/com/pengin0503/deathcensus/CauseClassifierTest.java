@@ -33,6 +33,8 @@ class CauseClassifierTest {
         assertEquals("magic", CauseClassifier.classify("dragon_breath", false));
         assertEquals("magic", CauseClassifier.classify("wither", false));
         assertEquals("magic", CauseClassifier.classify("wither_skull", false));
+        assertEquals("magic", CauseClassifier.classify("minecraft:sonic_boom", false));
+        assertEquals("explosion", CauseClassifier.classify("minecraft:bad_respawn_point", false));
         assertEquals("projectile", CauseClassifier.classify("minecraft:arrow", false));
         assertEquals("projectile", CauseClassifier.classify("trident", false));
         assertEquals("projectile", CauseClassifier.classify("fireworks", false));

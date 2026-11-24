@@ -29,6 +29,12 @@ public final class TextEscaping {
         if (s == null || s.isEmpty()) {
             return "";
         }
+        // Spreadsheet formula-injection guard: a field a spreadsheet would
+        // parse as a formula gets a leading apostrophe so it stays text.
+        // Plain negative numbers (e.g. coordinates) are left untouched.
+        if (startsWithFormulaTrigger(s)) {
+            s = "'" + s;
+        }
         boolean needsQuotes = false;
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
@@ -52,6 +58,25 @@ public final class TextEscaping {
         }
         sb.append('"');
         return sb.toString();
+    }
+
+    private static boolean startsWithFormulaTrigger(String s) {
+        int i = 0;
+        while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t')) {
+            i++;
+        }
+        if (i >= s.length()) {
+            return false;
+        }
+        char c = s.charAt(i);
+        if (c == '=' || c == '+' || c == '@') {
+            return true;
+        }
+        if (c == '-') {
+            return i + 1 >= s.length()
+                    || !(Character.isDigit(s.charAt(i + 1)) || s.charAt(i + 1) == '.');
+        }
+        return false;
     }
 
     public static String jsonString(String s) {
