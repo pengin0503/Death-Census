@@ -10,8 +10,8 @@ timelines, server-wide leaderboards, and cause-of-death statistics.
 It runs **entirely on the server**. Players join with a plain vanilla
 client; nothing needs to be installed on the client side.
 
-> **Status: in development.** This repository currently holds the project
-> concept and design. No downloadable release is available yet.
+> **Status: 1.0.0.** See [CHANGELOG.md](CHANGELOG.md) for the release notes
+> and [docs/DESIGN.md](docs/DESIGN.md) for the design.
 
 ## Why another death log?
 
@@ -30,7 +30,7 @@ Fabric/Quilt only. Death Chronicle takes the opposite angle:
   series, following the same multi-version approach as
   [Item Milestone Log](https://github.com/pengin0503/Item-Milestone-Log).
 
-## Planned features
+## Features
 
 - Permanent per-player death history: cause (death message), dimension,
   coordinates, in-game day, real date/time, and playtime at death
@@ -43,7 +43,7 @@ Fabric/Quilt only. Death Chronicle takes the opposite angle:
 - Admin tools: lookup any player's history, data backup and restore
 - English and Japanese localization
 
-## Planned targets
+## Targets
 
 - Minecraft **1.21.1** and **26.x** (NeoForge), server-side only
 - Vanilla clients can join servers running Death Chronicle
