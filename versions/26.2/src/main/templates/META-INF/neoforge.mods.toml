@@ -1,0 +1,34 @@
+license="${mod_license}"
+issueTrackerURL="https://github.com/pengin0503/Death-Chronicle/issues"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+updateJSONURL="https://raw.githubusercontent.com/pengin0503/Death-Chronicle/main/docs/updates.json"
+displayTest="IGNORE_ALL_VERSION"
+displayURL="https://github.com/pengin0503/Death-Chronicle"
+logoFile="logo.png"
+logoBlur=false
+authors="pengin0503"
+description='''
+Records every player death on the server - cause, place, in-game day, real
+date and survival time - as a permanent server-wide chronicle, with personal
+timelines, death-cause statistics and leaderboards via /deathchronicle (or
+/dc), Discord notifications and HTML/JSON/CSV exports. Server-side only:
+vanilla clients can join.
+'''
+
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="${neo_version_range}"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"

@@ -1,0 +1,150 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build MC ${{ matrix.mc }} / NeoForge ${{ matrix.neo }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SAVES_NEOFORM_CACHE: ${{ matrix.neo == 'latest' && github.ref == 'refs/heads/main' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        mc: ['1.21.1', '26.1.2', '26.2', '26.3']
+        neo: [min, latest]
+        include:
+          - mc: '1.21.1'
+            java: '21'
+          - mc: '26.1.2'
+            java: '25'
+          - mc: '26.2'
+            java: '25'
+          - mc: '26.3'
+            java: '25'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          gradle-home-cache-excludes: caches/neoformruntime
+
+      - name: Restore the NeoForm cache
+        id: neoform
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-${{ hashFiles(format('versions/{0}/gradle.properties', matrix.mc), format('versions/{0}/*.gradle', matrix.mc)) }}
+          restore-keys: neoform-v1-${{ runner.os }}-${{ matrix.mc }}-
+
+      - name: Select NeoForge version
+        id: neo
+        run: .github/scripts/neoforge-version.sh ${{ matrix.mc }} ${{ matrix.neo }}
+
+      - name: Mark the start of the build
+        run: touch "$RUNNER_TEMP/build-start"
+
+      - name: Build and run unit tests
+        run: ./gradlew -p versions/${{ matrix.mc }} build -Pneo_version=${{ steps.neo.outputs.version }} --console=plain
+
+      - name: Build the release jar against the minimum NeoForge
+        if: matrix.neo == 'latest'
+        run: ./gradlew -p versions/${{ matrix.mc }} jar -Pneo_version=${{ steps.neo.outputs.min }} --console=plain
+
+      - name: Check the jar contents
+        run: .github/scripts/verify-jar.sh ${{ matrix.mc }}
+
+      - name: Delete the NeoForm results that the build did not use
+        if: env.SAVES_NEOFORM_CACHE == 'true' && steps.neoform.outputs.cache-hit != 'true'
+        run: .github/scripts/prune-neoform-cache.sh "$RUNNER_TEMP/build-start"
+
+      - name: Save the NeoForm cache
+        if: env.SAVES_NEOFORM_CACHE == 'true' && steps.neoform.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.gradle/caches/neoformruntime
+          key: ${{ steps.neoform.outputs.cache-primary-key }}
+
+      - name: Upload release jar
+        if: matrix.neo == 'min'
+        uses: actions/upload-artifact@v6
+        with:
+          name: deathchronicle-${{ matrix.mc }}
+          path: versions/${{ matrix.mc }}/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: unit-test-reports-${{ matrix.mc }}-${{ matrix.neo }}
+          path: versions/${{ matrix.mc }}/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
+    name: Publish the GitHub Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download the release jars
+        uses: actions/download-artifact@v7
+        with:
+          pattern: deathchronicle-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          count=$(ls dist/*.jar | wc -l)
+          if [ "$count" -ne 4 ]; then
+            echo "::error::Expected 4 jars, found $count"
+            exit 1
+          fi
+          version="${TAG#v}"
+          awk -v ver="$version" '
+            $0 ~ "^## " ver "([ ]|$)" { capture=1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for version $version"
+            exit 1
+          fi
+          gh release create "$TAG" dist/*.jar --verify-tag \
+            --title "Death Chronicle ${TAG#v}" --notes-file release-notes.md
