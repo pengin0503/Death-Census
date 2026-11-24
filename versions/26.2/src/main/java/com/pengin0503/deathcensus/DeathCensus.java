@@ -5,7 +5,10 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -31,6 +34,7 @@ public class DeathCensus {
         NeoForge.EVENT_BUS.addListener(DeathCensus::onServerTick);
         NeoForge.EVENT_BUS.addListener(DeathCensus::onServerStopping);
         NeoForge.EVENT_BUS.addListener(DeathCensus::onServerStopped);
+        NeoForge.EVENT_BUS.addListener(DeathCensus::onLevelSave);
 
         LOGGER.info("Death Census loaded");
     }
@@ -50,5 +54,11 @@ public class DeathCensus {
 
     private static void onServerStopped(ServerStoppedEvent event) {
         DiscordNotifier.resetDigestThrottler();
+    }
+
+    private static void onLevelSave(LevelEvent.Save event) {
+        if (event.getLevel() instanceof ServerLevel level && level.dimension() == Level.OVERWORLD) {
+            CensusExport.autoBackupOnWorldSave(level.getServer());
+        }
     }
 }

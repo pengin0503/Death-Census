@@ -9,6 +9,7 @@ import net.minecraft.stats.Stats;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.GameType;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.util.FakePlayer;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
@@ -53,7 +54,9 @@ public final class DeathTracker {
         }
     }
 
-    @SubscribeEvent
+    // LOWEST so a death cancelled by another mod (revive/second-chance) is never
+    // delivered here (cancelled events skip non-receiveCanceled listeners).
+    @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onLivingDeath(LivingDeathEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player) || player instanceof FakePlayer) {
             return;
@@ -94,7 +97,8 @@ public final class DeathTracker {
         CensusData.PlayerCensus pc = data.player(player.getUUID());
         int playTicks = currentPlayTicks(player);
         if (pc.baselinePlayTicks < 0) {
-            pc.baselinePlayTicks = 0;
+            // Baseline unknown (e.g. record restored while online): count survival from now, never inflate it.
+            pc.baselinePlayTicks = playTicks;
         }
         int survival = CensusLogic.survivalTicks(playTicks, pc.lastDeathPlayTicks, pc.baselinePlayTicks);
 

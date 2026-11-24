@@ -24,13 +24,13 @@ class DiscordLogicTest {
     void deathContentUsesMessageOrFallback() {
         DeathEntry withMsg = entry("Alice", 1000L, 12L, 72000 + 2400, "fall", "Alice fell from a high place");
         assertEquals(
-                "Alice fell from a high place — Day 12 · minecraft:overworld · survived 1h 2m 0s",
+                "Alice fell from a high place — Day 13 · minecraft:overworld · survived 1h 2m 0s",
                 DiscordLogic.deathContent(withMsg)
         );
 
         DeathEntry blankMsg = entry("Bob", 1000L, 3L, 400, "lava", "   ");
         assertEquals(
-                "Bob died (lava) — Day 3 · minecraft:overworld · survived 20s",
+                "Bob died (lava) — Day 4 · minecraft:overworld · survived 20s",
                 DiscordLogic.deathContent(blankMsg)
         );
     }

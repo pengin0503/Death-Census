@@ -298,13 +298,13 @@ public final class CensusCommands {
         if (server == null) {
             return 0;
         }
-        List<PlayerDeaths> all = CensusData.get(server).snapshot().stream()
-                .filter(p -> !p.optOutPublic())
-                .toList();
+        // DESIGN §8: opted-out players are hidden from rankings, but their deaths
+        // still count in the anonymous server totals.
+        List<PlayerDeaths> all = CensusData.get(server).snapshot();
         int total = CensusStats.totalDeaths(all);
         send(ctx, "command.deathcensus.server_stats.header");
         send(ctx, "command.deathcensus.stats.deaths", total);
-        for (Map.Entry<String, Integer> e : CensusStats.causeCounts(all, false)) {
+        for (Map.Entry<String, Integer> e : CensusStats.causeCounts(all, true)) {
             int pct = total > 0 ? (int) Math.round(100.0 * e.getValue() / total) : 0;
             sendLiteral(ctx, "· " + e.getKey() + ": " + e.getValue() + " (" + pct + "%)");
         }
@@ -312,7 +312,7 @@ public final class CensusCommands {
         if (!board.isEmpty()) {
             send(ctx, "command.deathcensus.server_stats.top_player", board.get(0).name(), board.get(0).deaths());
         }
-        CensusStats.rarestCause(all, false)
+        CensusStats.rarestCause(all, true)
                 .ifPresent(cause -> send(ctx, "command.deathcensus.server_stats.rarest", cause));
         return 1;
     }
@@ -354,17 +354,45 @@ public final class CensusCommands {
                 }
             }
             case "rarest" -> {
-                java.util.Optional<String> rarest = CensusStats.rarestCause(all, false);
+                // DESIGN §6.1: the rarest cause is determined over all deaths
+                // (anonymous total); public players are ranked by how many
+                // deaths of that cause they have.
+                java.util.Optional<String> rarest = CensusStats.rarestCause(all, true);
                 if (rarest.isEmpty()) {
                     send(ctx, "command.deathcensus.leaderboard.empty");
                     return 0;
                 }
-                send(ctx, "command.deathcensus.leaderboard.rarest_cause", rarest.get());
-                List<DeathEntry> entries = CensusStats.deathsWithCause(all, rarest.get(), false);
-                Pagination.Page<DeathEntry> p = Pagination.of(entries, page, PAGE_SIZE);
-                for (DeathEntry e : p.items()) {
-                    sendLiteral(ctx, "· " + e.playerName() + " — Day " + (e.gameDay() + 1)
-                            + " · " + TimeFormat.formatDateTime(e.epochMillis(), Config.displayTimeZone()));
+                String cause = rarest.get();
+                send(ctx, "command.deathcensus.leaderboard.rarest_cause", cause);
+                List<Map.Entry<String, Integer>> ranked = new ArrayList<>();
+                for (PlayerDeaths pd : all) {
+                    if (pd.optOutPublic()) {
+                        continue;
+                    }
+                    int count = 0;
+                    for (DeathEntry e : pd.deaths()) {
+                        if (cause.equals(e.causeCategory())) {
+                            count++;
+                        }
+                    }
+                    if (count > 0) {
+                        ranked.add(Map.entry(pd.name(), count));
+                    }
+                }
+                ranked.sort(java.util.Comparator.<Map.Entry<String, Integer>>comparingInt(Map.Entry::getValue)
+                        .reversed()
+                        .thenComparing(Map.Entry::getKey, String.CASE_INSENSITIVE_ORDER));
+                Pagination.Page<Map.Entry<String, Integer>> p = Pagination.of(ranked, page, PAGE_SIZE);
+                if (p.total() == 0) {
+                    send(ctx, "command.deathcensus.leaderboard.empty");
+                    return 0;
+                }
+                int rank = (p.page() - 1) * PAGE_SIZE;
+                for (Map.Entry<String, Integer> e : p.items()) {
+                    sendLiteral(ctx, (++rank) + ". " + e.getKey() + " — " + e.getValue());
+                }
+                if (p.pageCount() > 1) {
+                    send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
                 }
             }
             default -> {
