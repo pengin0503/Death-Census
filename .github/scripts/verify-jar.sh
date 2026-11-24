@@ -10,7 +10,7 @@ LIBS="$ROOT/versions/$MC/build/libs"
 
 shopt -s nullglob
 jars=()
-for f in "$LIBS"/deathchronicle-neoforge-"$MC"-*.jar; do
+for f in "$LIBS"/deathcensus-neoforge-"$MC"-*.jar; do
   case "$f" in *-sources.jar|*-javadoc.jar) ;; *) jars+=("$f") ;; esac
 done
 if [ "${#jars[@]}" -ne 1 ]; then
@@ -35,19 +35,19 @@ expect_toml() {
 
 expect_file META-INF/neoforge.mods.toml
 expect_file logo.png
-expect_file assets/deathchronicle/lang/en_us.json
-expect_file assets/deathchronicle/lang/ja_jp.json
-expect_file com/pengin0503/deathchronicle/DeathChronicle.class
-expect_file com/pengin0503/deathchronicle/ServerLang.class
-expect_file com/pengin0503/deathchronicle/ChronicleData.class
+expect_file assets/deathcensus/lang/en_us.json
+expect_file assets/deathcensus/lang/ja_jp.json
+expect_file com/pengin0503/deathcensus/DeathCensus.class
+expect_file com/pengin0503/deathcensus/ServerLang.class
+expect_file com/pengin0503/deathcensus/CensusData.class
 
-expect_toml 'modId="deathchronicle"'
+expect_toml 'modId="deathcensus"'
 expect_toml "version=\"$(prop mod_version)\""
 expect_toml 'logoFile="logo.png"'
 expect_toml "versionRange=\"$(prop neo_version_range)\""
 expect_toml "versionRange=\"$(prop minecraft_version_range)\""
 expect_toml 'displayTest="IGNORE_ALL_VERSION"'
-expect_toml 'updateJSONURL="https://raw.githubusercontent.com/pengin0503/Death-Chronicle/main/docs/updates.json"'
+expect_toml 'updateJSONURL="https://raw.githubusercontent.com/pengin0503/Death-Census/main/docs/updates.json"'
 
 if grep -q '\${' <<< "$toml"; then
   echo "  FAIL  unexpanded \${...} placeholders in mods.toml"

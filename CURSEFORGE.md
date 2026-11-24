@@ -1,8 +1,8 @@
-# Death Chronicle
+# Death Census
 
 **Server-side death records, cause statistics and leaderboards for NeoForge.**
 
-Death Chronicle records every player death on your server — the cause, the
+Death Census records every player death on your server — the cause, the
 place, the moment, and how long the player had survived — and turns that
 history into something the whole community can enjoy: personal death
 timelines, server-wide leaderboards, and cause-of-death statistics.
@@ -17,7 +17,7 @@ client; nothing needs to be installed on the client side.
   survival time since the previous death
 - **Leaderboards**: most deaths, longest survival, fastest death, rarest cause
 - **Cause-of-death statistics** for the whole server (`/dc stats server`)
-- **Personal commands** to browse your own chronicle and compare with others
+- **Personal commands** to browse your own census and compare with others
 - **Discord webhook notifications** for each death, plus an optional
   periodic digest
 - **Exports**: standalone HTML summary (no JavaScript), JSON and CSV
@@ -27,7 +27,7 @@ client; nothing needs to be installed on the client side.
 
 ## Commands
 
-All commands work under `/deathchronicle` and the short alias `/dc`.
+All commands work under `/deathcensus` and the short alias `/dc`.
 
 | Command | Description |
 |---|---|
@@ -44,7 +44,7 @@ All commands work under `/deathchronicle` and the short alias `/dc`.
 
 ## Configuration
 
-The server config (`deathchronicle-server.toml` / common config depending on
+The server config (`deathcensus-server.toml` / common config depending on
 version) lets you toggle recording, cap the records kept per player
 (default 10,000), set the Discord webhook URL and digest interval, choose
 the display timezone, and control whether opted-out players appear in
@@ -59,7 +59,7 @@ vanilla clients can join.
 
 ---
 
-# Death Chronicle（日本語）
+# Death Census（日本語）
 
 **サーバー側のみで動く、NeoForge 向け死亡記録・死因統計・ランキング Mod です。**
 
@@ -83,4 +83,4 @@ vanilla clients can join.
 - 英語・日本語対応
 
 対象は NeoForge の Minecraft **1.21.1 / 26.1.2 / 26.2 / 26.3** です。
-コマンドは `/deathchronicle`（短縮形 `/dc`）です。
+コマンドは `/deathcensus`（短縮形 `/dc`）です。

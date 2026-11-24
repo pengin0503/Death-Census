@@ -92,7 +92,7 @@ jobs:
         if: matrix.neo == 'min'
         uses: actions/upload-artifact@v6
         with:
-          name: deathchronicle-${{ matrix.mc }}
+          name: deathcensus-${{ matrix.mc }}
           path: versions/${{ matrix.mc }}/build/libs/*.jar
           if-no-files-found: error
 
@@ -120,7 +120,7 @@ jobs:
       - name: Download the release jars
         uses: actions/download-artifact@v7
         with:
-          pattern: deathchronicle-*
+          pattern: deathcensus-*
           merge-multiple: true
           path: dist
 
@@ -147,4 +147,4 @@ jobs:
             exit 1
           fi
           gh release create "$TAG" dist/*.jar --verify-tag \
-            --title "Death Chronicle ${TAG#v}" --notes-file release-notes.md
+            --title "Death Census ${TAG#v}" --notes-file release-notes.md

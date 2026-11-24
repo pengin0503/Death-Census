@@ -163,7 +163,7 @@ dependencies {
 tasks.named('test', Test) {
     useJUnitPlatform()
     // Lets ServerLangTest check that every message key used in the code has an English text.
-    systemProperty 'deathchronicle.mainSourceDir', file('src/main/java').absolutePath
+    systemProperty 'deathcensus.mainSourceDir', file('src/main/java').absolutePath
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.

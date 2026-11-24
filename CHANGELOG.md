@@ -2,12 +2,12 @@
 
 ## 1.0.0
 
-First release of Death Chronicle.
+First release of Death Census.
 
 - Records every player death on the server: cause (death message), dimension,
   coordinates, in-game day, real date/time, playtime at death and survival time
   since the previous death
-- Personal death history and statistics with /deathchronicle (alias /dc)
+- Personal death history and statistics with /deathcensus (alias /dc)
 - Server-wide death-cause statistics and leaderboards: most deaths, longest
   survival, fastest death, rarest cause
 - Discord webhook notifications for each death and an optional periodic digest
