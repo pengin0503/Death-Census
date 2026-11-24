@@ -217,7 +217,7 @@ public final class ExportRenderers {
                 sb.append("<tr><td>")
                         .append(TextEscaping.html(TimeFormat.formatDateTime(d.epochMillis(), zone)))
                         .append("</td><td>")
-                        .append(d.gameDay())
+                        .append(d.gameDay() + 1)
                         .append("</td><td>")
                         .append(TextEscaping.html(d.dimension()))
                         .append("</td><td>")

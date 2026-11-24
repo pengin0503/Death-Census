@@ -52,12 +52,20 @@ class CauseClassifierTest {
         assertEquals("generic", CauseClassifier.classify("falling_block", false));
         assertEquals("generic", CauseClassifier.classify("falling_stalactite", false));
         assertEquals("generic", CauseClassifier.classify("stalagmite", false));
+        assertEquals("projectile", CauseClassifier.classify("minecraft:mob_projectile", false));
+        assertEquals("generic", CauseClassifier.classify("minecraft:falling_anvil", false));
+        assertEquals("projectile", CauseClassifier.classify("minecraft:wind_charge", false));
+        assertEquals("fire", CauseClassifier.classify("minecraft:campfire", false));
+        assertEquals("explosion", CauseClassifier.classify("minecraft:unattributed_fireball", false));
+        assertEquals("generic", CauseClassifier.classify("minecraft:outside_border", false));
     }
 
     @Test
     void playerAttackAndMobPlayerPromotion() {
         assertEquals("player", CauseClassifier.classify("minecraft:player_attack", true));
         assertEquals("mob", CauseClassifier.classify("minecraft:player_attack", false));
+        assertEquals("player", CauseClassifier.classify("minecraft:mace_smash", true));
+        assertEquals("mob", CauseClassifier.classify("minecraft:mace_smash", false));
         assertEquals("player", CauseClassifier.classify("minecraft:mob", true));
         assertEquals("mob", CauseClassifier.classify("minecraft:mob", false));
         assertEquals("player", CauseClassifier.classify("minecraft:thorns", true));

@@ -85,6 +85,10 @@ document wins for implementation details; the README wins for positioning.
   reset commands.
 - Malformed stored entries are skipped with a warning, never fail the whole
   load (same policy as IML's SavedData loaders).
+- **Formats are not interchangeable across versions:** 1.21.1 stores NBT
+  written by hand, 26.x stores Codec-serialized data. Moving a world between
+  1.21.1 and 26.x does not carry the census over; run `/dc backup` before the
+  move and `/dc restore <file>` after it (the JSON backup is version-neutral).
 
 ## 4. Cause classification
 
@@ -161,6 +165,9 @@ Page size 10 everywhere.
 - `/dc backup` — write a timestamped backup copy of the current data file
   to `<world>/deathcensus/backups/` (generations kept: config,
   default 5) and report the path
+- `/dc restore <file>` — replace the current data with a backup file from
+  `<world>/deathcensus/backups/` (a safety backup of the current data is
+  written first) and report the number of restored death records
 - `/dc discordtest` — send a test Discord message if a webhook is set
 - `/dc reload` — re-read config-dependent state (digest schedule) and confirm
 

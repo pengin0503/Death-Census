@@ -35,6 +35,8 @@ class TextEscapingTest {
         assertEquals("'@SUM(A1:A10)", TextEscaping.csvField("@SUM(A1:A10)"));
         assertEquals("'-abc", TextEscaping.csvField("-abc"));
         assertEquals("' =x", TextEscaping.csvField(" =x"));
+        assertEquals("'-1+1", TextEscaping.csvField("-1+1"));
+        assertEquals("'+2+2", TextEscaping.csvField("+2+2"));
         // Plain negative numbers (coordinates etc.) are not formulas.
         assertEquals("-123.4", TextEscaping.csvField("-123.4"));
         assertEquals("-5", TextEscaping.csvField("-5"));

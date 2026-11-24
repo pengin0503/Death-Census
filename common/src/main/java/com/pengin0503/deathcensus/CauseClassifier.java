@@ -38,20 +38,23 @@ public final class CauseClassifier {
         String result = switch (path) {
             case "fall", "fly_into_wall" -> "fall";
             case "drown" -> "drown";
-            case "in_fire", "on_fire", "hot_floor" -> "fire";
+            case "in_fire", "on_fire", "hot_floor", "campfire" -> "fire";
             case "lava" -> "lava";
             case "lightning_bolt" -> "lightning";
             case "freeze" -> "freeze";
             case "starve" -> "starve";
             case "in_wall", "dry_out", "cramming" -> "suffocate";
             case "cactus", "sweet_berry_bush" -> "cactus";
-            case "explosion", "player_explosion", "fireball", "bad_respawn_point" -> "explosion";
+            case "explosion", "player_explosion", "fireball", "bad_respawn_point",
+                 "unattributed_fireball" -> "explosion";
             case "magic", "indirect_magic", "dragon_breath", "wither", "wither_skull", "sonic_boom" -> "magic";
-            case "arrow", "trident", "fireworks", "thrown", "projectile" -> "projectile";
-            case "player_attack" -> attackerIsPlayer ? "player" : "mob";
+            case "arrow", "trident", "fireworks", "thrown", "projectile",
+                 "mob_projectile", "wind_charge" -> "projectile";
+            case "player_attack", "mace_smash" -> attackerIsPlayer ? "player" : "mob";
             case "mob", "mob_attack", "mob_attack_no_aggro", "spit", "sting", "thorns" -> "mob";
             case "out_of_world", "void", "fell_out_of_world" -> "void";
-            case "generic", "generic_kill", "kill", "falling_block", "falling_stalactite", "stalagmite" -> "generic";
+            case "generic", "generic_kill", "kill", "falling_block", "falling_stalactite", "stalagmite",
+                 "falling_anvil", "outside_border" -> "generic";
             default -> "other";
         };
 

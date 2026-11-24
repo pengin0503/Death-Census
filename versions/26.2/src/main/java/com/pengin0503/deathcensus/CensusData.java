@@ -117,11 +117,11 @@ public class CensusData extends SavedData {
     }
 
     private static final Codec<PlayerCensus> PLAYER_CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            Codec.STRING.optionalFieldOf("lastKnownName", "").forGetter(pc -> pc.lastKnownName),
-            Codec.BOOL.optionalFieldOf("optOutPublic", false).forGetter(pc -> pc.optOutPublic),
-            Codec.INT.optionalFieldOf("baselinePlayTicks", -1).forGetter(pc -> pc.baselinePlayTicks),
-            Codec.INT.optionalFieldOf("lastDeathPlayTicks", -1).forGetter(pc -> pc.lastDeathPlayTicks),
-            ENTRY_CODEC.listOf().optionalFieldOf("deaths", List.of()).forGetter(pc -> pc.deaths)
+            Codec.STRING.lenientOptionalFieldOf("lastKnownName", "").forGetter(pc -> pc.lastKnownName),
+            Codec.BOOL.lenientOptionalFieldOf("optOutPublic", false).forGetter(pc -> pc.optOutPublic),
+            Codec.INT.lenientOptionalFieldOf("baselinePlayTicks", -1).forGetter(pc -> pc.baselinePlayTicks),
+            Codec.INT.lenientOptionalFieldOf("lastDeathPlayTicks", -1).forGetter(pc -> pc.lastDeathPlayTicks),
+            ENTRY_CODEC.listOf().lenientOptionalFieldOf("deaths", List.of()).forGetter(pc -> pc.deaths)
     ).apply(instance, CensusData::playerFromCodec));
 
     private static CensusData fromCodec(Map<String, PlayerCensus> playersByUuid, long lastDigestEpoch) {
@@ -255,7 +255,11 @@ public class CensusData extends SavedData {
             pc.lastKnownName = pd.name();
             pc.optOutPublic = pd.optOutPublic();
             pc.deaths.addAll(pd.deaths());
-            pc.baselinePlayTicks = 0;
+            // -1 = "no baseline yet": the login handler re-baselines on next login.
+            // 0 would make a no-death player's next death count their entire
+            // lifetime playtime as survival. Players with deaths are governed by
+            // lastDeathPlayTicks, rebuilt below.
+            pc.baselinePlayTicks = -1;
             pc.lastDeathPlayTicks = pd.deaths().isEmpty()
                     ? -1
                     : pd.deaths().get(pd.deaths().size() - 1).playTicks();

@@ -50,6 +50,10 @@ public final class CensusExport {
         for (PlayerDeaths pd : data.snapshot()) {
             if (onlyPlayer != null) {
                 if (pd.uuid().equals(onlyPlayer.toString())) {
+                    // DESIGN §8: opted-out players appear in exports only with the config flag.
+                    if (pd.optOutPublic() && !Config.includeOptedOutInExports()) {
+                        return null;
+                    }
                     players.add(pd);
                 }
             } else if (!pd.optOutPublic() || Config.includeOptedOutInExports()) {
@@ -141,6 +145,26 @@ public final class CensusExport {
         if (!data.isEmpty()) {
             writeBackup(server);
         }
+    }
+
+    private static final long AUTO_BACKUP_INTERVAL_MILLIS = 60L * 60L * 1000L;
+    private static long lastAutoBackupMillis = 0L;
+
+    /** Auto-backup on world save, throttled to at most once per hour. */
+    static void autoBackupOnWorldSave(MinecraftServer server) {
+        if (server == null || !Config.autoBackupEnabled()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (lastAutoBackupMillis != 0L && now - lastAutoBackupMillis < AUTO_BACKUP_INTERVAL_MILLIS) {
+            return;
+        }
+        CensusData data = CensusData.get(server);
+        if (data.isEmpty()) {
+            return;
+        }
+        lastAutoBackupMillis = now;
+        writeBackup(server);
     }
 
     /**

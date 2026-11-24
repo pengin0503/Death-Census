@@ -131,7 +131,11 @@ public class CensusData extends SavedData {
             pc.lastKnownName = pd.name();
             pc.optOutPublic = pd.optOutPublic();
             pc.deaths.addAll(pd.deaths());
-            pc.baselinePlayTicks = 0;
+            // -1 = "no baseline yet": the login handler re-baselines on next login.
+            // 0 would make a no-death player's next death count their entire
+            // lifetime playtime as survival. Players with deaths are governed by
+            // lastDeathPlayTicks, rebuilt below.
+            pc.baselinePlayTicks = -1;
             pc.lastDeathPlayTicks = pd.deaths().isEmpty()
                     ? -1
                     : pd.deaths().get(pd.deaths().size() - 1).playTicks();

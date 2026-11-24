@@ -31,7 +31,7 @@ public final class TextEscaping {
         }
         // Spreadsheet formula-injection guard: a field a spreadsheet would
         // parse as a formula gets a leading apostrophe so it stays text.
-        // Plain negative numbers (e.g. coordinates) are left untouched.
+        // Plain signed numbers (e.g. coordinates) are left untouched.
         if (startsWithFormulaTrigger(s)) {
             s = "'" + s;
         }
@@ -69,14 +69,44 @@ public final class TextEscaping {
             return false;
         }
         char c = s.charAt(i);
-        if (c == '=' || c == '+' || c == '@') {
-            return true;
+        if (c != '=' && c != '+' && c != '-' && c != '@') {
+            return false;
         }
-        if (c == '-') {
-            return i + 1 >= s.length()
-                    || !(Character.isDigit(s.charAt(i + 1)) || s.charAt(i + 1) == '.');
+        // A plain number such as "-123.4" or "+5" is not a formula.
+        return !isPlainNumber(trimSpacesAndTabs(s));
+    }
+
+    private static String trimSpacesAndTabs(String s) {
+        int start = 0;
+        int end = s.length();
+        while (start < end && (s.charAt(start) == ' ' || s.charAt(start) == '\t')) {
+            start++;
         }
-        return false;
+        while (end > start && (s.charAt(end - 1) == ' ' || s.charAt(end - 1) == '\t')) {
+            end--;
+        }
+        return s.substring(start, end);
+    }
+
+    // Optional leading sign, digits with at most one decimal point, at least one digit.
+    private static boolean isPlainNumber(String s) {
+        int i = 0;
+        if (i < s.length() && (s.charAt(i) == '+' || s.charAt(i) == '-')) {
+            i++;
+        }
+        boolean sawDigit = false;
+        boolean sawPoint = false;
+        for (; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= '0' && c <= '9') {
+                sawDigit = true;
+            } else if (c == '.' && !sawPoint) {
+                sawPoint = true;
+            } else {
+                return false;
+            }
+        }
+        return sawDigit;
     }
 
     public static String jsonString(String s) {

@@ -22,7 +22,7 @@ public final class DiscordLogic {
                 ? e.deathMessage()
                 : e.playerName() + " died (" + e.causeCategory() + ")";
         return base
-                + " — Day " + e.gameDay()
+                + " — Day " + (e.gameDay() + 1)
                 + " · " + e.dimension()
                 + " · survived " + TimeFormat.formatDuration(e.survivalTicks());
     }
