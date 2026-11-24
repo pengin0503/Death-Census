@@ -1,0 +1,168 @@
+name: Publish to CurseForge and Modrinth
+
+# Manual-only publishing (spec docs/FEATURE_SPEC_1.1.0.md §4.1, candidate P53).
+# Publishing is hard to undo, so this workflow NEVER runs automatically:
+# no tag-push or release triggers, only workflow_dispatch with a release tag.
+#
+# Required repository secrets (registered by the repository owner):
+#   MODRINTH_TOKEN    - Modrinth personal access token (Death Chronicle project, ID to be filled below)
+#   CURSEFORGE_TOKEN  - CurseForge API token (Death Chronicle project, ID to be filled below)
+# Tokens are passed only via env and are never echoed.
+#
+# No third-party actions are used at all (only the preinstalled gh/git/jq/curl),
+# so there is nothing to pin by SHA.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing GitHub Release tag to publish (e.g. v1.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Upload the release jars to CurseForge and Modrinth
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag }}
+      MODRINTH_PROJECT_ID: TO_BE_FILLED
+      CURSEFORGE_PROJECT_ID: "TO_BE_FILLED"
+    steps:
+      - name: Download the jars and changelog for the tag
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$TAG" --pattern '*.jar' --dir dist
+          ls -l dist
+          count=$(ls dist/*.jar | wc -l)
+          if [ "$count" -ne 4 ]; then
+            echo "::error::Expected 4 jars in release $TAG, found $count"
+            exit 1
+          fi
+          # Extract the CHANGELOG.md section for this version (## <version> up to
+          # the next ## heading) at the tagged ref.
+          version="${TAG#v}"
+          gh api "repos/$GH_REPO/contents/CHANGELOG.md?ref=$TAG" \
+            --jq '.content' | base64 -d > CHANGELOG.full.md
+          awk -v ver="$version" '
+            $0 ~ "^## " ver "([ ]|$)" { capture=1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.full.md > changelog-section.md
+          if [ ! -s changelog-section.md ]; then
+            echo "::error::No CHANGELOG.md section found for version $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Upload to Modrinth
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MODRINTH_TOKEN:-}" ]; then
+            echo "::error::MODRINTH_TOKEN secret is not set"
+            exit 1
+          fi
+          changelog_json=$(jq -Rs . < changelog-section.md)
+          # Idempotency: game versions that already have this version_number
+          # on Modrinth are skipped, so re-running after a partial failure
+          # does not create duplicates.
+          existing=$(curl -sS "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "User-Agent: pengin0503/Death-Chronicle publish workflow" \
+            | jq -r --arg v "$VERSION" '.[] | select(.version_number == $v) | .game_versions[]')
+          echo "Already on Modrinth for $VERSION: $existing"
+          for jar in dist/*.jar; do
+            base=$(basename "$jar")
+            # Jar names look like deathchronicle-neoforge-<mc>-<version>.jar
+            mc=$(echo "$base" | sed -E 's/^deathchronicle-neoforge-([0-9]+\.[0-9]+(\.[0-9]+)?)-.*/\1/')
+            if [ -z "$mc" ] || [ "$mc" = "$base" ]; then
+              echo "::error::Cannot parse the Minecraft version from $base"
+              exit 1
+            fi
+            if echo "$existing" | grep -qx "$mc"; then
+              echo "Skipping $base: $VERSION for MC $mc is already on Modrinth"
+              continue
+            fi
+            jq -n \
+              --arg name "Death Chronicle $VERSION (MC $mc)" \
+              --arg version_number "$VERSION" \
+              --argjson changelog "$changelog_json" \
+              --arg project_id "$MODRINTH_PROJECT_ID" \
+              --arg mc "$mc" \
+              '{name: $name, version_number: $version_number, changelog: $changelog,
+                dependencies: [], version_type: "release", loaders: ["neoforge"],
+                featured: false, project_id: $project_id,
+                game_versions: [$mc], file_parts: ["file"]}' > data.json
+            jq -e . data.json > /dev/null
+            echo "Uploading $base to Modrinth (MC $mc)..."
+            code=$(curl -sS -X POST "https://api.modrinth.com/v2/version" \
+              -H "Authorization: $MODRINTH_TOKEN" \
+              -H "User-Agent: pengin0503/Death-Chronicle publish workflow" \
+              -F "data=@data.json;type=application/json" \
+              -F "file=@$jar" -o resp.json -w "%{http_code}")
+            cat resp.json
+            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "::error::Modrinth upload failed with HTTP $code"
+              exit 1
+            fi
+          done
+
+      - name: Upload to CurseForge
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CURSEFORGE_TOKEN:-}" ]; then
+            echo "::error::CURSEFORGE_TOKEN secret is not set"
+            exit 1
+          fi
+          # Resolve the game version ids once: the Minecraft version entries and
+          # the NeoForge loader entry, via the CurseForge versions API.
+          curl -sS -f "https://minecraft.curseforge.com/api/game/versions" \
+            -H "X-Api-Token: $CURSEFORGE_TOKEN" > cf-versions.json
+          echo "Version groups present in the CurseForge versions list:"
+          jq -r 'group_by(.gameVersionTypeID)[] | "type \(.[0].gameVersionTypeID): \(length) entries, e.g. \(.[0].name), \(.[1].name // "-")"' cf-versions.json
+          jq -r '.[] | select(.name == "Client" or .name == "Server" or .name == "NeoForge") | "special: \(.id) \(.name) type \(.gameVersionTypeID)"' cf-versions.json
+          neoforge_id=$(jq -r '.[] | select(.name == "NeoForge") | .id' cf-versions.json | head -1)
+          env_ids=$(jq -r '.[] | select(.name == "Client" or .name == "Server") | .id' cf-versions.json | paste -sd, -)
+          if [ -z "$neoforge_id" ]; then
+            echo "::error::NeoForge game version id not found in the CurseForge versions list"
+            exit 1
+          fi
+          changelog_text=$(cat changelog-section.md)
+          for jar in dist/*.jar; do
+            base=$(basename "$jar")
+            mc=$(echo "$base" | sed -E 's/^deathchronicle-neoforge-([0-9]+\.[0-9]+(\.[0-9]+)?)-.*/\1/')
+            mc_id=$(jq -r --arg mc "$mc" '.[] | select(.name == $mc) | .id' cf-versions.json | head -1)
+            if [ -z "$mc_id" ]; then
+              echo "::error::CurseForge game version id not found for Minecraft $mc"
+              exit 1
+            fi
+            metadata=$(jq -n \
+              --arg changelog "$changelog_text" \
+              --arg displayName "Death Chronicle $VERSION (MC $mc)" \
+              --argjson gameVersions "[${mc_id}, ${neoforge_id}${env_ids:+,$env_ids}]" \
+              '{changelog: $changelog, changelogType: "markdown",
+                displayName: $displayName, gameVersions: $gameVersions,
+                releaseType: "release"}')
+            echo "Uploading $base to CurseForge (MC $mc)..."
+            code=$(curl -sS -X POST \
+              "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \
+              -H "X-Api-Token: $CURSEFORGE_TOKEN" \
+              --form-string "metadata=$metadata" \
+              -F "file=@$jar" -o resp.json -w "%{http_code}")
+            cat resp.json
+            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "::error::CurseForge upload failed with HTTP $code"
+              exit 1
+            fi
+          done
