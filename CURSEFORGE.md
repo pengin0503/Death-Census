@@ -41,6 +41,30 @@ client; nothing needs to be installed on the client side.
 - **Operator tools** (permission level 2): `/dc delete <player> <#>`,
   `/dc reset player <name>`, `/dc reset all confirm` and `/dc doctor`;
   delete and reset write a safety backup first and abort if it fails
+- **Discord delivery**: webhook sends retry temporary failures and HTTP 429
+  rate limits (`Retry-After`) with exponential backoff on a bounded queue,
+  and bursts of deaths are sent as one combined message
+- **Discord channels and filters**: the digest can use its own webhook URL
+  (`discordDigestWebhookUrl`; `/dc discordtest digest` tests it), and
+  realtime posts can be limited by dimension allow-list and PvP mode;
+  digests still count every death
+- **Season digest**: `/dc digest season <from> <to> [html]` posts a summary of
+  any date range to the digest webhook, with an optional standalone HTML
+  report attached
+- **Anonymized exports**: `/dc export html|json|csv [player] [--anonymize]`
+  writes a shareable file with `Player A/B/...` pseudonyms, rounded
+  coordinates and player names scrubbed from messages
+- **Granular privacy**: `/dc privacy <coords|opponent|discord> <on|off>` and
+  the in-game privacy screen let players hide coordinates, the PvP opponent
+  or realtime Discord posts without hiding their whole history; anonymous
+  totals stay unchanged
+- **Dev and vanilla import commands**: `/dc dev demo <count>` (1–500) needs
+  both `devMode` and `-Ddeathcensus.dev=true` and writes a backup first;
+  `/dc import vanilla [dry-run]` adds pre-install vanilla death totals as a
+  lifetime baseline for milestones without inventing history records
+- **Permission seam**: admin checks route through a bridge with node names
+  reserved for a future provider, but still use vanilla OP level 2 exactly
+  as before
 
 ## Commands
 
@@ -134,6 +158,28 @@ vanilla clients can join.
 - 管理者コマンド（権限レベル2）：`/dc delete <player> <#>`、
   `/dc reset player <name>`、`/dc reset all confirm`、`/dc doctor`。
   削除・リセットは安全なバックアップを先に作成し、失敗した場合は変更しません
+- Discord 配信：Webhook の送信は一時的なエラーと HTTP 429（レート制限、
+  `Retry-After` に従う）を指数バックオフで再試行し、短時間に多数の死亡が
+  発生した場合は1通のメッセージにまとめて送信します
+- Discord のチャンネルとフィルター：ダイジェスト専用の Webhook URL
+  （`discordDigestWebhookUrl`、`/dc discordtest digest` で確認可）を設定でき、
+  リアルタイム通知はディメンションの許可リストや PvP モードで絞り込めます。
+  ダイジェストは引き続きすべての死亡を集計します
+- シーズンダイジェスト：`/dc digest season <from> <to> [html]` で任意の期間の
+  統計をダイジェスト用 Webhook に投稿できます（`html` で単体 HTML レポートを添付）
+- 匿名エクスポート：`/dc export html|json|csv [player] [--anonymize]` は
+  `Player A/B/...` のような仮名、座標の丸め、メッセージ内のプレイヤー名の
+  除去を行った共有用ファイルを出力します
+- 詳細なプライバシー設定：`/dc privacy <coords|opponent|discord> <on|off>` と
+  ゲーム内プライバシー画面で、座標、PvP の相手、リアルタイム Discord 通知を
+  個別に非表示にできます（匿名の合計値は変更されません）
+- 開発用・バニラ統計インポートコマンド：`/dc dev demo <count>`（1〜500）は
+  `devMode` と `-Ddeathcensus.dev=true` の両方が必要で、事前にバックアップを
+  作成します。`/dc import vanilla [dry-run]` は Mod 導入前のバニラの死亡数を
+  累計に追加し（`dry-run` では書き込みなし）、マイルストーンの集計に反映します
+- 権限ノードの準備：管理者チェックは将来の権限プロバイダー用の橋渡しを
+  経由するようになりましたが、1.3.0 では従来どおりバニラの権限レベル2を
+  使用し、動作は変わりません
 
 ## ゲーム内 GUI（`/dc`）
 
