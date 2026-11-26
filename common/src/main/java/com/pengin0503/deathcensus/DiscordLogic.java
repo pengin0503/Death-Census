@@ -127,4 +127,24 @@ public final class DiscordLogic {
         }
         return trimmed;
     }
+
+    /**
+     * Resolves the webhook URL for a channel (DESIGN 1.3.0 §4). {@code REALTIME}
+     * always resolves the primary value. {@code DIGEST} resolves the digest
+     * value first and falls back to the primary one only when it resolves to an
+     * empty string. A non-empty digest value is returned unchanged even when it
+     * is syntactically invalid, so callers can disable the digest channel rather
+     * than silently posting the digest to the wrong webhook (§12 question 9).
+     * Both values still support {@code env:VAR} via {@link #resolveWebhookUrl}.
+     */
+    public static String resolveWebhookUrl(
+            WebhookChannel channel, String primaryConfigured, String digestConfigured) {
+        if (channel == WebhookChannel.DIGEST) {
+            String digest = resolveWebhookUrl(digestConfigured);
+            if (!digest.isEmpty()) {
+                return digest;
+            }
+        }
+        return resolveWebhookUrl(primaryConfigured);
+    }
 }

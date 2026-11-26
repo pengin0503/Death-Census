@@ -166,4 +166,35 @@ class DiscordLogicTest {
         );
         assertEquals("", DiscordLogic.resolveWebhookUrl("env:"));
     }
+
+    @Test
+    void channelResolutionUsesIndependentValues() {
+        String primary = "https://discord.com/api/webhooks/111/aaa";
+        String digest = "https://discord.com/api/webhooks/222/bbb";
+
+        assertEquals(primary, DiscordLogic.resolveWebhookUrl(WebhookChannel.REALTIME, primary, digest));
+        assertEquals(digest, DiscordLogic.resolveWebhookUrl(WebhookChannel.DIGEST, primary, digest));
+
+        // Empty digest (including an unset env var) falls back to the primary URL.
+        assertEquals(primary, DiscordLogic.resolveWebhookUrl(WebhookChannel.DIGEST, primary, ""));
+        assertEquals(primary, DiscordLogic.resolveWebhookUrl(WebhookChannel.DIGEST, primary, "   "));
+        assertEquals(
+                primary,
+                DiscordLogic.resolveWebhookUrl(
+                        WebhookChannel.DIGEST, primary, "env:DEATH_CENSUS_DEFINITELY_UNSET_VAR_987654321"));
+        // env: works on the digest value too; here PATH is set but is not a webhook URL,
+        // which must be returned as-is (invalid), not replaced by the primary URL.
+        String path = System.getenv("PATH");
+        if (path != null && !path.isBlank()) {
+            assertEquals(path.trim(), DiscordLogic.resolveWebhookUrl(WebhookChannel.DIGEST, primary, "env:PATH"));
+        }
+
+        // A set-but-invalid digest URL must NOT silently fall back (§12 Q9).
+        String typo = "https://example.com/not-a-webhook";
+        assertEquals(typo, DiscordLogic.resolveWebhookUrl(WebhookChannel.DIGEST, primary, typo));
+        assertFalse(DiscordLogic.isValidWebhookUrl(
+                DiscordLogic.resolveWebhookUrl(WebhookChannel.DIGEST, primary, typo)));
+        // The realtime channel is unaffected by any digest value.
+        assertEquals(primary, DiscordLogic.resolveWebhookUrl(WebhookChannel.REALTIME, primary, typo));
+    }
 }
