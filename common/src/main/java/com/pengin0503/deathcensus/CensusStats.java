@@ -29,6 +29,35 @@ public final class CensusStats {
     private CensusStats() {
     }
 
+    /**
+     * Returns new player snapshots whose death lists contain only entries at or
+     * after {@code sinceMillis}. A non-positive cutoff keeps every death. Players
+     * with no remaining deaths stay in the result with an empty death list.
+     */
+    public static List<PlayerDeaths> filterSince(List<PlayerDeaths> players, long sinceMillis) {
+        if (players == null) {
+            return List.of();
+        }
+        List<PlayerDeaths> filtered = new ArrayList<>(players.size());
+        for (PlayerDeaths player : players) {
+            if (player == null) {
+                continue;
+            }
+            List<DeathEntry> deaths = sinceMillis <= 0L
+                    ? player.deaths()
+                    : player.deaths().stream()
+                            .filter(death -> death != null && death.epochMillis() >= sinceMillis)
+                            .toList();
+            filtered.add(new PlayerDeaths(
+                    player.uuid(),
+                    player.name(),
+                    player.optOutPublic(),
+                    deaths
+            ));
+        }
+        return List.copyOf(filtered);
+    }
+
     public static int totalDeaths(Collection<PlayerDeaths> players) {
         if (players == null) {
             return 0;
