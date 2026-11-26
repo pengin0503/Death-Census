@@ -179,6 +179,30 @@ public final class CensusCommands {
                 .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                 .executes(CensusCommands::reload));
 
+        root.then(literal("delete")
+                .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                        .<CommandSourceStack, String>argument("player", StringArgumentType.word())
+                        .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("index", IntegerArgumentType.integer(1))
+                                .executes(ctx -> delete(ctx, StringArgumentType.getString(ctx, "player"),
+                                        IntegerArgumentType.getInteger(ctx, "index"))))));
+
+        LiteralArgumentBuilder<CommandSourceStack> reset = literal("reset")
+                .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS));
+        reset.then(literal("player")
+                .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                        .<CommandSourceStack, String>argument("name", StringArgumentType.word())
+                        .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
+                        .executes(ctx -> resetPlayer(ctx, StringArgumentType.getString(ctx, "name")))));
+        reset.then(literal("all").then(literal("confirm").executes(CensusCommands::resetAll)));
+        root.then(reset);
+
+        root.then(literal("doctor")
+                .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                .executes(CensusCommands::doctor));
+
         return root;
     }
 
@@ -655,6 +679,117 @@ public final class CensusCommands {
         }
         fail(ctx, "command.deathcensus.discordtest.not_configured");
         return 0;
+    }
+
+    private static int delete(CommandContext<CommandSourceStack> ctx, String playerName, int index) {
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        UUID uuid = resolvePlayer(server, playerName);
+        if (uuid == null) {
+            fail(ctx, "command.deathcensus.player_not_found", playerName);
+            return 0;
+        }
+        if (CensusExport.writeBackup(server) == null) {
+            fail(ctx, "command.deathcensus.delete.backup_failed");
+            return 0;
+        }
+        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        int zeroBased = index - 1;
+        DeathEntry removed = pc != null && zeroBased >= 0 && zeroBased < pc.deaths.size()
+                ? pc.deaths.get(zeroBased)
+                : null;
+        if (!CensusData.get(server).removeDeath(uuid, zeroBased)) {
+            fail(ctx, "command.deathcensus.delete.not_found", playerName, index);
+            return 0;
+        }
+        String date = TimeFormat.formatDateTime(removed.epochMillis(), Config.displayTimeZone());
+        send(ctx, "command.deathcensus.delete.done", playerName, index, date);
+        return 1;
+    }
+
+    private static int resetPlayer(CommandContext<CommandSourceStack> ctx, String name) {
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        UUID uuid = resolvePlayer(server, name);
+        if (uuid == null) {
+            fail(ctx, "command.deathcensus.player_not_found", name);
+            return 0;
+        }
+        if (CensusExport.writeBackup(server) == null) {
+            fail(ctx, "command.deathcensus.delete.backup_failed");
+            return 0;
+        }
+        if (!CensusData.get(server).removePlayer(uuid)) {
+            fail(ctx, "command.deathcensus.player_not_found", name);
+            return 0;
+        }
+        send(ctx, "command.deathcensus.reset.player_done", name);
+        return 1;
+    }
+
+    private static int resetAll(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        if (CensusExport.writeBackup(server) == null) {
+            fail(ctx, "command.deathcensus.delete.backup_failed");
+            return 0;
+        }
+        CensusData.get(server).replaceAll(List.of());
+        send(ctx, "command.deathcensus.reset.all_done");
+        return 1;
+    }
+
+    private static int doctor(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        CensusData data = CensusData.get(server);
+        int players = 0;
+        int optedOut = 0;
+        int total = 0;
+        long oldest = Long.MAX_VALUE;
+        long newest = Long.MIN_VALUE;
+        for (CensusData.PlayerCensus pc : data.allPlayers().values()) {
+            players++;
+            if (pc.optOutPublic) {
+                optedOut++;
+            }
+            for (DeathEntry e : pc.deaths) {
+                total++;
+                oldest = Math.min(oldest, e.epochMillis());
+                newest = Math.max(newest, e.epochMillis());
+            }
+        }
+        ZoneId zone = Config.displayTimeZone();
+        String oldestText = total > 0 ? TimeFormat.formatDateTime(oldest, zone) : "-";
+        String newestText = total > 0 ? TimeFormat.formatDateTime(newest, zone) : "-";
+        String webhook = DiscordLogic.resolveWebhookUrl(Config.discordWebhookUrl());
+        String webhookStatus = webhook.isEmpty() ? "not configured"
+                : (DiscordLogic.isValidWebhookUrl(webhook) ? "configured" : "invalid URL");
+        long lastDigest = data.lastDigestEpochMillis();
+        String digestText = lastDigest > 0L ? TimeFormat.formatDateTime(lastDigest, zone) : "never";
+        List<String> backups = CensusExport.listBackups(server);
+        String newestBackup = backups.isEmpty() ? "-" : backups.get(backups.size() - 1);
+
+        send(ctx, "command.deathcensus.doctor.header");
+        sendLiteral(ctx, "Players: " + players + " (opted out: " + optedOut + ")");
+        sendLiteral(ctx, "Total deaths: " + total);
+        sendLiteral(ctx, "Oldest death: " + oldestText);
+        sendLiteral(ctx, "Newest death: " + newestText);
+        sendLiteral(ctx, "Storage: deathcensus:deaths");
+        sendLiteral(ctx, "Discord webhook: " + webhookStatus);
+        sendLiteral(ctx, "Last digest: " + digestText);
+        sendLiteral(ctx, "Backups: " + backups.size() + " (newest: " + newestBackup + ")");
+        sendLiteral(ctx, "Languages: " + ServerLang.BUNDLED_LANGUAGES.size()
+                + ", en keys: " + ServerLang.fallbacks().size());
+        return 1;
     }
 
     private static int reload(CommandContext<CommandSourceStack> ctx) {

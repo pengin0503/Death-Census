@@ -277,6 +277,39 @@ public class CensusData extends SavedData {
         return true;
     }
 
+    /**
+     * Removes the death at the given zero-based chronological index (oldest first),
+     * updating the last-death bookkeeping and marking the data dirty.
+     *
+     * @return true when the player and index existed
+     */
+    public boolean removeDeath(UUID uuid, int indexZeroBased) {
+        PlayerCensus pc = players.get(uuid);
+        if (pc == null || indexZeroBased < 0 || indexZeroBased >= pc.deaths.size()) {
+            return false;
+        }
+        pc.deaths.remove(indexZeroBased);
+        pc.lastDeathPlayTicks = pc.deaths.isEmpty()
+                ? -1
+                : pc.deaths.get(pc.deaths.size() - 1).playTicks();
+        setDirty();
+        return true;
+    }
+
+    /**
+     * Removes the player's whole census state: deaths, last known name, opt-out
+     * flag and survival baselines.
+     *
+     * @return true when the player existed
+     */
+    public boolean removePlayer(UUID uuid) {
+        if (players.remove(uuid) == null) {
+            return false;
+        }
+        setDirty();
+        return true;
+    }
+
     private static DeathEntry copyWithStory(DeathEntry e, String excuse, String lastWords, int fCount) {
         return new DeathEntry(
                 e.playerUuid(),
