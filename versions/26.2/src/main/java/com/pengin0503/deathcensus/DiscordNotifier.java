@@ -11,10 +11,15 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -28,12 +33,19 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>A long Retry-After deliberately delays later webhook messages; the 256
  * task queue cap bounds the memory used by a send backlog.
+ *
+ * <p>Realtime deaths (DESIGN 1.3.0 §2) are rendered and appended to a bounded
+ * buffer instead of being posted immediately; one delayed task per buffer
+ * window drains it into a single batched message and sends that through the
+ * same retry-enabled path. Filters and the opt-out gate are applied before a
+ * death reaches the buffer. Milestones, digests and test messages bypass it.
  */
 public final class DiscordNotifier {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final int CHECK_INTERVAL_TICKS = 72000; // ~1 hour
     private static final long DAY_MILLIS = 86400000L;
     private static final int QUEUE_CAPACITY = 256;
+    private static final int BATCH_BUFFER_CAPACITY = 256;
 
     private static final ThreadFactory DAEMON_FACTORY = r -> {
         Thread t = new Thread(r, "deathcensus-discord");
@@ -61,6 +73,12 @@ public final class DiscordNotifier {
     private static HttpClient httpClient;
     private static int tickCounter;
 
+    // Realtime batch buffer: rendered lines in chronological order. Both the
+    // deque and the scheduling flag are guarded by the class monitor.
+    private static final ArrayDeque<String> BATCH_BUFFER = new ArrayDeque<>();
+    private static boolean batchFlushScheduled;
+    private static volatile ScheduledExecutorService batchScheduler;
+
     private DiscordNotifier() {
     }
 
@@ -72,6 +90,14 @@ public final class DiscordNotifier {
         return executor;
     }
 
+    /** A single daemon timer thread; at most one flush is pending at a time. */
+    private static synchronized ScheduledExecutorService batchScheduler() {
+        if (batchScheduler == null || batchScheduler.isShutdown()) {
+            batchScheduler = Executors.newSingleThreadScheduledExecutor(DAEMON_FACTORY);
+        }
+        return batchScheduler;
+    }
+
     private static synchronized HttpClient http() {
         if (httpClient == null) {
             httpClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
@@ -80,6 +106,18 @@ public final class DiscordNotifier {
     }
 
     public static synchronized void shutdown() {
+        // Wait on no timer, send nothing: drop any buffer still inside its
+        // window and log the count (§12 Q6, matching shutdownNow for sends).
+        if (batchScheduler != null) {
+            batchScheduler.shutdownNow();
+            batchScheduler = null;
+        }
+        int dropped = BATCH_BUFFER.size();
+        BATCH_BUFFER.clear();
+        batchFlushScheduled = false;
+        if (dropped > 0) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord batch dropped {} unflushed death(s) on shutdown", dropped);
+        }
         if (executor != null) {
             executor.shutdownNow();
             executor = null;
@@ -161,10 +199,22 @@ public final class DiscordNotifier {
         }
     }
 
+    /** Renders one death line in the configured language before it is buffered (§2). */
+    private static String renderDeath(DeathEntry entry) {
+        return ServerLang.formatForLang(Config.discordLanguage(), "discord.deathcensus.death",
+                entry.deathMessage().isEmpty()
+                        ? entry.playerName() + " died (" + entry.causeCategory() + ")"
+                        : entry.deathMessage(),
+                entry.gameDay() + 1,
+                entry.dimension(),
+                TimeFormat.formatDuration(entry.survivalTicks()));
+    }
+
     /**
-     * Posts one death notification (caller has already applied the opt-out
-     * check). The §3 dimension/PvP filters run here so every caller obeys them;
-     * digests, milestones and chat announcements do not call this path.
+     * Queues one death notification. The opt-out gate (DeathTracker) and the §3
+     * dimension/PvP filters are applied before anything is buffered, so a
+     * hidden death is never named in a batch. Digests, milestones and chat
+     * announcements do not call this path and are never batched.
      */
     public static void notifyDeath(DeathEntry entry) {
         if (!Config.discordNotifyDeaths()) {
@@ -174,18 +224,100 @@ public final class DiscordNotifier {
                 Config.discordNotifyPvpMode())) {
             return;
         }
-        URI uri = webhookUri(WebhookChannel.REALTIME);
-        if (uri == null) {
+        int windowMillis = Math.max(0, Config.discordBatchWindowMillis());
+        if (windowMillis == 0) {
+            // Escape hatch (§12 Q4): exactly today's one POST per death.
+            URI uri = webhookUri(WebhookChannel.REALTIME);
+            if (uri != null) {
+                enqueue(uri, renderDeath(entry));
+            }
             return;
         }
-        String content = ServerLang.formatForLang(Config.discordLanguage(), "discord.deathcensus.death",
-                entry.deathMessage().isEmpty()
-                        ? entry.playerName() + " died (" + entry.causeCategory() + ")"
-                        : entry.deathMessage(),
-                entry.gameDay() + 1,
-                entry.dimension(),
-                TimeFormat.formatDuration(entry.survivalTicks()));
-        enqueue(uri, content);
+
+        String line = renderDeath(entry);
+        boolean schedule;
+        synchronized (DiscordNotifier.class) {
+            if (BATCH_BUFFER.size() >= BATCH_BUFFER_CAPACITY) {
+                // Bounded process-local buffer: drop and log, never grow without limit.
+                DeathCensus.LOGGER.warn(
+                        "[DeathCensus] Discord batch buffer is full ({} deaths); dropping a death",
+                        BATCH_BUFFER_CAPACITY);
+                return;
+            }
+            // Only the first death in an empty buffer arms the window; the rest
+            // just append, and further deaths do not extend the flush deadline.
+            schedule = BATCH_BUFFER.isEmpty() && !batchFlushScheduled;
+            BATCH_BUFFER.addLast(line);
+            if (schedule) {
+                batchFlushScheduled = true;
+            }
+        }
+        if (schedule) {
+            scheduleFlush(windowMillis);
+        }
+    }
+
+    private static void scheduleFlush(int windowMillis) {
+        try {
+            ScheduledExecutorService scheduler = batchScheduler();
+            scheduler.schedule(() -> {
+                // A stop clears the scheduler and the buffer; ignore a task that
+                // was already due so it cannot recreate a worker after shutdown.
+                ScheduledExecutorService current = batchScheduler;
+                if (current == null || current.isShutdown()) {
+                    return;
+                }
+                try {
+                    executor().execute(DiscordNotifier::flushBuffer);
+                } catch (RejectedExecutionException e) {
+                    clearBatchFlushFlag();
+                    DeathCensus.LOGGER.warn(
+                            "[DeathCensus] Discord worker queue is full; dropping a batched death message");
+                }
+            }, windowMillis, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            clearBatchFlushFlag();
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord batch scheduler is stopped; dropping a batched death message");
+        }
+    }
+
+    private static void clearBatchFlushFlag() {
+        synchronized (DiscordNotifier.class) {
+            batchFlushScheduled = false;
+        }
+    }
+
+    /** Runs on the Discord worker: drain the whole buffer into exactly one send. */
+    private static void flushBuffer() {
+        List<String> lines;
+        synchronized (DiscordNotifier.class) {
+            if (BATCH_BUFFER.isEmpty()) {
+                batchFlushScheduled = false;
+                return;
+            }
+            lines = new ArrayList<>(BATCH_BUFFER);
+            BATCH_BUFFER.clear();
+            batchFlushScheduled = false;
+        }
+
+        int total = lines.size();
+        int cap = Math.max(1, Config.discordBatchMaxDeaths());
+        List<String> shown = lines.size() > cap ? lines.subList(0, cap) : lines;
+        String lang = Config.discordLanguage();
+        String header = ServerLang.formatForLang(lang, "discord.deathcensus.batch.header",
+                total, Math.max(0, Config.discordBatchWindowMillis()) / 1000L);
+        int extra = total - shown.size();
+        String more = extra > 0
+                ? ServerLang.formatForLang(lang, "discord.deathcensus.batch.more", extra)
+                : "";
+        String content = DiscordBatch.content(shown, total, header, more, DiscordBatch.DISCORD_CONTENT_LIMIT);
+        if (content.isEmpty()) {
+            return;
+        }
+        URI uri = webhookUri(WebhookChannel.REALTIME);
+        if (uri != null) {
+            enqueue(uri, content);
+        }
     }
 
     /** Posts a milestone announcement to the configured webhook, if any. */
