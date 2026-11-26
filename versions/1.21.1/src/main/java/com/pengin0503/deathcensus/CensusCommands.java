@@ -231,7 +231,8 @@ public final class CensusCommands {
         root.then(literal("optin").executes(ctx -> setOptOut(ctx, false)));
 
         root.then(literal("lookup")
-                .requires(src -> src.hasPermission(2))
+                .requires(PermissionBridge.requires(DeathCensusPermission.LOOKUP,
+                        src -> src.hasPermission(2)))
                 .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                         .<CommandSourceStack, String>argument("player", StringArgumentType.word())
                         .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
@@ -254,7 +255,9 @@ public final class CensusCommands {
                                 .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "player"), 1,
                                         StringArgumentType.getString(ctx, "filter"))))));
 
-        LiteralArgumentBuilder<CommandSourceStack> export = literal("export").requires(src -> src.hasPermission(2));
+        LiteralArgumentBuilder<CommandSourceStack> export = literal("export")
+                .requires(PermissionBridge.requires(DeathCensusPermission.EXPORT,
+                        src -> src.hasPermission(2)));
         for (String format : List.of("html", "json", "csv")) {
             export.then(literal(format)
                     .executes(ctx -> export(ctx, format, null))
@@ -266,26 +269,31 @@ public final class CensusCommands {
         root.then(export);
 
         root.then(literal("backup")
-                .requires(src -> src.hasPermission(2))
+                .requires(PermissionBridge.requires(DeathCensusPermission.BACKUP,
+                        src -> src.hasPermission(2)))
                 .executes(CensusCommands::backup));
 
         root.then(literal("restore")
-                .requires(src -> src.hasPermission(2))
+                .requires(PermissionBridge.requires(DeathCensusPermission.BACKUP,
+                        src -> src.hasPermission(2)))
                 .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                         .<CommandSourceStack, String>argument("file", StringArgumentType.word())
                         .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(backupNames(ctx), builder))
                         .executes(ctx -> restore(ctx, StringArgumentType.getString(ctx, "file")))));
 
         root.then(literal("discordtest")
-                .requires(src -> src.hasPermission(2))
+                .requires(PermissionBridge.requires(DeathCensusPermission.DIGEST,
+                        src -> src.hasPermission(2)))
                 .executes(CensusCommands::discordTest));
 
         root.then(literal("reload")
-                .requires(src -> src.hasPermission(2))
+                .requires(PermissionBridge.requires(DeathCensusPermission.DIGEST,
+                        src -> src.hasPermission(2)))
                 .executes(CensusCommands::reload));
 
         root.then(literal("delete")
-                .requires(src -> src.hasPermission(2))
+                .requires(PermissionBridge.requires(DeathCensusPermission.RESET,
+                        src -> src.hasPermission(2)))
                 .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                         .<CommandSourceStack, String>argument("player", StringArgumentType.word())
                         .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
@@ -294,7 +302,9 @@ public final class CensusCommands {
                                 .executes(ctx -> delete(ctx, StringArgumentType.getString(ctx, "player"),
                                         IntegerArgumentType.getInteger(ctx, "index"))))));
 
-        LiteralArgumentBuilder<CommandSourceStack> reset = literal("reset").requires(src -> src.hasPermission(2));
+        LiteralArgumentBuilder<CommandSourceStack> reset = literal("reset")
+                .requires(PermissionBridge.requires(DeathCensusPermission.RESET,
+                        src -> src.hasPermission(2)));
         reset.then(literal("player")
                 .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                         .<CommandSourceStack, String>argument("name", StringArgumentType.word())
@@ -304,7 +314,8 @@ public final class CensusCommands {
         root.then(reset);
 
         root.then(literal("doctor")
-                .requires(src -> src.hasPermission(2))
+                .requires(PermissionBridge.requires(DeathCensusPermission.LOOKUP,
+                        src -> src.hasPermission(2)))
                 .executes(CensusCommands::doctor));
 
         return root;
@@ -375,7 +386,8 @@ public final class CensusCommands {
     }
 
     private static boolean isAdmin(CommandContext<CommandSourceStack> ctx) {
-        return ctx.getSource().hasPermission(2);
+        CommandSourceStack source = ctx.getSource();
+        return PermissionBridge.allowed(source, DeathCensusPermission.LOOKUP, source.hasPermission(2));
     }
 
     /** Resolves a stored period literal to its epoch-millis cutoff (all = 0). */
@@ -981,6 +993,9 @@ public final class CensusCommands {
         sendLiteral(ctx, "Backups: " + backups.size() + " (newest: " + newestBackup + ")");
         sendLiteral(ctx, "Languages: " + ServerLang.BUNDLED_LANGUAGES.size()
                 + ", en keys: " + ServerLang.fallbacks().size());
+        // §10: node integration is deferred (NeoForge has no built-in node API).
+        // Status words only — no webhook URL or other secret is ever printed.
+        sendLiteral(ctx, "Permissions: OP level 2 (node integration deferred)");
         return 1;
     }
 

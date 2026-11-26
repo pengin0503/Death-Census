@@ -4,9 +4,12 @@ import com.pengin0503.deathcensus.CensusCommands;
 import com.pengin0503.deathcensus.CensusData;
 import com.pengin0503.deathcensus.CensusLogic;
 import com.pengin0503.deathcensus.Config;
+import com.pengin0503.deathcensus.DeathCensusPermission;
 import com.pengin0503.deathcensus.DeathTracker;
+import com.pengin0503.deathcensus.PermissionBridge;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.ServerLang;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.stats.Stats;
@@ -48,8 +51,12 @@ public final class ChatUiContext implements UiContext {
 
     @Override
     public boolean isAdmin() {
-        // Same idiom as the existing 1.21.1 chat commands (hasPermission(2)).
-        return player != null && player.createCommandSourceStack().hasPermission(2);
+        // §10: same vanilla fallback as the chat commands, resolved via the bridge.
+        if (player == null) {
+            return false;
+        }
+        CommandSourceStack source = player.createCommandSourceStack();
+        return PermissionBridge.allowed(source, DeathCensusPermission.LOOKUP, source.hasPermission(2));
     }
 
     @Override
