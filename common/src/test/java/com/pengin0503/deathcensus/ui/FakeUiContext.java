@@ -2,10 +2,13 @@ package com.pengin0503.deathcensus.ui;
 
 import com.pengin0503.deathcensus.DeathEntry;
 import com.pengin0503.deathcensus.PlayerDeaths;
+import com.pengin0503.deathcensus.PlayerPrivacy;
 
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** Test double: all Minecraft-free, with a live session store and action log. */
@@ -24,6 +27,8 @@ final class FakeUiContext implements UiContext {
     boolean respectResult = true;
     boolean deleteResult = true;
     boolean optOut;
+    boolean privacyOtherAllowed;
+    final Map<UUID, PlayerPrivacy> privacy = new HashMap<>();
 
     FakeUiContext(UUID viewer, List<PlayerDeaths> players) {
         this.viewer = viewer;
@@ -54,6 +59,27 @@ final class FakeUiContext implements UiContext {
     @Override
     public boolean isOptedOut(UUID uuid) {
         return uuid != null && UiPrivacy.optOutFor(players, uuid.toString());
+    }
+
+    @Override
+    public boolean canManagePrivacy(UUID target) {
+        return UiPrivacy.canManagePrivacy(viewer, target, privacyOtherAllowed || admin);
+    }
+
+    @Override
+    public PlayerPrivacy getPrivacyFlags(UUID uuid) {
+        return privacy.getOrDefault(uuid, UiPrivacy.privacyFor(players, uuid == null ? "" : uuid.toString()));
+    }
+
+    @Override
+    public void setPrivacyFlag(UUID uuid, PlayerPrivacy.Flag flag, boolean value) {
+        calls.add("privacy:" + uuid + ":" + flag.token() + ":" + value);
+        privacy.put(uuid, PlayerPrivacy.withFlag(getPrivacyFlags(uuid), flag, value));
+        if (flag == PlayerPrivacy.Flag.FULL) {
+            calls.add("optout:" + value);
+            optOut = value;
+        }
+        dataVersion++;
     }
 
     @Override

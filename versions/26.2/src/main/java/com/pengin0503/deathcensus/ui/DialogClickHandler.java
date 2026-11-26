@@ -23,8 +23,10 @@ import java.util.Optional;
  */
 public final class DialogClickHandler {
     private static final List<String> INPUT_KEYS = List.of(
-            "in_period", "in_category", "in_dimension", "in_query",
-            "in_excuse", "in_optout", "in_type");
+            "in_period", "in_category", "in_dimension", "in_query", "in_excuse", "in_type",
+            "in_optout", "in_hide_coords", "in_hide_opponent", "in_discord_optout");
+    private static final List<String> BOOLEAN_KEYS = List.of(
+            "in_optout", "in_hide_coords", "in_hide_opponent", "in_discord_optout");
 
     private DialogClickHandler() {
     }
@@ -101,7 +103,7 @@ public final class DialogClickHandler {
             return stringTag.value();
         }
         if (tag instanceof ByteTag byteTag) {
-            return "in_optout".equals(key)
+            return BOOLEAN_KEYS.contains(key)
                     ? Boolean.toString(byteTag.byteValue() != 0)
                     : Integer.toString(byteTag.byteValue());
         }

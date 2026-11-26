@@ -59,6 +59,7 @@ public final class ChatUi {
         line(player, ServerLang.tr(player, "command.deathcensus.help.stats"));
         line(player, ServerLang.tr(player, "command.deathcensus.help.leaderboard"));
         line(player, ServerLang.tr(player, "command.deathcensus.help.optout"));
+        line(player, ServerLang.tr(player, "command.deathcensus.help.privacy"));
         if (new ChatUiContext(player).isAdmin()) {
             line(player, ServerLang.tr(player, "command.deathcensus.help.admin"));
         }
@@ -192,8 +193,10 @@ public final class ChatUi {
     private static void renderDetail(ServerPlayer player, DeathDetailView view) {
         line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.title"));
         line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.date", view.dateTime()));
-        line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.coords",
-                view.x(), view.y(), view.z(), view.dimension()));
+        line(player, view.coordsHidden()
+                ? ServerLang.tr(player, "command.deathcensus.ui.detail.coords_hidden", view.dimension())
+                : ServerLang.tr(player, "command.deathcensus.ui.detail.coords",
+                        view.x(), view.y(), view.z(), view.dimension()));
         line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.cause",
                 view.causeCategory(), truncate(view.deathMessage())));
         line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.killer",
@@ -262,15 +265,30 @@ public final class ChatUi {
 
     private static void renderPrivacy(ServerPlayer player, PrivacyView view) {
         line(player, ServerLang.tr(player, "command.deathcensus.ui.privacy.title"));
-        line(player, ServerLang.tr(player, "command.deathcensus.ui.privacy.state",
-                ServerLang.tr(player, view.optOut()
-                        ? "command.deathcensus.ui.privacy.hidden"
-                        : "command.deathcensus.ui.privacy.visible")));
+        line(player, privacyStateLine(player, "command.deathcensus.ui.privacy.full", view.optOut()));
+        line(player, privacyStateLine(player, "command.deathcensus.ui.privacy.coords", view.hideCoordinates()));
+        line(player, privacyStateLine(player, "command.deathcensus.ui.privacy.opponent", view.hidePvpOpponent()));
+        line(player, privacyStateLine(player, "command.deathcensus.ui.privacy.discord", view.discordOptOut()));
         line(player, tr(player, view.explanation()));
+        String token = ChatUiContext.currentToken(player);
+        String command = "/dc ui privacy ";
         buttonRows(player, List.of(
-                commandButton(player, "command.deathcensus.ui.privacy.hidden", "/dc optout", null),
-                commandButton(player, "command.deathcensus.ui.privacy.visible", "/dc optin", null),
+                commandButton(player, "command.deathcensus.ui.input.optout",
+                        command + "full " + (view.optOut() ? "off" : "on") + " " + token, null),
+                commandButton(player, "command.deathcensus.ui.input.hide_coords",
+                        command + "coords " + (view.hideCoordinates() ? "off" : "on") + " " + token, null),
+                commandButton(player, "command.deathcensus.ui.input.hide_opponent",
+                        command + "opponent " + (view.hidePvpOpponent() ? "off" : "on") + " " + token, null),
+                commandButton(player, "command.deathcensus.ui.input.discord_optout",
+                        command + "discord " + (view.discordOptOut() ? "off" : "on") + " " + token, null),
                 backButton(player)));
+        line(player, ServerLang.tr(player, "command.deathcensus.ui.chat.privacy_hint"));
+    }
+
+    private static Component privacyStateLine(ServerPlayer player, String key, boolean value) {
+        return ServerLang.tr(player, key, ServerLang.tr(player, value
+                ? "command.deathcensus.ui.privacy.hidden"
+                : "command.deathcensus.ui.privacy.visible"));
     }
 
     private static void renderNotice(ServerPlayer player, NoticeView view) {

@@ -111,4 +111,36 @@ class UiPrivacyTest {
         assertTrue(UiPrivacy.canDelete(TestData.CAROL, TestData.ALICE.toString(), true));
         assertFalse(UiPrivacy.canDelete(TestData.CAROL, TestData.ALICE.toString(), false));
     }
+
+    @Test
+    void privacyAccessIsSelfOrPrivacyOtherOnly() {
+        assertTrue(UiPrivacy.canManagePrivacy(TestData.ALICE, TestData.ALICE, false));
+        assertFalse(UiPrivacy.canManagePrivacy(TestData.ALICE, TestData.BOB, false));
+        assertTrue(UiPrivacy.canManagePrivacy(TestData.ALICE, TestData.BOB, true));
+        assertFalse(UiPrivacy.canManagePrivacy(null, TestData.BOB, true));
+        assertFalse(UiPrivacy.canManagePrivacy(TestData.ALICE, null, true));
+
+        FakeUiContext viewer = new FakeUiContext(TestData.ALICE, players());
+        assertTrue(viewer.canManagePrivacy(TestData.ALICE));
+        assertFalse(viewer.canManagePrivacy(TestData.BOB));
+        viewer.privacyOtherAllowed = true;
+        assertTrue(viewer.canManagePrivacy(TestData.BOB));
+        viewer.admin = true;
+        assertTrue(viewer.canManagePrivacy(TestData.BOB));
+    }
+
+    @Test
+    void privacyForReadsAllFourFlagsAndLeavesAggregatesUnredacted() {
+        List<PlayerDeaths> data = List.of(new com.pengin0503.deathcensus.PlayerDeaths(
+                TestData.BOB.toString(), "Bob", true, true, true, true,
+                List.of(TestData.death(TestData.BOB, "Bob", 1_000L, "fall"))));
+        var flags = UiPrivacy.privacyFor(data, TestData.BOB.toString());
+        assertTrue(flags.optOutPublic());
+        assertTrue(flags.hideCoordinates());
+        assertTrue(flags.hidePvpOpponent());
+        assertTrue(flags.discordOptOut());
+        assertEquals(com.pengin0503.deathcensus.PlayerPrivacy.none(),
+                UiPrivacy.privacyFor(data, TestData.ALICE.toString()));
+        assertEquals("total=1 · fall=1", UiPrivacy.anonymousTotalsLine(data));
+    }
 }

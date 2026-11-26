@@ -1,6 +1,7 @@
 package com.pengin0503.deathcensus.ui;
 
 import com.pengin0503.deathcensus.PlayerDeaths;
+import com.pengin0503.deathcensus.PlayerPrivacy;
 
 import java.time.ZoneId;
 import java.util.List;
@@ -26,6 +27,31 @@ public interface UiContext {
         return UiPrivacy.canViewDetail(viewer(),
                 targetUuid == null ? null : targetUuid.toString(), isOptedOut(targetUuid), isAdmin());
     }
+
+    /**
+     * DESIGN §7: another player's privacy flags require the PRIVACY_OTHER gate.
+     * {@link #isAdmin()} is the LOOKUP node; version contexts override this to
+     * resolve PRIVACY_OTHER through the same PermissionBridge seam.
+     */
+    default boolean canManagePrivacy(UUID targetUuid) {
+        return UiPrivacy.canManagePrivacy(viewer(), targetUuid, isSelf(targetUuid) || isAdmin());
+    }
+
+    /** Live four-flag snapshot; adapters may override with a direct storage read. */
+    default PlayerPrivacy getPrivacyFlags(UUID uuid) {
+        if (uuid == null) {
+            return PlayerPrivacy.none();
+        }
+        for (PlayerDeaths player : snapshot()) {
+            if (player != null && player.uuid().equalsIgnoreCase(uuid.toString())) {
+                return PlayerPrivacy.of(player);
+            }
+        }
+        return PlayerPrivacy.none();
+    }
+
+    /** Server-side mutation of one flag; never trusts a client-supplied identity. */
+    void setPrivacyFlag(UUID uuid, PlayerPrivacy.Flag flag, boolean value);
 
     /** Server-side mutation counter, bumped on record/delete/excuse/respect/optout changes. */
     int dataVersion();
