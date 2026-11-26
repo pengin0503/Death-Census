@@ -24,6 +24,23 @@ client; nothing needs to be installed on the client side.
 - **Privacy controls**: per-player opt-out of public listings (`/dc optout`)
 - **Admin tools**: lookup any player's history, JSON backup and restore
 - **English and Japanese** localization
+- **Last words and excuses**: a death records the player's most recent chat
+  message (within 30 seconds) as their last words; `/dc excuse <text>`
+  attaches a one-line excuse to the latest death, and both appear in
+  history and HTML/JSON/CSV exports
+- **F respects**: typing `F` (or `f`) in chat within 30 seconds of another
+  player's death adds a respect count to that death (once per sender)
+- **Milestone announcements**: the first server death, a player's first
+  death, every 100th death and completing all 17 cause categories are
+  announced in chat and on Discord (`milestoneAnnouncements`, default on;
+  counting uses lifetime totals)
+- **Period rankings**: `/dc leaderboard <type> [today|7d|30d|all] [page]`
+  and `/dc stats server [period]`
+- **History filters**: `/dc history` and `/dc lookup` take a trailing filter
+  — a cause category or an exact dimension id
+- **Operator tools** (permission level 2): `/dc delete <player> <#>`,
+  `/dc reset player <name>`, `/dc reset all confirm` and `/dc doctor`;
+  delete and reset write a safety backup first and abort if it fails
 
 ## Commands
 
@@ -81,6 +98,21 @@ vanilla clients can join.
 - プライバシー用オプトアウト（`/dc optout`）
 - 管理者向け lookup、JSON バックアップと復元
 - 英語・日本語対応
+- 最期の言葉と言い訳：死亡の30秒前以内のチャットが最期の言葉として記録され、
+  `/dc excuse <一言>` で直近の死亡に一言を追記できます（履歴と
+  HTML/JSON/CSV エクスポートに表示）
+- F への敬意：他のプレイヤーの死亡から30秒以内に `F`（または `f`）と
+  チャットすると、その死亡に敬意のカウントが加わります（送信者ごとに1回）
+- マイルストーン告知：サーバー初の死亡、プレイヤー初の死亡、100回ごとの死亡、
+  全17死因カテゴリの達成をチャットと Discord で告知（設定
+  `milestoneAnnouncements`、既定は有効、集計は累計）
+- 期間別ランキング：`/dc leaderboard <type> [today|7d|30d|all] [page]` と
+  `/dc stats server [period]`
+- 履歴フィルター：`/dc history` と `/dc lookup` は末尾に死因カテゴリまたは
+  ディメンションIDのフィルターを指定できます
+- 管理者コマンド（権限レベル2）：`/dc delete <player> <#>`、
+  `/dc reset player <name>`、`/dc reset all confirm`、`/dc doctor`。
+  削除・リセットは安全なバックアップを先に作成し、失敗した場合は変更しません
 
 対象は NeoForge の Minecraft **1.21.1 / 26.1.2 / 26.2 / 26.3** です。
 コマンドは `/deathcensus`（短縮形 `/dc`）です。
