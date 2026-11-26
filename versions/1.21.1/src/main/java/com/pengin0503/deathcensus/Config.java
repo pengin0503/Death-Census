@@ -47,6 +47,21 @@ public final class Config {
             .comment("Post a Discord message for every recorded death (players who opted out are skipped).")
             .define("discordNotifyDeaths", true);
 
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> DISCORD_NOTIFY_DIMENSIONS = BUILDER
+            .comment("Realtime death Discord notifications only: allow-list of exact dimension ids,",
+                    "e.g. [\"minecraft:overworld\", \"minecraft:the_nether\"]. Empty = all dimensions.",
+                    "Ids are case-sensitive (same convention as /dc history <player> <filter>);",
+                    "blank entries or whitespace are rejected. Digests, milestones and chat announcements are not filtered.")
+            .defineListAllowEmpty("discordNotifyDimensions", List.of(),
+                    () -> "minecraft:overworld", Config::validateDimensionId);
+
+    public static final ModConfigSpec.ConfigValue<String> DISCORD_NOTIFY_PVP_MODE = BUILDER
+            .comment("Realtime death Discord notifications only: all, pvp_only or off (default: all).",
+                    "pvp_only keeps player-caused deaths (cause category 'player', which includes",
+                    "player-attributed explosions and projectiles); off suppresses them. Digests,",
+                    "milestones and chat announcements are not filtered.")
+            .define("discordNotifyPvpMode", "all", Config::validatePvpMode);
+
     public static final ModConfigSpec.ConfigValue<String> DISCORD_LANGUAGE = BUILDER
             .comment("Language for Discord webhook notifications (\"en_us\" or \"ja_jp\").")
             .define("discordLanguage", "en_us", Config::validateLanguage);
@@ -103,6 +118,14 @@ public final class Config {
 
     static boolean validateLanguage(Object obj) {
         return obj instanceof String s && ServerLang.BUNDLED_LANGUAGES.contains(s);
+    }
+
+    static boolean validateDimensionId(Object obj) {
+        return obj instanceof String s && !s.isBlank() && s.chars().noneMatch(Character::isWhitespace);
+    }
+
+    static boolean validatePvpMode(Object obj) {
+        return obj instanceof String s && DiscordLogic.PvpFilterMode.fromConfigValue(s) != null;
     }
 
     public static ZoneId displayTimeZone() {
@@ -172,6 +195,27 @@ public final class Config {
             return DISCORD_NOTIFY_DEATHS.get();
         } catch (IllegalStateException notLoaded) {
             return true;
+        }
+    }
+
+    /** Realtime death dimension allow-list; empty means every dimension. */
+    public static List<String> discordNotifyDimensions() {
+        try {
+            List<? extends String> value = DISCORD_NOTIFY_DIMENSIONS.get();
+            return value != null ? List.copyOf(value) : List.of();
+        } catch (IllegalStateException notLoaded) {
+            return List.of();
+        }
+    }
+
+    /** Realtime death PvP mode; defaults to {@code all} before config load. */
+    public static DiscordLogic.PvpFilterMode discordNotifyPvpMode() {
+        try {
+            String value = DISCORD_NOTIFY_PVP_MODE.get();
+            DiscordLogic.PvpFilterMode mode = DiscordLogic.PvpFilterMode.fromConfigValue(value);
+            return mode != null ? mode : DiscordLogic.PvpFilterMode.ALL;
+        } catch (IllegalStateException notLoaded) {
+            return DiscordLogic.PvpFilterMode.ALL;
         }
     }
 
