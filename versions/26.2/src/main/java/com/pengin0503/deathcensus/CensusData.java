@@ -50,6 +50,10 @@ public class CensusData extends SavedData {
         public int baselinePlayTicks = -1;
         /** PLAY_TIME at the most recent recorded death; -1 = no death yet. */
         public int lastDeathPlayTicks = -1;
+        /** Vanilla pre-install death baseline (DESIGN 1.3.0 §9); never includes deaths recorded by this mod. */
+        public int vanillaDeathsBaseline = 0;
+        /** Mapped vanilla killed_by categories; diagnostic only, never merged into live cause percentages. */
+        public Map<String, Integer> vanillaBaselineCauses = new LinkedHashMap<>();
 
         public Set<String> lifetimeCategories() {
             return Collections.unmodifiableSet(lifetimeCategories);
@@ -170,6 +174,12 @@ public class CensusData extends SavedData {
         b.add("discordOptOut", ops.createBoolean(pc.discordOptOut));
         b.add("baselinePlayTicks", ops.createInt(pc.baselinePlayTicks));
         b.add("lastDeathPlayTicks", ops.createInt(pc.lastDeathPlayTicks));
+        b.add("vanillaDeathsBaseline", ops.createInt(pc.vanillaDeathsBaseline));
+        RecordBuilder<T> causesBuilder = ops.mapBuilder();
+        for (Map.Entry<String, Integer> cause : pc.vanillaBaselineCauses.entrySet()) {
+            causesBuilder.add(cause.getKey(), ops.createInt(cause.getValue()));
+        }
+        b.add("vanillaBaselineCauses", causesBuilder.build(ops.empty()));
         b.add("deaths", ENTRY_CODEC.listOf().encodeStart(ops, pc.deaths));
         b.add("lifetimeCategories", Codec.STRING.listOf().encodeStart(ops, new ArrayList<>(pc.lifetimeCategories)));
         return b.build(ops.empty()).result().orElse(ops.empty());
@@ -193,6 +203,21 @@ public class CensusData extends SavedData {
         pc.discordOptOut = booleanValue(ops, map, "discordOptOut");
         pc.baselinePlayTicks = intValue(ops, map, "baselinePlayTicks");
         pc.lastDeathPlayTicks = intValue(ops, map, "lastDeathPlayTicks");
+        pc.vanillaDeathsBaseline = Math.max(0, intValue(ops, map, "vanillaDeathsBaseline"));
+        T causesValue = map.get("vanillaBaselineCauses");
+        if (causesValue != null) {
+            DataResult<MapLike<T>> causesResult = ops.getMap(causesValue);
+            if (causesResult.result().isPresent()) {
+                causesResult.result().get().entries().forEach(cause -> {
+                    String category = ops.getStringValue(cause.getFirst()).result().orElse("");
+                    int count = (int) Math.max(0L,
+                            ops.getNumberValue(cause.getSecond()).result().map(Number::longValue).orElse(0L));
+                    if (count > 0) {
+                        pc.vanillaBaselineCauses.put(category, count);
+                    }
+                });
+            }
+        }
 
         T deathsValue = map.get("deaths");
         if (deathsValue != null) {
@@ -312,8 +337,75 @@ public class CensusData extends SavedData {
         return data;
     }
 
-    public long lifetimeDeaths() {
+    /** Raw stored counter without vanilla baselines; used by the importer to avoid double counting. */
+    public long storedLifetimeDeaths() {
         return lifetimeDeaths;
+    }
+
+    /** Imported pre-install baselines only (DESIGN 1.3.0 §9). */
+    public long vanillaBaselineTotal() {
+        long total = 0L;
+        for (PlayerCensus pc : players.values()) {
+            total += pc.vanillaDeathsBaseline;
+        }
+        return total;
+    }
+
+    /** Milestones use this number: stored deaths plus anonymous vanilla pre-install totals. */
+    public long lifetimeDeaths() {
+        return lifetimeDeaths + vanillaBaselineTotal();
+    }
+
+    /**
+     * PR-10 (DESIGN 1.3.0 §9): max/merge of vanilla pre-install baselines. No
+     * DeathEntry is fabricated, no milestone evaluation runs and the stored
+     * counter is untouched. The pre-install portion excludes deaths this mod
+     * already retained for the player, so an import after real deaths (or a
+     * repeated import) can neither double count nor lower a baseline. A dry
+     * run computes the same report without writing anything.
+     */
+    public VanillaImportResult importVanillaBaselines(Map<UUID, VanillaStats> stats, boolean dryRun) {
+        List<VanillaImportResult.Row> rows = new ArrayList<>();
+        int skipped = 0;
+        long added = 0L;
+        if (stats != null) {
+            for (Map.Entry<UUID, VanillaStats> entry : stats.entrySet()) {
+                UUID uuid = entry.getKey();
+                PlayerCensus pc = uuid == null ? null : players.get(uuid);
+                if (pc == null) {
+                    // Unknown UUIDs: unrelated stat files are ignored entirely.
+                    continue;
+                }
+                VanillaStats vanilla = entry.getValue();
+                int vanillaDeaths = vanilla == null ? 0 : vanilla.deaths();
+                if (vanillaDeaths <= 0) {
+                    skipped++;
+                    continue;
+                }
+                long preinstall = Math.max(0L, (long) vanillaDeaths - pc.deaths.size());
+                int candidate = (int) Math.min(Integer.MAX_VALUE, preinstall);
+                int baseline = Math.max(pc.vanillaDeathsBaseline, candidate);
+                if (baseline <= 0) {
+                    skipped++;
+                    continue;
+                }
+                Map<String, Integer> causes = new LinkedHashMap<>(pc.vanillaBaselineCauses);
+                for (Map.Entry<String, Integer> cause : VanillaStatsParser.causeCounts(vanilla).entrySet()) {
+                    causes.put(cause.getKey(), Math.max(causes.getOrDefault(cause.getKey(), 0), cause.getValue()));
+                }
+                long delta = (long) baseline - pc.vanillaDeathsBaseline;
+                if (!dryRun && delta > 0L) {
+                    pc.vanillaDeathsBaseline = baseline;
+                    pc.vanillaBaselineCauses = causes;
+                    setDirty();
+                }
+                added += delta;
+                String top = VanillaStatsParser.topCause(vanilla);
+                rows.add(new VanillaImportResult.Row(uuid.toString(), pc.lastKnownName,
+                        vanillaDeaths, baseline, top.isEmpty() ? "-" : top));
+            }
+        }
+        return new VanillaImportResult(rows, skipped, added);
     }
 
     public long lastDigestEpochMillis() {
@@ -508,7 +600,8 @@ public class CensusData extends SavedData {
         for (Map.Entry<UUID, PlayerCensus> e : players.entrySet()) {
             PlayerCensus pc = e.getValue();
             out.add(new PlayerDeaths(e.getKey().toString(), pc.lastKnownName, pc.optOutPublic,
-                    pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths));
+                    pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths,
+                    pc.vanillaDeathsBaseline, pc.vanillaBaselineCauses));
         }
         return out;
     }
@@ -530,6 +623,8 @@ public class CensusData extends SavedData {
             pc.hideCoordinates = pd.hideCoordinates();
             pc.hidePvpOpponent = pd.hidePvpOpponent();
             pc.discordOptOut = pd.discordOptOut();
+            pc.vanillaDeathsBaseline = Math.max(0, pd.vanillaDeathsBaseline());
+            pc.vanillaBaselineCauses.putAll(pd.vanillaBaselineCauses());
             pc.deaths.addAll(pd.deaths());
             for (DeathEntry death : pd.deaths()) {
                 if (CauseClassifier.isKnownCategory(death.causeCategory())) {

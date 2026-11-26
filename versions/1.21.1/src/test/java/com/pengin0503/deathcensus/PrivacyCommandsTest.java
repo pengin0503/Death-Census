@@ -107,7 +107,7 @@ class PrivacyCommandsTest {
                 }
             }
         }
-        assertEquals(198, loadCount("en_us"));
+        assertEquals(204, loadCount("en_us"));
         assertEquals(loadCount("en_us"), loadCount("ja_jp"));
     }
 
