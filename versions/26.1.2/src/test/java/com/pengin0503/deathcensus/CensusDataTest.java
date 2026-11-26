@@ -107,6 +107,42 @@ class CensusDataTest {
     }
 
     @Test
+    void removeDeathDropsChronologicalEntryAndUpdatesLastDeath() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(uuid, "Steve", 100L, 100, 50), 10000);
+        data.recordDeath(entry(uuid, "Steve", 200L, 200, 60), 10000);
+        data.recordDeath(entry(uuid, "Steve", 300L, 300, 70), 10000);
+
+        assertTrue(data.removeDeath(uuid, 1));
+        List<DeathEntry> deaths = data.playerOrNull(uuid).deaths;
+        assertEquals(2, deaths.size());
+        assertEquals(100L, deaths.get(0).epochMillis());
+        assertEquals(300L, deaths.get(1).epochMillis());
+        assertEquals(300, data.playerOrNull(uuid).lastDeathPlayTicks);
+
+        assertFalse(data.removeDeath(uuid, 2));
+        assertFalse(data.removeDeath(uuid, -1));
+        assertFalse(data.removeDeath(UUID.randomUUID(), 0));
+
+        assertTrue(data.removeDeath(uuid, 1));
+        assertTrue(data.removeDeath(uuid, 0));
+        assertTrue(data.playerOrNull(uuid).deaths.isEmpty());
+        assertEquals(-1, data.playerOrNull(uuid).lastDeathPlayTicks);
+    }
+
+    @Test
+    void removePlayerDropsWholeState() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(uuid, "Steve", 100L, 100, 50), 10000);
+        data.player(uuid).optOutPublic = true;
+        assertTrue(data.removePlayer(uuid));
+        assertTrue(data.playerOrNull(uuid) == null);
+        assertFalse(data.removePlayer(uuid));
+    }
+
+    @Test
     void backupJsonRoundTrip() {
         UUID uuid = UUID.randomUUID();
         List<PlayerDeaths> players = List.of(new PlayerDeaths(uuid.toString(), "Steve", true,
