@@ -13,6 +13,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import com.pengin0503.deathcensus.ui.DialogUi;
 
 import javax.annotation.Nullable;
 import java.nio.file.Path;
@@ -41,7 +42,7 @@ public final class CensusCommands {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
         dispatcher.register(root());
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("dc")
-                .executes(CensusCommands::help)
+                .executes(CensusCommands::entry)
                 .redirect(dispatcher.getRoot().getChild("deathcensus")));
     }
 
@@ -51,7 +52,7 @@ public final class CensusCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> root() {
         LiteralArgumentBuilder<CommandSourceStack> root = literal("deathcensus")
-                .executes(CensusCommands::help);
+                .executes(CensusCommands::entry);
 
         root.then(literal("help").executes(CensusCommands::help));
 
@@ -385,6 +386,16 @@ public final class CensusCommands {
 
     // ------------------------------------------------------------ commands
 
+    /** No arguments: the Dialog Home screen for players, the old help for the console. */
+    private static int entry(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer self = ctx.getSource().getPlayer();
+        if (self == null) {
+            return help(ctx);
+        }
+        DialogUi.openHome(self);
+        return 1;
+    }
+
     private static int help(CommandContext<CommandSourceStack> ctx) {
         send(ctx, "command.deathcensus.help.title");
         send(ctx, "command.deathcensus.help.excuse");
@@ -705,6 +716,42 @@ public final class CensusCommands {
         return 0;
     }
 
+    public static final int DELETE_OK = 1;
+    public static final int DELETE_BACKUP_FAILED = 0;
+    public static final int DELETE_NOT_FOUND = -1;
+
+    /**
+     * The single backup-first delete flow used by {@code /dc delete} and by the
+     * Dialog UI. The safety backup is always written before any record is
+     * removed; a failed backup aborts the deletion. Pass {@code zeroBased < 0}
+     * with an epoch to resolve the record by {@code (uuid, epochMillis)} at
+     * execution time instead of trusting a payload-supplied index.
+     */
+    public static int deleteDeathAfterBackup(MinecraftServer server, UUID uuid,
+                                             int zeroBased, long epochMillis) {
+        if (server == null || uuid == null) {
+            return DELETE_NOT_FOUND;
+        }
+        if (CensusExport.writeBackup(server) == null) {
+            return DELETE_BACKUP_FAILED;
+        }
+        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        int index = zeroBased;
+        if (index < 0 && pc != null) {
+            index = -1;
+            for (int i = 0; i < pc.deaths.size(); i++) {
+                if (pc.deaths.get(i).epochMillis() == epochMillis) {
+                    index = i;
+                    break;
+                }
+            }
+        }
+        if (pc == null || index < 0 || index >= pc.deaths.size()) {
+            return DELETE_NOT_FOUND;
+        }
+        return CensusData.get(server).removeDeath(uuid, index) ? DELETE_OK : DELETE_NOT_FOUND;
+    }
+
     private static int delete(CommandContext<CommandSourceStack> ctx, String playerName, int index) {
         MinecraftServer server = server(ctx);
         if (server == null) {
@@ -715,16 +762,17 @@ public final class CensusCommands {
             fail(ctx, "command.deathcensus.player_not_found", playerName);
             return 0;
         }
-        if (CensusExport.writeBackup(server) == null) {
-            fail(ctx, "command.deathcensus.delete.backup_failed");
-            return 0;
-        }
         CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
         int zeroBased = index - 1;
         DeathEntry removed = pc != null && zeroBased >= 0 && zeroBased < pc.deaths.size()
                 ? pc.deaths.get(zeroBased)
                 : null;
-        if (!CensusData.get(server).removeDeath(uuid, zeroBased)) {
+        int status = deleteDeathAfterBackup(server, uuid, zeroBased, -1L);
+        if (status == DELETE_BACKUP_FAILED) {
+            fail(ctx, "command.deathcensus.delete.backup_failed");
+            return 0;
+        }
+        if (status != DELETE_OK || removed == null) {
             fail(ctx, "command.deathcensus.delete.not_found", playerName, index);
             return 0;
         }
