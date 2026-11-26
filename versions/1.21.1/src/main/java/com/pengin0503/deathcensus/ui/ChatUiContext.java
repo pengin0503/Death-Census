@@ -1,0 +1,202 @@
+package com.pengin0503.deathcensus.ui;
+
+import com.pengin0503.deathcensus.CensusCommands;
+import com.pengin0503.deathcensus.CensusData;
+import com.pengin0503.deathcensus.CensusLogic;
+import com.pengin0503.deathcensus.Config;
+import com.pengin0503.deathcensus.DeathEntry;
+import com.pengin0503.deathcensus.DeathTracker;
+import com.pengin0503.deathcensus.PlayerDeaths;
+import com.pengin0503.deathcensus.ServerLang;
+import com.pengin0503.deathcensus.TimeFormat;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.stats.Stats;
+
+import java.time.ZoneId;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * 1.21.1 {@link UiContext}: the same live-data bridge and session semantics as
+ * the 26.x DialogUiContext, with the version's {@code hasPermission(2)} idiom.
+ * Chat click payloads are untrusted, so every permission and record lookup is
+ * re-resolved here at execution time.
+ */
+public final class ChatUiContext implements UiContext {
+    private static final UiSessionStore SESSIONS = new UiSessionStore();
+    private static int dataVersion = 1;
+
+    private final ServerPlayer player;
+
+    public ChatUiContext(ServerPlayer player) {
+        this.player = player;
+    }
+
+    private MinecraftServer server() {
+        return player == null ? null : player.getServer();
+    }
+
+    @Override
+    public UUID viewer() {
+        return player.getUUID();
+    }
+
+    @Override
+    public List<PlayerDeaths> snapshot() {
+        MinecraftServer server = server();
+        return server == null ? List.of() : CensusData.get(server).snapshot();
+    }
+
+    @Override
+    public boolean isAdmin() {
+        // Same idiom as the existing 1.21.1 chat commands (hasPermission(2)).
+        return player != null && player.createCommandSourceStack().hasPermission(2);
+    }
+
+    @Override
+    public boolean isSelf(UUID uuid) {
+        return uuid != null && uuid.equals(player.getUUID());
+    }
+
+    @Override
+    public boolean isOptedOut(UUID uuid) {
+        MinecraftServer server = server();
+        if (uuid == null || server == null) {
+            return false;
+        }
+        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        return pc != null && pc.optOutPublic;
+    }
+
+    @Override
+    public int dataVersion() {
+        return dataVersion;
+    }
+
+    private static void bumpDataVersion() {
+        dataVersion++;
+    }
+
+    @Override
+    public int currentSurvivalTicks(UUID uuid) {
+        MinecraftServer server = server();
+        if (server == null) {
+            return 0;
+        }
+        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        int lastDeath = pc == null ? -1 : pc.lastDeathPlayTicks;
+        int baseline = pc == null ? -1 : pc.baselinePlayTicks;
+        // DESIGN §8 default (2): play-time survival, not wall-clock time.
+        return CensusLogic.survivalTicks(
+                player.getStats().getValue(Stats.CUSTOM, Stats.PLAY_TIME), lastDeath, baseline);
+    }
+
+    @Override
+    public ZoneId zoneId() {
+        return Config.displayTimeZone();
+    }
+
+    @Override
+    public UiSession currentSession() {
+        return SESSIONS.current(viewer());
+    }
+
+    @Override
+    public UiSession newSession(HistoryFilter filter, UiSession.RankingSelection ranking) {
+        return SESSIONS.issue(viewer(), filter, ranking, dataVersion());
+    }
+
+    @Override
+    public UiSession touchSession(UiSession presented, HistoryFilter filter, UiSession.RankingSelection ranking) {
+        return SESSIONS.rotate(viewer(), presented, filter, ranking, dataVersion());
+    }
+
+    @Override
+    public void invalidateSession() {
+        SESSIONS.clear(viewer());
+    }
+
+    @Override
+    public void sendNotice(UiText text) {
+        // The dispatcher immediately opens Home after expiry; a chat line keeps
+        // the feedback visible after that render, as in the Dialog adapter.
+        player.sendSystemMessage(ServerLang.tr(player, text.key(), text.args()));
+    }
+
+    @Override
+    public boolean setExcuse(UUID uuid, long epoch, String text) {
+        MinecraftServer server = server();
+        if (server == null || uuid == null) {
+            return false;
+        }
+        boolean applied = CensusData.get(server).setExcuse(uuid, epoch, text);
+        if (applied) {
+            bumpDataVersion();
+        }
+        return applied;
+    }
+
+    @Override
+    public boolean payRespect(UUID sender, UUID victim, long epoch) {
+        MinecraftServer server = server();
+        if (server == null || victim == null) {
+            return false;
+        }
+        boolean applied = DeathTracker.payRespect(server, sender, victim, epoch);
+        if (applied) {
+            bumpDataVersion();
+        }
+        return applied;
+    }
+
+    @Override
+    public boolean deleteAfterBackup(UUID uuid, long epoch) {
+        MinecraftServer server = server();
+        if (server == null || uuid == null) {
+            return false;
+        }
+        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        DeathEntry removed = null;
+        int index = -1;
+        if (pc != null) {
+            for (int i = 0; i < pc.deaths.size(); i++) {
+                if (pc.deaths.get(i).epochMillis() == epoch) {
+                    removed = pc.deaths.get(i);
+                    index = i;
+                    break;
+                }
+            }
+        }
+        int status = CensusCommands.deleteDeathAfterBackup(server, uuid, -1, epoch);
+        if (status == CensusCommands.DELETE_OK) {
+            bumpDataVersion();
+            // The dispatcher's feedback descriptor has no name/index/date args,
+            // so send the same confirmation as /dc delete here (DESIGN §6).
+            if (removed != null) {
+                player.sendSystemMessage(ServerLang.tr(player, "command.deathcensus.delete.done",
+                        removed.playerName(), index + 1,
+                        TimeFormat.formatDateTime(removed.epochMillis(), zoneId())));
+            }
+        }
+        return status == CensusCommands.DELETE_OK;
+    }
+
+    @Override
+    public void setOptOut(boolean optOut) {
+        MinecraftServer server = server();
+        if (server == null) {
+            return;
+        }
+        CensusData data = CensusData.get(server);
+        data.player(viewer()).optOutPublic = optOut;
+        data.setDirty();
+        bumpDataVersion();
+    }
+
+    /** Token of the viewer's live session, used by chat-only commands that reuse UiActions. */
+    public static String currentToken(ServerPlayer player) {
+        UiSession session = player == null ? null : new ChatUiContext(player).currentSession();
+        return session == null ? "" : session.token();
+    }
+}

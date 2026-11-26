@@ -46,6 +46,9 @@ public final class DeathTracker {
     private static final Map<UUID, LastChat> LAST_CHATS = new ConcurrentHashMap<>();
     /** Transient: recent deaths that can still receive "F" respects. */
     private static final Set<RecentDeath> RECENT_DEATHS = ConcurrentHashMap.newKeySet();
+    /** Transient: dedupe keys for UI/chat respects, shared with the UI adapter. */
+    private static final Set<String> RESPECTED = ConcurrentHashMap.newKeySet();
+    private static final int MAX_RESPECTED_KEYS = 10_000;
 
     private DeathTracker() {
     }
@@ -54,6 +57,7 @@ public final class DeathTracker {
     static void resetTransientState() {
         LAST_CHATS.clear();
         RECENT_DEATHS.clear();
+        RESPECTED.clear();
     }
 
     static int currentPlayTicks(ServerPlayer player) {
@@ -129,10 +133,33 @@ public final class DeathTracker {
         // The ConcurrentHashMap captures stay safe, but marking the sender is moved here
         // so the "mark only when addRespect succeeded" semantics remain atomic.
         server.execute(() -> {
-            if (CensusData.get(server).addRespect(target.victim, target.epochMillis)) {
+            if (payRespect(server, sender, target.victim, target.epochMillis)) {
                 target.respects.add(sender);
             }
         });
+    }
+
+    /**
+     * Applies one "F" to the death identified by {@code (victim, epochMillis)}.
+     * Shared by the chat path above and the UI respect button: both go through
+     * {@link CensusData#addRespect(UUID, long)} with the same dedupe semantics.
+     */
+    public static boolean payRespect(MinecraftServer server, UUID sender, UUID victim, long epochMillis) {
+        if (server == null || sender == null || victim == null || epochMillis < 0L) {
+            return false;
+        }
+        String key = sender + "|" + victim + "|" + epochMillis;
+        if (!RESPECTED.add(key)) {
+            return false;
+        }
+        if (!CensusData.get(server).addRespect(victim, epochMillis)) {
+            RESPECTED.remove(key);
+            return false;
+        }
+        if (RESPECTED.size() > MAX_RESPECTED_KEYS) {
+            RESPECTED.clear();
+        }
+        return true;
     }
 
     // LOWEST so a death cancelled by another mod (revive/second-chance) is never
