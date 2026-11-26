@@ -15,10 +15,13 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 import javax.annotation.Nullable;
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 /**
  * /deathcensus (alias /dc) — personal history, server statistics,
@@ -26,6 +29,8 @@ import java.util.UUID;
  */
 public final class CensusCommands {
     private static final int PAGE_SIZE = 10;
+    private static final List<String> PERIODS = List.of("today", "7d", "30d", "all");
+    private static final long DAY_MILLIS = 86_400_000L;
 
     private CensusCommands() {
     }
@@ -58,7 +63,14 @@ public final class CensusCommands {
                 .executes(ctx -> history(ctx, null, 1))
                 .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                         .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
-                        .executes(ctx -> history(ctx, null, IntegerArgumentType.getInteger(ctx, "page"))))
+                        .executes(ctx -> history(ctx, null, IntegerArgumentType.getInteger(ctx, "page")))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, String>argument("filter", StringArgumentType.greedyString())
+                                .suggests((ctx, builder) ->
+                                        SharedSuggestionProvider.suggest(filterSuggestions(ctx), builder))
+                                .executes(ctx -> history(ctx, null,
+                                        IntegerArgumentType.getInteger(ctx, "page"),
+                                        StringArgumentType.getString(ctx, "filter")))))
                 .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                         .<CommandSourceStack, String>argument("player", StringArgumentType.word())
                         .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
@@ -66,19 +78,46 @@ public final class CensusCommands {
                         .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                                 .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
                                 .executes(ctx -> history(ctx, StringArgumentType.getString(ctx, "player"),
-                                        IntegerArgumentType.getInteger(ctx, "page"))))));
+                                        IntegerArgumentType.getInteger(ctx, "page")))
+                                .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                        .<CommandSourceStack, String>argument("filter", StringArgumentType.greedyString())
+                                        .suggests((ctx, builder) ->
+                                                SharedSuggestionProvider.suggest(filterSuggestions(ctx), builder))
+                                        .executes(ctx -> history(ctx, StringArgumentType.getString(ctx, "player"),
+                                                IntegerArgumentType.getInteger(ctx, "page"),
+                                                StringArgumentType.getString(ctx, "filter")))))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, String>argument("filter", StringArgumentType.greedyString())
+                                .suggests((ctx, builder) ->
+                                        SharedSuggestionProvider.suggest(filterSuggestions(ctx), builder))
+                                .executes(ctx -> history(ctx, StringArgumentType.getString(ctx, "player"), 1,
+                                        StringArgumentType.getString(ctx, "filter"))))));
 
+        LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
+                .executes(CensusCommands::serverStats);
+        for (String period : PERIODS) {
+            statsServer.then(literal(period).executes(ctx -> serverStats(ctx, period)));
+        }
         root.then(literal("stats")
                 .executes(CensusCommands::ownStats)
-                .then(literal("server").executes(CensusCommands::serverStats)));
+                .then(statsServer));
 
         LiteralArgumentBuilder<CommandSourceStack> leaderboard = literal("leaderboard");
         for (String type : List.of("deaths", "survival", "fastest", "rarest")) {
-            leaderboard.then(literal(type)
+            LiteralArgumentBuilder<CommandSourceStack> typeNode = literal(type)
                     .executes(ctx -> leaderboard(ctx, type, 1))
                     .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                             .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
-                            .executes(ctx -> leaderboard(ctx, type, IntegerArgumentType.getInteger(ctx, "page")))));
+                            .executes(ctx -> leaderboard(ctx, type, IntegerArgumentType.getInteger(ctx, "page"))));
+            for (String period : PERIODS) {
+                typeNode.then(literal(period)
+                        .executes(ctx -> leaderboard(ctx, type, period, 1))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> leaderboard(ctx, type, period,
+                                        IntegerArgumentType.getInteger(ctx, "page")))));
+            }
+            leaderboard.then(typeNode);
         }
         root.then(leaderboard);
 
@@ -94,7 +133,20 @@ public final class CensusCommands {
                         .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                                 .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
                                 .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "player"),
-                                        IntegerArgumentType.getInteger(ctx, "page"))))));
+                                        IntegerArgumentType.getInteger(ctx, "page")))
+                                .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                        .<CommandSourceStack, String>argument("filter", StringArgumentType.greedyString())
+                                        .suggests((ctx, builder) ->
+                                                SharedSuggestionProvider.suggest(filterSuggestions(ctx), builder))
+                                        .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "player"),
+                                                IntegerArgumentType.getInteger(ctx, "page"),
+                                                StringArgumentType.getString(ctx, "filter")))))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, String>argument("filter", StringArgumentType.greedyString())
+                                .suggests((ctx, builder) ->
+                                        SharedSuggestionProvider.suggest(filterSuggestions(ctx), builder))
+                                .executes(ctx -> lookup(ctx, StringArgumentType.getString(ctx, "player"), 1,
+                                        StringArgumentType.getString(ctx, "filter"))))));
 
         LiteralArgumentBuilder<CommandSourceStack> export = literal("export").requires(src -> src.hasPermission(2));
         for (String format : List.of("html", "json", "csv")) {
@@ -186,6 +238,59 @@ public final class CensusCommands {
         return ctx.getSource().hasPermission(2);
     }
 
+    /** Resolves a stored period literal to its epoch-millis cutoff (all = 0). */
+    private static long sinceMillis(String period) {
+        if ("today".equals(period)) {
+            ZoneId zone = Config.displayTimeZone();
+            return LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli();
+        }
+        long now = System.currentTimeMillis();
+        return switch (period) {
+            case "7d" -> now - 7L * DAY_MILLIS;
+            case "30d" -> now - 30L * DAY_MILLIS;
+            default -> 0L;
+        };
+    }
+
+    /**
+     * Resolves the optional history/lookup filter to a death predicate, or null
+     * when the filter is neither a known category nor a dimension in the data.
+     */
+    @Nullable
+    private static Predicate<DeathEntry> filterPredicate(MinecraftServer server, @Nullable String filter) {
+        if (filter == null) {
+            return null;
+        }
+        if (CauseClassifier.isKnownCategory(filter)) {
+            return death -> filter.equals(death.causeCategory());
+        }
+        for (PlayerDeaths pd : CensusData.get(server).snapshot()) {
+            for (DeathEntry death : pd.deaths()) {
+                if (filter.equals(death.dimension())) {
+                    return entry -> filter.equals(entry.dimension());
+                }
+            }
+        }
+        return null;
+    }
+
+    private static List<String> filterSuggestions(CommandContext<CommandSourceStack> ctx) {
+        List<String> suggestions = new ArrayList<>(CauseClassifier.CATEGORIES);
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return suggestions;
+        }
+        for (PlayerDeaths pd : CensusData.get(server).snapshot()) {
+            for (DeathEntry death : pd.deaths()) {
+                String dimension = death.dimension();
+                if (!dimension.isEmpty() && !suggestions.contains(dimension)) {
+                    suggestions.add(dimension);
+                }
+            }
+        }
+        return suggestions;
+    }
+
     private static String formatEntryLine(DeathEntry e, int index) {
         return "#" + index
                 + " · Day " + (e.gameDay() + 1)
@@ -200,13 +305,35 @@ public final class CensusCommands {
     }
 
     private static int showHistory(CommandContext<CommandSourceStack> ctx, UUID uuid, String displayName, int page) {
+        return showHistory(ctx, uuid, displayName, page, null);
+    }
+
+    private static int showHistory(CommandContext<CommandSourceStack> ctx, UUID uuid, String displayName,
+                                   int page, @Nullable String filter) {
         MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        Predicate<DeathEntry> predicate = filterPredicate(server, filter);
+        if (filter != null && predicate == null) {
+            fail(ctx, "command.deathcensus.filter_unknown", filter);
+            return 0;
+        }
         CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
         if (pc == null || pc.deaths.isEmpty()) {
             send(ctx, "command.deathcensus.history.empty", displayName);
             return 0;
         }
-        List<DeathEntry> newestFirst = new ArrayList<>(pc.deaths);
+        List<DeathEntry> newestFirst = new ArrayList<>();
+        for (DeathEntry entry : pc.deaths) {
+            if (predicate == null || predicate.test(entry)) {
+                newestFirst.add(entry);
+            }
+        }
+        if (newestFirst.isEmpty()) {
+            send(ctx, "command.deathcensus.history.empty", displayName);
+            return 0;
+        }
         java.util.Collections.reverse(newestFirst);
         Pagination.Page<DeathEntry> p = Pagination.of(newestFirst, page, PAGE_SIZE);
         send(ctx, "command.deathcensus.history.header", displayName, p.total(), p.page(), p.pageCount());
@@ -256,6 +383,11 @@ public final class CensusCommands {
     }
 
     private static int history(CommandContext<CommandSourceStack> ctx, @Nullable String playerName, int page) {
+        return history(ctx, playerName, page, null);
+    }
+
+    private static int history(CommandContext<CommandSourceStack> ctx, @Nullable String playerName, int page,
+                               @Nullable String filter) {
         MinecraftServer server = server(ctx);
         if (server == null) {
             return 0;
@@ -266,7 +398,7 @@ public final class CensusCommands {
                 fail(ctx, "command.deathcensus.players_only");
                 return 0;
             }
-            return showHistory(ctx, self.getUUID(), self.getGameProfile().getName(), page);
+            return showHistory(ctx, self.getUUID(), self.getGameProfile().getName(), page, filter);
         }
         UUID target = resolvePlayer(server, playerName);
         if (target == null) {
@@ -280,10 +412,15 @@ public final class CensusCommands {
             fail(ctx, "command.deathcensus.opted_out", playerName);
             return 0;
         }
-        return showHistory(ctx, target, playerName, page);
+        return showHistory(ctx, target, playerName, page, filter);
     }
 
     private static int lookup(CommandContext<CommandSourceStack> ctx, String playerName, int page) {
+        return lookup(ctx, playerName, page, null);
+    }
+
+    private static int lookup(CommandContext<CommandSourceStack> ctx, String playerName, int page,
+                              @Nullable String filter) {
         MinecraftServer server = server(ctx);
         if (server == null) {
             return 0;
@@ -293,7 +430,7 @@ public final class CensusCommands {
             fail(ctx, "command.deathcensus.player_not_found", playerName);
             return 0;
         }
-        return showHistory(ctx, target, playerName, page);
+        return showHistory(ctx, target, playerName, page, filter);
     }
 
     private static int ownStats(CommandContext<CommandSourceStack> ctx) {
@@ -323,15 +460,22 @@ public final class CensusCommands {
     }
 
     private static int serverStats(CommandContext<CommandSourceStack> ctx) {
+        return serverStats(ctx, "all");
+    }
+
+    private static int serverStats(CommandContext<CommandSourceStack> ctx, String period) {
         MinecraftServer server = server(ctx);
         if (server == null) {
             return 0;
         }
         // DESIGN §8: opted-out players are hidden from rankings, but their deaths
         // still count in the anonymous server totals.
-        List<PlayerDeaths> all = CensusData.get(server).snapshot();
+        List<PlayerDeaths> all = CensusStats.filterSince(CensusData.get(server).snapshot(), sinceMillis(period));
         int total = CensusStats.totalDeaths(all);
         send(ctx, "command.deathcensus.server_stats.header");
+        if (!"all".equals(period)) {
+            sendLiteral(ctx, "Period: " + period);
+        }
         send(ctx, "command.deathcensus.stats.deaths", total);
         for (Map.Entry<String, Integer> e : CensusStats.causeCounts(all, true)) {
             int pct = total > 0 ? (int) Math.round(100.0 * e.getValue() / total) : 0;
@@ -347,12 +491,19 @@ public final class CensusCommands {
     }
 
     private static int leaderboard(CommandContext<CommandSourceStack> ctx, String type, int page) {
+        return leaderboard(ctx, type, "all", page);
+    }
+
+    private static int leaderboard(CommandContext<CommandSourceStack> ctx, String type, String period, int page) {
         MinecraftServer server = server(ctx);
         if (server == null) {
             return 0;
         }
-        List<PlayerDeaths> all = CensusData.get(server).snapshot();
+        List<PlayerDeaths> all = CensusStats.filterSince(CensusData.get(server).snapshot(), sinceMillis(period));
         send(ctx, "command.deathcensus.leaderboard.header", type);
+        if (!"all".equals(period)) {
+            sendLiteral(ctx, "Period: " + period);
+        }
         switch (type) {
             case "deaths" -> {
                 Pagination.Page<CensusStats.PlayerSummary> p =

@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CensusStatsTest {
@@ -168,5 +170,59 @@ class CensusStatsTest {
         assertEquals("", pd.name());
         assertEquals(1, pd.deaths().size());
         assertTrue(new PlayerDeaths("u", "n", false, null).deaths().isEmpty());
+    }
+
+    @Test
+    void filterSinceKeepsBoundaryEntriesAndPlayerMetadata() {
+        DeathEntry before = death("u1", "Alice", 999L, 10, "fall");
+        DeathEntry boundary = death("u1", "Alice", 1000L, 20, "fall");
+        DeathEntry after = death("u1", "Alice", 1001L, 30, "lava");
+        PlayerDeaths alice = new PlayerDeaths("u1", "Alice", true, List.of(before, boundary, after));
+        PlayerDeaths bob = new PlayerDeaths("u2", "Bob", false, List.of(
+                death("u2", "Bob", 500L, 40, "drown")));
+
+        List<PlayerDeaths> filtered = CensusStats.filterSince(List.of(alice, bob), 1000L);
+
+        assertEquals(2, filtered.size());
+        PlayerDeaths filteredAlice = filtered.get(0);
+        assertEquals("u1", filteredAlice.uuid());
+        assertEquals("Alice", filteredAlice.name());
+        assertTrue(filteredAlice.optOutPublic());
+        // Boundary entry (epoch == since) is included; older entry is dropped.
+        assertEquals(List.of(boundary, after), filteredAlice.deaths());
+
+        PlayerDeaths filteredBob = filtered.get(1);
+        assertEquals("u2", filteredBob.uuid());
+        assertEquals("Bob", filteredBob.name());
+        assertFalse(filteredBob.optOutPublic());
+        // A player with no remaining deaths stays present with an empty list.
+        assertTrue(filteredBob.deaths().isEmpty());
+        assertEquals(2, CensusStats.totalDeaths(filtered));
+
+        // The input snapshot is not mutated.
+        assertEquals(3, alice.deaths().size());
+        assertEquals(1, bob.deaths().size());
+
+        // Empty input and fully filtered-out input.
+        assertTrue(CensusStats.filterSince(List.of(), 1000L).isEmpty());
+        List<PlayerDeaths> empty = CensusStats.filterSince(List.of(alice), 10_000L);
+        assertEquals(1, empty.size());
+        assertTrue(empty.get(0).deaths().isEmpty());
+    }
+
+    @Test
+    void filterSinceNonPositiveReturnsEquivalentUnfilteredCopies() {
+        PlayerDeaths alice = new PlayerDeaths("u1", "Alice", true, List.of(
+                death("u1", "Alice", 500L, 10, "fall")));
+
+        List<PlayerDeaths> copies = CensusStats.filterSince(List.of(alice), 0L);
+
+        assertEquals(1, copies.size());
+        assertNotSame(alice, copies.get(0));
+        assertNotSame(alice.deaths(), copies.get(0).deaths());
+        assertEquals(alice.deaths(), copies.get(0).deaths());
+        assertEquals("u1", copies.get(0).uuid());
+        assertEquals("Alice", copies.get(0).name());
+        assertTrue(copies.get(0).optOutPublic());
     }
 }
