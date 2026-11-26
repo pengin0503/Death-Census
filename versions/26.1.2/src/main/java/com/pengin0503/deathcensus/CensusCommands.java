@@ -180,7 +180,9 @@ public final class CensusCommands {
         root.then(literal("discordtest")
                 .requires(PermissionBridge.requires(DeathCensusPermission.DIGEST,
                         Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)))
-                .executes(CensusCommands::discordTest));
+                .executes(ctx -> discordTest(ctx, false))
+                // Inherits the DIGEST-node gate from its parent (PR-1 seam).
+                .then(literal("digest").executes(ctx -> discordTest(ctx, true))));
 
         root.then(literal("reload")
                 .requires(PermissionBridge.requires(DeathCensusPermission.DIGEST,
@@ -719,8 +721,9 @@ public final class CensusCommands {
         return 1;
     }
 
-    private static int discordTest(CommandContext<CommandSourceStack> ctx) {
-        if (DiscordNotifier.sendTest()) {
+    private static int discordTest(CommandContext<CommandSourceStack> ctx, boolean digest) {
+        WebhookChannel channel = digest ? WebhookChannel.DIGEST : WebhookChannel.REALTIME;
+        if (DiscordNotifier.sendTest(channel)) {
             send(ctx, "command.deathcensus.discordtest.sent");
             return 1;
         }
@@ -829,6 +832,14 @@ public final class CensusCommands {
         return 1;
     }
 
+    /** Maps a resolved webhook value to a status word; the value itself never escapes. */
+    static String webhookStatus(String resolved) {
+        if (resolved == null || resolved.isEmpty()) {
+            return "not configured";
+        }
+        return DiscordLogic.isValidWebhookUrl(resolved) ? "configured" : "invalid URL";
+    }
+
     private static int doctor(CommandContext<CommandSourceStack> ctx) {
         MinecraftServer server = server(ctx);
         if (server == null) {
@@ -854,9 +865,12 @@ public final class CensusCommands {
         ZoneId zone = Config.displayTimeZone();
         String oldestText = total > 0 ? TimeFormat.formatDateTime(oldest, zone) : "-";
         String newestText = total > 0 ? TimeFormat.formatDateTime(newest, zone) : "-";
-        String webhook = DiscordLogic.resolveWebhookUrl(Config.discordWebhookUrl());
-        String webhookStatus = webhook.isEmpty() ? "not configured"
-                : (DiscordLogic.isValidWebhookUrl(webhook) ? "configured" : "invalid URL");
+        String primary = Config.discordWebhookUrl();
+        String digestUrl = Config.discordDigestWebhookUrl();
+        String webhookStatus = webhookStatus(
+                DiscordLogic.resolveWebhookUrl(WebhookChannel.REALTIME, primary, digestUrl));
+        String digestWebhookStatus = webhookStatus(
+                DiscordLogic.resolveWebhookUrl(WebhookChannel.DIGEST, primary, digestUrl));
         long lastDigest = data.lastDigestEpochMillis();
         String digestText = lastDigest > 0L ? TimeFormat.formatDateTime(lastDigest, zone) : "never";
         List<String> backups = CensusExport.listBackups(server);
@@ -869,6 +883,7 @@ public final class CensusCommands {
         sendLiteral(ctx, "Newest death: " + newestText);
         sendLiteral(ctx, "Storage: deathcensus:deaths");
         sendLiteral(ctx, "Discord webhook: " + webhookStatus);
+        sendLiteral(ctx, "Discord digest webhook: " + digestWebhookStatus);
         sendLiteral(ctx, "Discord retry: " + Config.discordRetryMaxAttempts() + " attempts / "
                 + Config.discordRetryBaseDelayMillis() + " ms base");
         sendLiteral(ctx, "Last digest: " + digestText);

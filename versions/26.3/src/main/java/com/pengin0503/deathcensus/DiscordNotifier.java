@@ -92,9 +92,22 @@ public final class DiscordNotifier {
     }
 
     @Nullable
-    private static URI webhookUri() {
-        String resolved = DiscordLogic.resolveWebhookUrl(Config.discordWebhookUrl());
+    private static URI webhookUri(WebhookChannel channel) {
+        return webhookUri(channel, Config.discordWebhookUrl(), Config.discordDigestWebhookUrl());
+    }
+
+    /** Package-visible seam for tests: resolves either channel from explicit values. */
+    @Nullable
+    static URI webhookUri(WebhookChannel channel, String primaryConfigured, String digestConfigured) {
+        String resolved = DiscordLogic.resolveWebhookUrl(channel, primaryConfigured, digestConfigured);
         if (!DiscordLogic.isValidWebhookUrl(resolved)) {
+            if (channel == WebhookChannel.DIGEST
+                    && !DiscordLogic.resolveWebhookUrl(digestConfigured).isEmpty()) {
+                // §4 / §12 Q9: a configured but invalid digest URL disables the
+                // digest channel; log only this fact, never the value itself.
+                DeathCensus.LOGGER.warn("[DeathCensus] Discord digest destination is configured but invalid; "
+                        + "digest sending is disabled");
+            }
             return null;
         }
         try {
@@ -153,7 +166,7 @@ public final class DiscordNotifier {
         if (!Config.discordNotifyDeaths()) {
             return;
         }
-        URI uri = webhookUri();
+        URI uri = webhookUri(WebhookChannel.REALTIME);
         if (uri == null) {
             return;
         }
@@ -172,16 +185,21 @@ public final class DiscordNotifier {
         if (!Config.milestoneAnnouncements()) {
             return;
         }
-        URI uri = webhookUri();
+        URI uri = webhookUri(WebhookChannel.REALTIME);
         if (uri == null) {
             return;
         }
         enqueue(uri, content);
     }
 
-    /** Sends a test message; returns true when a webhook is configured and the message was queued. */
+    /** Sends a realtime test message (the default for {@code /dc discordtest}). */
     public static boolean sendTest() {
-        URI uri = webhookUri();
+        return sendTest(WebhookChannel.REALTIME);
+    }
+
+    /** Sends a test message to {@code channel}; false means it is not configured or invalid. */
+    public static boolean sendTest(WebhookChannel channel) {
+        URI uri = webhookUri(channel);
         if (uri == null) {
             return false;
         }
@@ -208,7 +226,7 @@ public final class DiscordNotifier {
         if (server == null || !Config.discordDigestEnabled()) {
             return;
         }
-        URI uri = webhookUri();
+        URI uri = webhookUri(WebhookChannel.DIGEST);
         if (uri == null) {
             return;
         }

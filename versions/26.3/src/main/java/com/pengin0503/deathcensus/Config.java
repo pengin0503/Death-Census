@@ -36,6 +36,13 @@ public final class Config {
                     "Treat this URL as a secret; it is never printed to logs or chat.")
             .define("discordWebhookUrl", "");
 
+    public static final ModConfigSpec.ConfigValue<String> DISCORD_DIGEST_WEBHOOK_URL = BUILDER
+            .comment("Optional Discord webhook URL for the periodic digest. Leave empty to use discordWebhookUrl.",
+                    "A non-empty but invalid URL disables the digest channel (no silent fallback); see /dc doctor.",
+                    "You can also use \"env:VAR_NAME\" to read the URL from an environment variable.",
+                    "Treat this URL as a secret; it is never printed to logs or chat.")
+            .define("discordDigestWebhookUrl", "");
+
     public static final ModConfigSpec.BooleanValue DISCORD_NOTIFY_DEATHS = BUILDER
             .comment("Post a Discord message for every recorded death (players who opted out are skipped).")
             .define("discordNotifyDeaths", true);
@@ -145,6 +152,15 @@ public final class Config {
     public static String discordWebhookUrl() {
         try {
             String v = DISCORD_WEBHOOK_URL.get();
+            return v != null ? v : "";
+        } catch (IllegalStateException notLoaded) {
+            return "";
+        }
+    }
+
+    public static String discordDigestWebhookUrl() {
+        try {
+            String v = DISCORD_DIGEST_WEBHOOK_URL.get();
             return v != null ? v : "";
         } catch (IllegalStateException notLoaded) {
             return "";
