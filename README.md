@@ -42,6 +42,23 @@ Fabric/Quilt only. Death Census takes the opposite angle:
 - Privacy controls: per-player opt-out of public listings
 - Admin tools: lookup any player's history, data backup and restore
 - English and Japanese localization
+- Last words and excuses: a death records your most recent chat message
+  (within 30 seconds) as last words, and /dc excuse <text> attaches a
+  one-line excuse to your latest death; both appear in history and in
+  HTML/JSON/CSV exports
+- Press F to pay respects: typing F (or f) in chat within 30 seconds of
+  another player's death adds a respect count to that death
+- Milestone announcements: the first server death, a player's first death,
+  every 100th server death and completing all 17 cause categories are
+  announced in chat and on Discord (config milestoneAnnouncements, default
+  on); counting uses lifetime totals
+- Period rankings: /dc leaderboard <type> [today|7d|30d|all] [page] and
+  /dc stats server [period]
+- History filters: /dc history and /dc lookup accept a trailing filter —
+  a cause category or an exact dimension id
+- Operator tools (permission level 2): /dc delete <player> <#>,
+  /dc reset player <name>, /dc reset all confirm and /dc doctor; delete and
+  reset always write a safety backup first and abort if it fails
 
 ## Targets
 

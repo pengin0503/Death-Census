@@ -223,8 +223,8 @@ in-mod HTTP API. (Keeps the census trustworthy and the scope shippable.)
 
 ## 9. Config summary (server config file)
 
-`enabled` (true), `recordCreativeDeaths` (true), `maxRecordsPerPlayer`
-(10000), `displayTimeZone` (""), `discordWebhookUrl` (""), 
+`enabled` (true), `recordCreativeDeaths` (true), `milestoneAnnouncements`
+(true), `maxRecordsPerPlayer` (10000), `displayTimeZone` (""), `discordWebhookUrl` (""), 
 `discordNotifyDeaths` (true), `discordLanguage` ("en_us"),
 `discordDigestEnabled` (false), `discordDigestIntervalDays` (7),
 `includeOptedOutInExports` (false), `autoBackupEnabled` (true — backup on
@@ -283,3 +283,52 @@ get text in their reported language.
 4. **Sharing**: Discord notify/digest/test, exports, backup.
 5. **Docs & release prep**: lang completion, CHANGELOG, CURSEFORGE.md,
    publish workflow; server smoke test; publish to review.
+
+## 12. 1.1.0 additions
+
+- **Last words, excuses and respects** (§3, §6): a death records the victim's
+  most recent chat message as `lastWords` when it was sent within 30 seconds
+  before the death (commands starting with `/` are ignored, text truncated to
+  200 characters). `/dc excuse <text>` attaches a one-line excuse (max 100
+  characters) to the sender's most recent death. `lastWords`, `excuse` and
+  `fCount` are stored on the death record and shown in history lines and in
+  the HTML/JSON/CSV exports. A chat message that is exactly `F` or `f` within
+  30 seconds after another player's death adds one respect to that death; a
+  sender can pay respects only once per death (death identity is the victim
+  UUID plus the death epoch millis), and no extra chat feedback is sent.
+- **Milestones** (§7): four kinds — `SERVER_FIRST` (the first death on the
+  server), `TOTAL_COUNT` (every 100th server death), `PERSONAL_FIRST` (a
+  player's first death) and `CATEGORY_COMPLETE` (a player has now died in all
+  17 cause categories). They are announced in chat and, when a webhook is
+  configured, on Discord. The new boolean config `milestoneAnnouncements`
+  (default true) gates both channels. Counting uses lifetime totals, so it is
+  unaffected by record trimming; opted-out players are never named in Discord
+  milestone posts (their category-completion announcement is suppressed).
+- **Lifetime counters**: the server keeps a lifetime death counter and each
+  player a lifetime set of cause categories. They persist across record
+  trimming and, on first load of old data that lacks them, are initialized
+  from the retained death records (the same initialization applies to restored
+  backups without the metadata).
+- **Periods and filters** (§6): `/dc leaderboard <type> [today|7d|30d|all]
+  [page]` and `/dc stats server [period]` filter deaths by `epochMillis`
+  (`today` starts at local midnight in `displayTimeZone`, `7d`/`30d` are now
+  minus that many days, `all` has no lower bound). `/dc history [player]
+  [page] [filter]` and `/dc lookup <player> [page] [filter]` accept a trailing
+  filter that is either a known cause category or an exact stored dimension
+  id; filtering happens before pagination and the header shows the filtered
+  count.
+- **Operator tools** (§6.2, permission level 2): `/dc delete <player> <#>`
+  removes a single numbered death, `/dc reset player <name>` clears one
+  player's records and state, `/dc reset all confirm` clears the whole census
+  (the `confirm` literal is mandatory), and `/dc doctor` prints diagnostics
+  (storage backend, record and opted-out counts, oldest/newest death, webhook
+  status without the URL, last digest, backups and bundled languages). Delete
+  and reset always write a safety backup first and abort if it fails; restore
+  additionally refuses to delete or overwrite its own source file.
+- **Discord digest** (§7): deaths of opted-out players are counted anonymously
+  in the digest's total and cause counts while player rankings still exclude
+  them; the digest is rendered in the configured `discordLanguage` and
+  `displayTimeZone`.
+- **Robust storage** (§3.3): save data is decoded per element — a malformed
+  entry or field is skipped with a warning instead of discarding the whole
+  player or file, so all remaining records are retained.
