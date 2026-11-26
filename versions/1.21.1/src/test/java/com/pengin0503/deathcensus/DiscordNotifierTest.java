@@ -34,6 +34,31 @@ class DiscordNotifierTest {
         assertEquals("", Config.discordDigestWebhookUrl());
     }
 
+    /** DESIGN 1.3.0 §3: both realtime filters return their defaults before config load. */
+    @Test
+    void notificationFilterConfigDefaultsAllowEveryDeath() {
+        assertTrue(Config.discordNotifyDimensions().isEmpty());
+        assertEquals(DiscordLogic.PvpFilterMode.ALL, Config.discordNotifyPvpMode());
+        assertEquals("all", Config.discordNotifyPvpMode().configId());
+    }
+
+    @Test
+    void notificationFilterValidatorsRejectBlankDimensionsAndUnknownModes() {
+        assertTrue(Config.validateDimensionId("minecraft:the_nether"));
+        assertFalse(Config.validateDimensionId(""));
+        assertFalse(Config.validateDimensionId("   "));
+        assertFalse(Config.validateDimensionId(" minecraft:the_end"));
+        assertFalse(Config.validateDimensionId("minecraft:the end"));
+        assertFalse(Config.validateDimensionId(42));
+        assertTrue(Config.validatePvpMode("all"));
+        assertTrue(Config.validatePvpMode("pvp_only"));
+        assertTrue(Config.validatePvpMode("off"));
+        assertFalse(Config.validatePvpMode("PVP_ONLY"));
+        assertFalse(Config.validatePvpMode("pvp"));
+        assertFalse(Config.validatePvpMode(""));
+        assertFalse(Config.validatePvpMode(null));
+    }
+
     @Test
     void payloadJsonStillCapsContentAndDisablesMentions() {
         JsonObject body = JsonParser.parseString(

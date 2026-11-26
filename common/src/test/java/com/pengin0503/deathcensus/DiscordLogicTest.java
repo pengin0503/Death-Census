@@ -8,6 +8,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DiscordLogicTest {
@@ -19,6 +20,105 @@ class DiscordLogicTest {
                 cause, "minecraft:" + cause, msg,
                 "", "", "survival", 0, "", "", 0
         );
+    }
+
+    private static DeathEntry death(String dimension, String causeCategory, String killerType) {
+        return new DeathEntry(
+                "u-Alice", "Alice", 1000L, 1L, 110, 100, dimension, 0, 64, 0,
+                causeCategory, "test:" + causeCategory, "Alice died",
+                killerType, "Bob", "survival", 0, "", "", 0
+        );
+    }
+
+    @Test
+    void shouldNotifyAllowsAllWhenDimensionListIsEmptyOrNull() {
+        DeathEntry nether = death("minecraft:the_nether", "fall", "");
+        assertTrue(DiscordLogic.shouldNotify(nether, null, DiscordLogic.PvpFilterMode.ALL));
+        assertTrue(DiscordLogic.shouldNotify(nether, List.of(), DiscordLogic.PvpFilterMode.ALL));
+        assertFalse(DiscordLogic.shouldNotify(nether, List.of(), DiscordLogic.PvpFilterMode.PVP_ONLY));
+        assertTrue(DiscordLogic.shouldNotify(death("minecraft:the_nether", "player", "minecraft:player"),
+                List.of(), DiscordLogic.PvpFilterMode.PVP_ONLY));
+        assertTrue(DiscordLogic.shouldNotify(nether, List.of(), DiscordLogic.PvpFilterMode.OFF));
+    }
+
+    @Test
+    void shouldNotifyMatchesDimensionExactlyAndCaseSensitively() {
+        DeathEntry end = death("minecraft:the_end", "fall", "");
+        assertTrue(DiscordLogic.shouldNotify(end, List.of("minecraft:the_end"), DiscordLogic.PvpFilterMode.ALL));
+        assertTrue(DiscordLogic.shouldNotify(end,
+                List.of("minecraft:overworld", "minecraft:the_end"), DiscordLogic.PvpFilterMode.ALL));
+        assertFalse(DiscordLogic.shouldNotify(end, List.of("minecraft:overworld"), DiscordLogic.PvpFilterMode.ALL));
+        assertFalse(DiscordLogic.shouldNotify(end, List.of("MINECRAFT:THE_END"), DiscordLogic.PvpFilterMode.ALL));
+        assertFalse(DiscordLogic.shouldNotify(end, List.of("the_end"), DiscordLogic.PvpFilterMode.ALL));
+    }
+
+    @Test
+    void shouldNotifyUsesCauseCategoryOnlyForPvpModes() {
+        DeathEntry player = death("minecraft:overworld", "player", "minecraft:player");
+        DeathEntry indirectPlayer = death("minecraft:overworld", "player", "minecraft:arrow");
+        DeathEntry fall = death("minecraft:overworld", "fall", "");
+
+        assertTrue(DiscordLogic.shouldNotify(player, null, DiscordLogic.PvpFilterMode.PVP_ONLY));
+        assertTrue(DiscordLogic.shouldNotify(indirectPlayer, null, DiscordLogic.PvpFilterMode.PVP_ONLY));
+        assertFalse(DiscordLogic.shouldNotify(fall, null, DiscordLogic.PvpFilterMode.PVP_ONLY));
+
+        assertFalse(DiscordLogic.shouldNotify(player, null, DiscordLogic.PvpFilterMode.OFF));
+        assertFalse(DiscordLogic.shouldNotify(indirectPlayer, null, DiscordLogic.PvpFilterMode.OFF));
+        assertTrue(DiscordLogic.shouldNotify(fall, null, DiscordLogic.PvpFilterMode.OFF));
+
+        assertTrue(DiscordLogic.shouldNotify(player, null, DiscordLogic.PvpFilterMode.ALL));
+        assertTrue(DiscordLogic.shouldNotify(fall, null, DiscordLogic.PvpFilterMode.ALL));
+    }
+
+    @Test
+    void shouldNotifyCombinesDimensionAndPvpFiltersWithAnd() {
+        List<String> allowed = List.of("minecraft:overworld");
+        assertTrue(DiscordLogic.shouldNotify(
+                death("minecraft:overworld", "player", "minecraft:player"), allowed,
+                DiscordLogic.PvpFilterMode.PVP_ONLY));
+        assertFalse(DiscordLogic.shouldNotify(
+                death("minecraft:the_nether", "player", "minecraft:player"), allowed,
+                DiscordLogic.PvpFilterMode.PVP_ONLY));
+        assertFalse(DiscordLogic.shouldNotify(
+                death("minecraft:overworld", "fall", ""), allowed,
+                DiscordLogic.PvpFilterMode.PVP_ONLY));
+        assertFalse(DiscordLogic.shouldNotify(
+                death("minecraft:the_nether", "fall", ""), allowed,
+                DiscordLogic.PvpFilterMode.OFF));
+        assertTrue(DiscordLogic.shouldNotify(
+                death("minecraft:overworld", "fall", ""), allowed,
+                DiscordLogic.PvpFilterMode.OFF));
+    }
+
+    @Test
+    void shouldNotifyIsNullSafeAndIgnoresOptOutSnapshot() {
+        assertFalse(DiscordLogic.shouldNotify(null, null, DiscordLogic.PvpFilterMode.ALL));
+        assertFalse(DiscordLogic.shouldNotify(null, List.of("minecraft:overworld"),
+                DiscordLogic.PvpFilterMode.PVP_ONLY));
+        DeathEntry entry = death("minecraft:overworld", "player", "minecraft:player");
+        assertTrue(DiscordLogic.shouldNotify(entry, null, null));
+
+        // The §8 opt-out flag lives on the snapshot, not the entry; the filter
+        // predicate never consults it (DeathTracker/notifyDeath still do).
+        PlayerDeaths optedOut = new PlayerDeaths("u-Alice", "Alice", true, List.of(entry));
+        assertTrue(DiscordLogic.shouldNotify(optedOut.deaths().get(0), null,
+                DiscordLogic.PvpFilterMode.ALL));
+        assertTrue(DiscordLogic.shouldNotify(optedOut.deaths().get(0), null,
+                DiscordLogic.PvpFilterMode.PVP_ONLY));
+    }
+
+    @Test
+    void pvpFilterModeConfigValuesRoundTrip() {
+        assertEquals("all", DiscordLogic.PvpFilterMode.ALL.configId());
+        assertEquals("pvp_only", DiscordLogic.PvpFilterMode.PVP_ONLY.configId());
+        assertEquals("off", DiscordLogic.PvpFilterMode.OFF.configId());
+        assertEquals(DiscordLogic.PvpFilterMode.ALL, DiscordLogic.PvpFilterMode.fromConfigValue("all"));
+        assertEquals(DiscordLogic.PvpFilterMode.PVP_ONLY,
+                DiscordLogic.PvpFilterMode.fromConfigValue("pvp_only"));
+        assertEquals(DiscordLogic.PvpFilterMode.OFF, DiscordLogic.PvpFilterMode.fromConfigValue("off"));
+        assertNull(DiscordLogic.PvpFilterMode.fromConfigValue("ALL"));
+        assertNull(DiscordLogic.PvpFilterMode.fromConfigValue("pvp"));
+        assertNull(DiscordLogic.PvpFilterMode.fromConfigValue(null));
     }
 
     @Test

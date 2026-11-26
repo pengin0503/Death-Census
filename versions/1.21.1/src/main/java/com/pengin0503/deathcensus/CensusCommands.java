@@ -521,6 +521,7 @@ public final class CensusCommands {
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
+        send(ctx, "command.deathcensus.help.discordfilters");
         if (isAdmin(ctx)) {
             send(ctx, "command.deathcensus.help.admin");
         }
@@ -1006,6 +1007,10 @@ public final class CensusCommands {
         sendLiteral(ctx, "Discord digest webhook: " + digestWebhookStatus);
         sendLiteral(ctx, "Discord retry: " + Config.discordRetryMaxAttempts() + " attempts / "
                 + Config.discordRetryBaseDelayMillis() + " ms base");
+        List<String> realtimeDimensions = Config.discordNotifyDimensions();
+        sendLiteral(ctx, "Discord realtime dimensions: "
+                + (realtimeDimensions.isEmpty() ? "all" : String.join(", ", realtimeDimensions)));
+        sendLiteral(ctx, "Discord realtime PvP mode: " + Config.discordNotifyPvpMode().configId());
         sendLiteral(ctx, "Last digest: " + digestText);
         sendLiteral(ctx, "Backups: " + backups.size() + " (newest: " + newestBackup + ")");
         sendLiteral(ctx, "Languages: " + ServerLang.BUNDLED_LANGUAGES.size()

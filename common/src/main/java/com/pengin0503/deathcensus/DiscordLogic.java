@@ -3,12 +3,39 @@ package com.pengin0503.deathcensus;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 public final class DiscordLogic {
     /** Label strings used to render a digest in a given language. */
     public record DigestLabels(String header, String count, String topCauses, String mostDeaths) {
+    }
+
+    /** Realtime death notification PvP filter (DESIGN 1.3.0 §3, §12 Q8). */
+    public enum PvpFilterMode {
+        ALL,
+        PVP_ONLY,
+        OFF;
+
+        /** The config value spelling used by {@code discordNotifyPvpMode}. */
+        public String configId() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+
+        /** Parses an exact config value, or returns null when it is not one of the three. */
+        public static PvpFilterMode fromConfigValue(String value) {
+            if (value == null) {
+                return null;
+            }
+            for (PvpFilterMode mode : values()) {
+                if (mode.configId().equals(value)) {
+                    return mode;
+                }
+            }
+            return null;
+        }
     }
 
     private static final DigestLabels ENGLISH_LABELS =
@@ -34,6 +61,43 @@ public final class DiscordLogic {
                 + " — Day " + (e.gameDay() + 1)
                 + " · " + e.dimension()
                 + " · survived " + TimeFormat.formatDuration(e.survivalTicks());
+    }
+
+    /**
+     * Pure realtime-death filter predicate (DESIGN 1.3.0 §3). A null or empty
+     * dimension allow-list means every dimension; otherwise the stored id must
+     * match one entry exactly (case-sensitive, as in {@code /dc history}).
+     * PvP is {@code causeCategory.equals("player")} only — {@code killerType}
+     * is deliberately not consulted because the category also covers indirect
+     * player attribution (§12 Q7). The opt-out gate is not part of this
+     * predicate: it stays in {@code DeathTracker}/{@code notifyDeath} so the
+     * DESIGN §8 rules remain single-sourced. Digests, milestones and chat
+     * announcements never call this method.
+     */
+    public static boolean shouldNotify(
+            DeathEntry entry, Collection<String> allowedDimensions, PvpFilterMode mode) {
+        if (entry == null) {
+            return false;
+        }
+        if (allowedDimensions != null && !allowedDimensions.isEmpty()) {
+            boolean dimensionAllowed = false;
+            for (String allowed : allowedDimensions) {
+                if (entry.dimension().equals(allowed)) {
+                    dimensionAllowed = true;
+                    break;
+                }
+            }
+            if (!dimensionAllowed) {
+                return false;
+            }
+        }
+        PvpFilterMode effectiveMode = mode != null ? mode : PvpFilterMode.ALL;
+        boolean playerCaused = "player".equals(entry.causeCategory());
+        return switch (effectiveMode) {
+            case PVP_ONLY -> playerCaused;
+            case OFF -> !playerCaused;
+            case ALL -> true;
+        };
     }
 
     /** Returns the digest labels for {@code lang}; anything other than Japanese is English. */

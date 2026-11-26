@@ -161,9 +161,17 @@ public final class DiscordNotifier {
         }
     }
 
-    /** Posts one death notification (caller has already applied the opt-out check). */
+    /**
+     * Posts one death notification (caller has already applied the opt-out
+     * check). The §3 dimension/PvP filters run here so every caller obeys them;
+     * digests, milestones and chat announcements do not call this path.
+     */
     public static void notifyDeath(DeathEntry entry) {
         if (!Config.discordNotifyDeaths()) {
+            return;
+        }
+        if (!DiscordLogic.shouldNotify(entry, Config.discordNotifyDimensions(),
+                Config.discordNotifyPvpMode())) {
             return;
         }
         URI uri = webhookUri(WebhookChannel.REALTIME);
