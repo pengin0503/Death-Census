@@ -103,4 +103,44 @@ class ExportRenderersTest {
         assertTrue(html.contains("Last words: &quot;goodbye &lt;script&gt;alert(2)&lt;/script&gt;&quot;"));
         assertTrue(html.contains("F x4"));
     }
+
+    @Test
+    void anonymizeOverloadsRedactWhileNormalOverloadsStayIdentical() {
+        String uuid = "00000000-0000-0000-0000-0000000000ff";
+        String killerUuid = "00000000-0000-0000-0000-000000000100";
+        DeathEntry d = new DeathEntry(
+                uuid, "A\"B", T1, 4L, 2400, 1200,
+                "minecraft:overworld", 130.0, -130.0, 64.0,
+                "player", "minecraft:player", "A\"B hit Bob, then ran",
+                "minecraft:player", "Bob", "survival", 9,
+                "Bob did it", "Bye Bob", 1
+        );
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths(uuid, "A\"B", false, List.of(d)),
+                new PlayerDeaths(killerUuid, "Bob", false, List.of()));
+
+        assertEquals(ExportRenderers.toCsv(players), ExportRenderers.toCsv(players, false));
+        assertEquals(ExportRenderers.toJson(players, T2), ExportRenderers.toJson(players, T2, false));
+        assertEquals(ExportRenderers.toHtml(players, T2, ZoneOffset.UTC),
+                ExportRenderers.toHtml(players, T2, ZoneOffset.UTC, false));
+
+        String csv = ExportRenderers.toCsv(players, true);
+        String json = ExportRenderers.toJson(players, T2, true);
+        String html = ExportRenderers.toHtml(players, T2, ZoneOffset.UTC, true);
+        // Pseudonyms are identical in all three formats; redaction does not
+        // change CSV quoting, JSON numeric coordinates or the no-script HTML rule.
+        assertTrue(csv.contains("\"Player A hit Player B, then ran\""));
+        assertTrue(csv.contains(",128.0,-128.0,64.0,"));
+        assertTrue(json.contains("\"anonymized\": true"));
+        assertTrue(json.contains("\"playerName\": \"Player A\""));
+        assertTrue(json.contains("\"x\": 128.0"));
+        assertTrue(html.contains("Player A"));
+        assertFalse(html.toLowerCase().contains("<script"));
+        for (String rendered : List.of(csv, json, html)) {
+            assertFalse(rendered.contains(uuid), rendered);
+            assertFalse(rendered.contains(killerUuid), rendered);
+            assertFalse(rendered.contains("A\\\"B"), rendered);
+            assertFalse(rendered.contains("Bob"), rendered);
+        }
+    }
 }

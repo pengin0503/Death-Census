@@ -42,9 +42,29 @@ public final class CensusExport {
         return fmt.format(java.time.ZonedDateTime.now(zone));
     }
 
+    /** Pure filename rule; anonymized files never carry a player name. */
+    static String exportFileName(String format, @Nullable String playerName, boolean anonymize, ZoneId zone) {
+        String suffix = "";
+        if (!anonymize && playerName != null && !playerName.isEmpty()) {
+            suffix = "-" + sanitizeFilePart(playerName);
+        }
+        return "deathcensus-" + timestamp(zone) + (anonymize ? "-anonymized" : "") + suffix + "." + format;
+    }
+
     /** Writes an export file and returns its path. Format is html, json or csv. */
     @Nullable
     public static Path writeExport(MinecraftServer server, String format, @Nullable UUID onlyPlayer) {
+        return writeExport(server, format, onlyPlayer, false);
+    }
+
+    /**
+     * As {@link #writeExport(MinecraftServer, String, UUID)}, but renders a
+     * redacted copy when {@code anonymize} is set (DESIGN 1.3.0 §6). Opt-out
+     * filtering still happens before anonymization; the normal path is unchanged.
+     */
+    @Nullable
+    public static Path writeExport(MinecraftServer server, String format, @Nullable UUID onlyPlayer,
+                                   boolean anonymize) {
         CensusData data = CensusData.get(server);
         List<PlayerDeaths> players = new ArrayList<>();
         for (PlayerDeaths pd : data.snapshot()) {
@@ -65,15 +85,12 @@ public final class CensusExport {
         long now = System.currentTimeMillis();
         ZoneId zone = Config.displayTimeZone();
         String content = switch (format) {
-            case "json" -> ExportRenderers.toJson(players, now);
-            case "csv" -> ExportRenderers.toCsv(players);
-            default -> ExportRenderers.toHtml(players, now, zone);
+            case "json" -> ExportRenderers.toJson(players, now, anonymize);
+            case "csv" -> ExportRenderers.toCsv(players, anonymize);
+            default -> ExportRenderers.toHtml(players, now, zone, anonymize);
         };
-        String suffix = "";
-        if (onlyPlayer != null && !players.isEmpty()) {
-            suffix = "-" + sanitizeFilePart(players.get(0).name());
-        }
-        Path file = exportsDir(server).resolve("deathcensus-" + timestamp(zone) + suffix + "." + format);
+        String playerName = onlyPlayer != null && !players.isEmpty() ? players.get(0).name() : null;
+        Path file = exportsDir(server).resolve(exportFileName(format, playerName, anonymize, zone));
         try {
             Files.createDirectories(file.getParent());
             Files.writeString(file, content, StandardCharsets.UTF_8);

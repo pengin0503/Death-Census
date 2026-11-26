@@ -158,12 +158,24 @@ public final class CensusCommands {
                 .requires(PermissionBridge.requires(DeathCensusPermission.EXPORT,
                         Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)));
         for (String format : List.of("html", "json", "csv")) {
+            // The --anonymize literal is registered before "player" so the word
+            // argument cannot swallow the flag (DESIGN 1.3.0 §6). Both orders
+            // (before and after the optional player) are accepted.
             export.then(literal(format)
-                    .executes(ctx -> export(ctx, format, null))
+                    .executes(ctx -> export(ctx, format, null, false))
+                    .then(literal("--anonymize")
+                            .executes(ctx -> export(ctx, format, null, true))
+                            .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                    .<CommandSourceStack, String>argument("player", StringArgumentType.word())
+                                    .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
+                                    .executes(ctx -> export(ctx, format, StringArgumentType.getString(ctx, "player"), true))))
                     .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
                             .<CommandSourceStack, String>argument("player", StringArgumentType.word())
                             .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
-                            .executes(ctx -> export(ctx, format, StringArgumentType.getString(ctx, "player")))));
+                            .executes(ctx -> export(ctx, format, StringArgumentType.getString(ctx, "player"), false))
+                            .then(literal("--anonymize")
+                                    .executes(ctx -> export(ctx, format,
+                                            StringArgumentType.getString(ctx, "player"), true)))));
         }
         root.then(export);
 
@@ -688,7 +700,8 @@ public final class CensusCommands {
         return 1;
     }
 
-    private static int export(CommandContext<CommandSourceStack> ctx, String format, @Nullable String playerName) {
+    private static int export(CommandContext<CommandSourceStack> ctx, String format, @Nullable String playerName,
+                              boolean anonymize) {
         MinecraftServer server = server(ctx);
         if (server == null) {
             return 0;
@@ -708,12 +721,13 @@ public final class CensusCommands {
                 return 0;
             }
         }
-        Path file = CensusExport.writeExport(server, format, only);
+        Path file = CensusExport.writeExport(server, format, only, anonymize);
         if (file == null) {
             fail(ctx, "command.deathcensus.export.failed");
             return 0;
         }
-        send(ctx, "command.deathcensus.export.done", file.toString());
+        send(ctx, anonymize ? "command.deathcensus.export.anonymized" : "command.deathcensus.export.done",
+                file.toString());
         return 1;
     }
 
