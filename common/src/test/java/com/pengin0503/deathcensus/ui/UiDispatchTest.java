@@ -173,6 +173,10 @@ class UiDispatchTest {
         UiResult.SideEffect deleted = assertInstanceOf(UiResult.SideEffect.class, UiActions.handle(confirm, admin));
         assertTrue(deleted.applied());
         assertTrue(admin.calls.contains("delete:" + TestData.BOB + ":4000"));
+        assertEquals("command.deathcensus.delete.done", deleted.feedback().key());
+        assertEquals(3, deleted.feedback().args().length);
+        assertEquals("Bob", deleted.feedback().args()[0]);
+        assertEquals(1, deleted.feedback().args()[1]); // 1-based index
         assertInstanceOf(HistoryView.class, deleted.followUp().view());
 
         FakeUiContext failed = home(new FakeUiContext(TestData.ALICE, players));
@@ -209,5 +213,16 @@ class UiDispatchTest {
                 TestData.BOB.toString(), 4_000L, Map.of());
         assertInstanceOf(NoticeView.class, open(UiActions.handle(respect, viewer)));
         assertTrue(viewer.calls.isEmpty());
+
+        // Death-line respects carry no session token; visibility is still
+        // re-evaluated against live data and the dedupe helper is reused.
+        List<PlayerDeaths> publicData = List.of(TestData.player(TestData.BOB, "Bob", false, bobDeath));
+        FakeUiContext deathLine = new FakeUiContext(TestData.ALICE, publicData);
+        UiResult.SideEffect applied = assertInstanceOf(UiResult.SideEffect.class, UiActions.handle(
+                new UiRequest(TestData.ALICE, "respect", "", 1, TestData.BOB.toString(), 4_000L, Map.of()),
+                deathLine));
+        assertTrue(applied.applied());
+        assertTrue(deathLine.calls.contains("respect:" + TestData.ALICE + ":" + TestData.BOB + ":4000"));
+        assertTrue(deathLine.currentSession() == null); // no token to consume or issue
     }
 }

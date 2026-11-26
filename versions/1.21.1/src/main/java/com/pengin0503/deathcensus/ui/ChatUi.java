@@ -31,6 +31,26 @@ public final class ChatUi {
         render(player, "home", result);
     }
 
+    /**
+     * PR-4: one compact extra system line per online viewer after a death.
+     * Gating reuses the UiPrivacy predicate; the line carries only the victim's
+     * name and (uuid, epoch) targets, never coordinates or a death message.
+     */
+    public static void sendDeathLine(ServerPlayer viewer, UUID victim, long epoch, String victimName) {
+        if (!new ChatUiContext(viewer).canViewDetail(victim)) {
+            return;
+        }
+        String target = victim + " " + epoch;
+        MutableComponent line = ServerLang.tr(viewer, "command.deathcensus.ui.deathline", victimName);
+        line.append(" ").append(commandButton(viewer, "command.deathcensus.ui.deathline.details",
+                "/dc ui detail " + target, "command.deathcensus.ui.tooltip.detail"));
+        line.append(" ").append(commandButton(viewer, "command.deathcensus.ui.deathline.excuse",
+                "/dc ui excuse " + target, "command.deathcensus.ui.tooltip.excuse"));
+        line.append(" ").append(commandButton(viewer, "command.deathcensus.ui.deathline.f",
+                "/dc ui respect " + target, "command.deathcensus.ui.tooltip.respect"));
+        line(viewer, line);
+    }
+
     /** The plain help text stays available alongside the chat menu on entry. */
     public static void sendHelpLines(ServerPlayer player) {
         line(player, ServerLang.tr(player, "command.deathcensus.help.title"));
@@ -77,11 +97,9 @@ public final class ChatUi {
     private static void render(ServerPlayer player, String requestedAction, UiResult result) {
         UiResult effective = result;
         if (result instanceof UiResult.SideEffect sideEffect) {
-            // delete.done needs name/index/date args; ChatUiContext sends that
-            // precise confirmation itself, and the refreshed History is the
-            // in-menu confirmation (same as the Dialog adapter).
-            if (!"delete_confirm".equals(sideEffect.action())
-                    && sideEffect.feedback() != null && !sideEffect.feedback().key().isEmpty()) {
+            // UiActions builds parameterized feedback (including delete.done
+            // with name/index/date), so every side effect is rendered here.
+            if (sideEffect.feedback() != null && !sideEffect.feedback().key().isEmpty()) {
                 line(player, tr(player, sideEffect.feedback()));
             }
             effective = sideEffect.followUp();

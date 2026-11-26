@@ -60,6 +60,26 @@ Fabric/Quilt only. Death Census takes the opposite angle:
   /dc reset player <name>, /dc reset all confirm and /dc doctor; delete and
   reset always write a safety backup first and abort if it fails
 
+## GUI (`/dc`)
+
+`/dc` (or `/deathcensus`) with no arguments opens an in-game menu; vanilla
+clients are enough on every version:
+
+- **26.1.2 / 26.2 / 26.3** — vanilla server-driven dialogs: Home, history and
+  search, death detail, rankings, privacy and a read-only operator menu.
+- **1.21.1** — the same views rendered as clickable chat lines (commands behind
+  the buttons); there is no dialog system on this version.
+
+After each recorded death the mod sends **one extra compact line** with
+`[Details] [Excuse] [F]` buttons; the vanilla death message itself is never
+changed. Each button targets that specific death. `[Details]`/`[Excuse]` are
+only offered to viewers allowed to see the record, and `[F]` uses the existing
+one-respect-per-sender dedupe. An opted-out player's death line goes only to
+that player and operators; opted-out names never appear in public history,
+rankings or death lines, while anonymous server totals still include them.
+
+`/dc help` remains the plain text help on all versions.
+
 ## Targets
 
 - Minecraft **1.21.1** and **26.x** (NeoForge), server-side only
