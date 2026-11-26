@@ -2,16 +2,21 @@ package com.pengin0503.deathcensus;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.ParseResults;
+import com.mojang.brigadier.tree.CommandNode;
 import com.pengin0503.deathcensus.ui.ChatUiRequestParser;
 import com.pengin0503.deathcensus.ui.UiRequest;
 import net.minecraft.commands.CommandSourceStack;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The hidden Brigadier subtree must parse into the same UiRequest as the parser. */
@@ -67,6 +72,34 @@ class CensusCommandsUiTest {
             ParseResults<CommandSourceStack> result = dispatcher.parse(command, null);
             assertTrue(result.getExceptions().isEmpty(), command + " -> " + result.getExceptions());
             assertFalse(result.getReader().canRead(), command + " was not fully consumed");
+        }
+    }
+
+    @Test
+    void exportFlagHasNodesBeforeAndAfterTheOptionalPlayer() throws IOException {
+        CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
+        dispatcher.register(CensusCommands.root());
+        CommandNode<CommandSourceStack> root = dispatcher.getRoot().getChild("deathcensus");
+        assertNotNull(root);
+        CommandNode<CommandSourceStack> export = root.getChild("export");
+        assertNotNull(export);
+        // Export remains gated through PermissionBridge's EXPORT node.
+        String sourceDir = System.getProperty("deathcensus.mainSourceDir");
+        assertNotNull(sourceDir);
+        String source = Files.readString(Path.of(sourceDir,
+                "com", "pengin0503", "deathcensus", "CensusCommands.java"));
+        String exportTree = source.substring(source.indexOf("literal(\"export\")"),
+                source.indexOf("root.then(export)"));
+        assertTrue(exportTree.contains("PermissionBridge.requires(DeathCensusPermission.EXPORT"));
+        for (String format : List.of("html", "json", "csv")) {
+            CommandNode<CommandSourceStack> formatNode = export.getChild(format);
+            assertNotNull(formatNode, format);
+            assertNotNull(formatNode.getChild("--anonymize"), format + " flag without player");
+            CommandNode<CommandSourceStack> player = formatNode.getChild("player");
+            assertNotNull(player, format + " player argument");
+            assertNotNull(player.getChild("--anonymize"), format + " flag after player");
+            assertNotNull(formatNode.getChild("--anonymize").getChild("player"),
+                    format + " player after flag");
         }
     }
 }

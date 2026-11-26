@@ -65,13 +65,30 @@ public final class ExportRenderers {
         return sb.toString();
     }
 
+    /** As {@link #toCsv(List)}, but rendered from a redacted copy when requested. */
+    public static String toCsv(List<PlayerDeaths> players, boolean anonymize) {
+        return toCsv(anonymize ? Anonymizer.apply(players) : players);
+    }
+
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
+        return renderJson(players, generatedAtEpochMillis, false);
+    }
+
+    /** As {@link #toJson(List, long)}, with anonymized metadata and a redacted copy when requested. */
+    public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis, boolean anonymize) {
+        return renderJson(anonymize ? Anonymizer.apply(players) : players, generatedAtEpochMillis, anonymize);
+    }
+
+    private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis, boolean anonymized) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
 
         StringBuilder sb = new StringBuilder(256 + totalDeaths * 256);
         sb.append("{\n");
         sb.append("  \"generatedAt\": ").append(generatedAtEpochMillis).append(",\n");
+        if (anonymized) {
+            sb.append("  \"anonymized\": true,\n");
+        }
         sb.append("  \"totalDeaths\": ").append(totalDeaths).append(",\n");
         sb.append("  \"players\": [");
         if (!safePlayers.isEmpty()) {
@@ -258,6 +275,12 @@ public final class ExportRenderers {
         sb.append("</body>\n");
         sb.append("</html>\n");
         return sb.toString();
+    }
+
+    /** As {@link #toHtml(List, long, ZoneId)}, but rendered from a redacted copy when requested. */
+    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                boolean anonymize) {
+        return toHtml(anonymize ? Anonymizer.apply(players) : players, generatedAtEpochMillis, zone);
     }
 
     private static List<PlayerDeaths> safePlayerList(List<PlayerDeaths> players) {
