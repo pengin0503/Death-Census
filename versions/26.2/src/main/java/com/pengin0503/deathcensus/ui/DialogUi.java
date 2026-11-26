@@ -10,6 +10,9 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.dialog.ActionButton;
 import net.minecraft.server.dialog.CommonButtonData;
@@ -70,13 +73,48 @@ public final class DialogUi {
         render(player, action, result);
     }
 
+    /**
+     * PR-4: one compact extra system line per online viewer after a death.
+     * The gating predicate is the same UiPrivacy rule that history/detail use;
+     * the line carries only the victim's name and (uuid, epoch) targets — never
+     * coordinates or a death message — and the vanilla death message is untouched.
+     */
+    public static void sendDeathLine(ServerPlayer viewer, UUID victim, long epoch, String victimName) {
+        DialogUiContext ctx = new DialogUiContext(viewer);
+        if (!ctx.canViewDetail(victim)) {
+            return;
+        }
+        MutableComponent line = ServerLang.tr(viewer, "command.deathcensus.ui.deathline", victimName);
+        line.append(" ").append(deathButton(viewer, "command.deathcensus.ui.deathline.details",
+                "detail", victim, epoch, "command.deathcensus.ui.tooltip.detail"));
+        line.append(" ").append(deathButton(viewer, "command.deathcensus.ui.deathline.excuse",
+                "excuse_open", victim, epoch, "command.deathcensus.ui.tooltip.excuse"));
+        line.append(" ").append(deathButton(viewer, "command.deathcensus.ui.deathline.f",
+                "respect", victim, epoch, "command.deathcensus.ui.tooltip.respect"));
+        viewer.sendSystemMessage(line);
+    }
+
+    /** Custom-click button targeting one identified death; no session token is needed. */
+    private static Component deathButton(ServerPlayer viewer, String labelKey, String action,
+                                         UUID victim, long epoch, String tooltipKey) {
+        CompoundTag payload = new CompoundTag();
+        payload.putInt("v", 1);
+        payload.putString("a", action);
+        payload.putString("t", victim.toString());
+        payload.putLong("d", epoch);
+        ClickEvent click = new ClickEvent.Custom(
+                Identifier.fromNamespaceAndPath(UiActionRef.NAMESPACE, "ui/" + action),
+                Optional.of(payload));
+        Style style = Style.EMPTY.withClickEvent(click)
+                .withHoverEvent(new HoverEvent.ShowText(ServerLang.tr(viewer, tooltipKey)));
+        return Component.literal("[" + ServerLang.tr(viewer, labelKey).getString() + "]").withStyle(style);
+    }
+
     private static void render(ServerPlayer player, String requestedAction, UiResult result) {
         if (result instanceof UiResult.SideEffect sideEffect) {
-            // delete.done is parameterized with the player/index/date in the
-            // chat command; the dispatcher's feedback descriptor carries no
-            // args, so the reopened History view is the confirmation instead.
-            if (!"delete_confirm".equals(sideEffect.action())
-                    && sideEffect.feedback() != null && !sideEffect.feedback().key().isEmpty()) {
+            // UiActions builds parameterized feedback (including delete.done
+            // with name/index/date), so every side effect is rendered here.
+            if (sideEffect.feedback() != null && !sideEffect.feedback().key().isEmpty()) {
                 player.sendSystemMessage(tr(player, sideEffect.feedback()));
             }
             result = sideEffect.followUp();
@@ -359,7 +397,7 @@ public final class DialogUi {
         Map<String, String> all = new LinkedHashMap<>(params);
         all.put("a", action);
         CompoundTag additions = new CompoundTag();
-        additions.putString("v", "1");
+        additions.putInt("v", 1); // IntTag: DialogClickHandler requires a numeric schema version
         for (Map.Entry<String, String> entry : all.entrySet()) {
             String key = entry.getKey();
             String value = entry.getValue();

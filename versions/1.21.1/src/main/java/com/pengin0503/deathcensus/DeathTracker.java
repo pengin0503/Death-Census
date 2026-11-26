@@ -16,6 +16,8 @@ import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 
+import com.pengin0503.deathcensus.ui.ChatUi;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -244,6 +246,14 @@ public final class DeathTracker {
         RECENT_DEATHS.removeIf(death -> deathEpochMillis - death.epochMillis > CAPTURE_WINDOW_MILLIS);
         RECENT_DEATHS.add(new RecentDeath(player.getUUID(), deathEpochMillis));
         DeathCensus.LOGGER.info("[DeathCensus] Recorded death of {} ({})", playerName, category);
+        // PR-4: one compact, per-viewer extra line. The vanilla death message
+        // is untouched; the adapter gates each viewer with UiPrivacy and only
+        // includes the victim name plus (uuid, epoch) click targets.
+        for (ServerPlayer viewer : server.getPlayerList().getPlayers()) {
+            if (!(viewer instanceof FakePlayer)) {
+                ChatUi.sendDeathLine(viewer, player.getUUID(), deathEpochMillis, playerName);
+            }
+        }
         if (!pc.optOutPublic) {
             DiscordNotifier.notifyDeath(entry);
         }

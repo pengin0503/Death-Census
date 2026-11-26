@@ -521,7 +521,10 @@ public final class UiActions {
         if (death == null || !ctx.canViewDetail(parseUuidOrNull(death.playerUuid()))) {
             return unavailable();
         }
-        if (consume(request, ctx) == null) {
+        // Death-line buttons have no UI session to consume: the (uuid, epoch)
+        // identity is re-resolved above and visibility is re-checked live, so
+        // no client-supplied state is trusted. Menu clicks still consume theirs.
+        if (!request.token().isBlank() && consume(request, ctx) == null) {
             return expired(ctx);
         }
         boolean applied = ctx.payRespect(ctx.viewer(), parseUuidOrNull(death.playerUuid()), death.epochMillis());
@@ -566,9 +569,14 @@ public final class UiActions {
             return new UiResult.Open(new NoticeView(
                     UiText.of("command.deathcensus.delete.backup_failed"), "ui/detail"));
         }
+        // DESIGN §6: confirm with player name, 1-based index and date. Build the
+        // descriptor here so both adapters render the same localized message.
+        int index = Math.max(1, indexOfDeath(ctx.snapshot(), death.playerUuid(), death.epochMillis()));
+        UiText feedback = UiText.of("command.deathcensus.delete.done",
+                UiPrivacy.displayName(ctx.snapshot(), death.playerUuid()), index,
+                TimeFormat.formatDateTime(death.epochMillis(), ctx.zoneId()));
         UiSession session = ctx.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
-        return new UiResult.SideEffect("delete_confirm", true,
-                UiText.of("command.deathcensus.delete.done"),
+        return new UiResult.SideEffect("delete_confirm", true, feedback,
                 new UiResult.Open(historyView(ctx, HistoryFilter.DEFAULT, 1, session)));
     }
 
@@ -645,6 +653,21 @@ public final class UiActions {
 
     private static UUID parseUuidOrNull(String raw) {
         return parseUuid(raw).orElse(null);
+    }
+
+    /** 1-based position of the death identified by (uuid, epoch) in the live snapshot. */
+    private static int indexOfDeath(List<PlayerDeaths> players, String uuid, long epoch) {
+        for (PlayerDeaths player : players) {
+            if (player == null || !player.uuid().equalsIgnoreCase(uuid)) {
+                continue;
+            }
+            for (int i = 0; i < player.deaths().size(); i++) {
+                if (player.deaths().get(i).epochMillis() == epoch) {
+                    return i + 1;
+                }
+            }
+        }
+        return 0;
     }
 
     private static String input(UiRequest request, String key) {

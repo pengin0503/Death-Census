@@ -332,3 +332,51 @@ get text in their reported language.
 - **Robust storage** (§3.3): save data is decoded per element — a malformed
   entry or field is skipped with a warning instead of discarding the whole
   player or file, so all remaining records are retained.
+
+## 13. 1.2.0 GUI (as implemented)
+
+Full research-backed specification: [DESIGN_1.2.0.md](DESIGN_1.2.0.md).
+The GUI is server-side only and uses vanilla clients; no new storage fields,
+config schema, version bump or death-recording changes are part of it.
+
+- **Common layer** (`common/.../ui/`): immutable view models (`HomeView`,
+  `HistoryView`, `DeathDetailView`, `RankingView`, `PrivacyView`,
+  `ConfirmationView`, `NoticeView`), a single `UiActions.handle` dispatcher,
+  a narrow `UiContext` bridge implemented by each version, and five-minute
+  per-viewer sessions with token rotation on navigation, invalidation on
+  mutation, and page clamping. All permissions, payload bounds and `(uuid,
+  epoch)` record resolution are re-evaluated server-side.
+- **26.1.2 / 26.2 / 26.3**: `DialogUi` converts view models to vanilla
+  server-driven dialogs (`pause=false`, `WAIT_FOR_RESPONSE`), opened via
+  `ServerPlayer.openDialog(Holder.direct(dialog))`. Buttons use
+  `minecraft:dynamic/custom` payloads; `DialogClickHandler` receives
+  `CustomClickActionEvent` and cancels it only after handling. `/dc` opens
+  Home; `/dc help` stays text. The Quick Actions / pause-menu dialog
+  registration is a documented stretch only: the spec marks in-game
+  registration UNVERIFIED and does not specify the dialog/tag JSON body, so
+  it is deliberately not shipped.
+- **1.21.1**: `ChatUi` renders the same view models as clickable chat lines
+  using `RUN_COMMAND` / `SUGGEST_COMMAND` plus hover text; the hidden `/dc ui`
+  subtree parses into the same `UiRequest`. Filters are command arguments
+  held in the session; there are no dialogs, item bodies or modals, and
+  confirmation is a warning line plus `[Yes]`/`[No]` buttons.
+- **Death-notification line** (PR-4): after recording, `DeathTracker` sends
+  one compact extra system line per eligible online viewer with
+  `[Details] [Excuse] [F]` targeting that death's `(uuid, epoch)`; the
+  vanilla death message is untouched. 26.x buttons are `ClickEvent.Custom`
+  routed through `DialogClickHandler`/`UiActions`; 1.21.1 buttons run
+  `/dc ui detail|excuse|respect`. The line contains no coordinates or death
+  message. `F` reuses `DeathTracker.payRespect` / `CensusData.addRespect`
+  dedupe; menu and death-line clicks share the same dispatcher path.
+- **Privacy and delete**: `UiPrivacy.canViewDetail` (self, admin, or
+  non-opted-out) is the single gate for history, detail, home last-death,
+  command suggestions and the death line. Opted-out players are never named
+  in public views; anonymous totals include their deaths. Operator delete
+  resolves the index from `(uuid, epoch)` at execution time, writes
+  `CensusExport.writeBackup()` first, aborts with a notice if it fails, and
+  confirms with player name, 1-based index and date; both adapters render
+  the same dispatcher-built feedback.
+- **Localization**: all user-visible text, including button labels and
+  hover text, is looked up per viewer via `ServerLang.tr(player, ...)`; new
+  `command.deathcensus.ui.*` keys exist in both `en_us` and `ja_jp` with
+  identical key sets, enforced by `CensusLangTest`.

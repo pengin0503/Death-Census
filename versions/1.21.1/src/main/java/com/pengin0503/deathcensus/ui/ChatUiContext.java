@@ -4,11 +4,9 @@ import com.pengin0503.deathcensus.CensusCommands;
 import com.pengin0503.deathcensus.CensusData;
 import com.pengin0503.deathcensus.CensusLogic;
 import com.pengin0503.deathcensus.Config;
-import com.pengin0503.deathcensus.DeathEntry;
 import com.pengin0503.deathcensus.DeathTracker;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.ServerLang;
-import com.pengin0503.deathcensus.TimeFormat;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.stats.Stats;
@@ -156,28 +154,10 @@ public final class ChatUiContext implements UiContext {
         if (server == null || uuid == null) {
             return false;
         }
-        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
-        DeathEntry removed = null;
-        int index = -1;
-        if (pc != null) {
-            for (int i = 0; i < pc.deaths.size(); i++) {
-                if (pc.deaths.get(i).epochMillis() == epoch) {
-                    removed = pc.deaths.get(i);
-                    index = i;
-                    break;
-                }
-            }
-        }
         int status = CensusCommands.deleteDeathAfterBackup(server, uuid, -1, epoch);
         if (status == CensusCommands.DELETE_OK) {
             bumpDataVersion();
-            // The dispatcher's feedback descriptor has no name/index/date args,
-            // so send the same confirmation as /dc delete here (DESIGN §6).
-            if (removed != null) {
-                player.sendSystemMessage(ServerLang.tr(player, "command.deathcensus.delete.done",
-                        removed.playerName(), index + 1,
-                        TimeFormat.formatDateTime(removed.epochMillis(), zoneId())));
-            }
+            // UiActions renders the precise name/index/date confirmation.
         }
         return status == CensusCommands.DELETE_OK;
     }

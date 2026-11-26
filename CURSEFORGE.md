@@ -59,6 +59,27 @@ All commands work under `/deathcensus` and the short alias `/dc`.
 | `/dc discordtest` | (OP) Send a Discord test message |
 | `/dc reload` | (OP) Re-check the digest schedule |
 
+## In-game GUI (`/dc`)
+
+Running `/dc` or `/deathcensus` with no arguments opens a menu — no client mod
+is required:
+
+- **26.1.2 / 26.2 / 26.3**: vanilla server-driven dialogs for Home, history and
+  search, death detail, rankings, privacy and read-only operator shortcuts.
+- **1.21.1**: the same views as clickable chat lines (the buttons run `/dc ui`
+  commands); dialogs are not available on this version.
+
+After a death is recorded, one extra compact line is sent with
+`[Details] [Excuse] [F]` buttons for that specific death. The vanilla death
+message is untouched. `[Details]`/`[Excuse]` are shown only to viewers allowed
+to see the record; `[F]` reuses the existing one-per-sender respect dedupe.
+Players who opted out receive their own death line, and operators can see it;
+other viewers get no line, so a hidden record's existence, coordinates and
+message are never disclosed. Opted-out names stay out of public history and
+rankings, but their deaths still count in anonymous server totals.
+
+`/dc help` keeps the original plain text help on every version.
+
 ## Configuration
 
 The server config (`deathcensus-server.toml` / common config depending on
@@ -113,6 +134,27 @@ vanilla clients can join.
 - 管理者コマンド（権限レベル2）：`/dc delete <player> <#>`、
   `/dc reset player <name>`、`/dc reset all confirm`、`/dc doctor`。
   削除・リセットは安全なバックアップを先に作成し、失敗した場合は変更しません
+
+## ゲーム内 GUI（`/dc`）
+
+`/dc` または `/deathcensus` を引数なしで実行するとメニューが開きます。
+クライアント側の Mod は不要です。
+
+- **26.1.2 / 26.2 / 26.3**：バニラのサーバー駆動ダイアログでホーム、履歴と
+  検索、死亡の詳細、ランキング、プライバシー、管理者用ショートカットを表示
+- **1.21.1**：同じ画面をクリック可能なチャット行として表示（ボタンは
+  `/dc ui` コマンドを実行）。このバージョンにはダイアログがありません
+
+死亡が記録されると、その死亡を指す `[詳細] [言い訳] [F]` ボタン付きの
+簡潔な行が追加で1行だけ送信されます。バニラのデスメッセージは変更され
+ません。`[詳細]` と `[言い訳]` はその記録を閲覧できるプレイヤーにのみ
+表示され、`[F]` は既存の「送信者ごとに1回」の敬意カウントを使います。
+オプトアウト中のプレイヤーの死亡行は本人と管理者にだけ届き、他の
+プレイヤーには存在・座標・メッセージも漏れません。オプトアウト中の
+名前は公開履歴やランキングに出ませんが、匿名のサーバー合計には
+数えられます。
+
+`/dc help` はすべてのバージョンで従来のテキストヘルプのままです。
 
 対象は NeoForge の Minecraft **1.21.1 / 26.1.2 / 26.2 / 26.3** です。
 コマンドは `/deathcensus`（短縮形 `/dc`）です。
