@@ -869,6 +869,8 @@ public final class CensusCommands {
         sendLiteral(ctx, "Newest death: " + newestText);
         sendLiteral(ctx, "Storage: deathcensus:deaths");
         sendLiteral(ctx, "Discord webhook: " + webhookStatus);
+        sendLiteral(ctx, "Discord retry: " + Config.discordRetryMaxAttempts() + " attempts / "
+                + Config.discordRetryBaseDelayMillis() + " ms base");
         sendLiteral(ctx, "Last digest: " + digestText);
         sendLiteral(ctx, "Backups: " + backups.size() + " (newest: " + newestBackup + ")");
         sendLiteral(ctx, "Languages: " + ServerLang.BUNDLED_LANGUAGES.size()

@@ -11,20 +11,51 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Asynchronous Discord webhook sender. The webhook URL is a secret: it is
- * never printed to logs or chat. All sends run on a daemon single-thread
- * executor so server ticks are never blocked; failures are logged once and
- * never retried.
+ * never printed to logs or chat. All sends run on a single daemon thread with
+ * a bounded queue; retries and backoff happen only on that worker, never on a
+ * server tick. A terminal failure is logged once (attempt count and status
+ * code only) and the message is dropped; nothing escapes into game code.
+ *
+ * <p>A long Retry-After deliberately delays later webhook messages; the 256
+ * task queue cap bounds the memory used by a send backlog.
  */
 public final class DiscordNotifier {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final int CHECK_INTERVAL_TICKS = 72000; // ~1 hour
     private static final long DAY_MILLIS = 86400000L;
+    private static final int QUEUE_CAPACITY = 256;
+
+    private static final ThreadFactory DAEMON_FACTORY = r -> {
+        Thread t = new Thread(r, "deathcensus-discord");
+        t.setDaemon(true);
+        return t;
+    };
+
+    // Rejection only logs; it never runs the task on the submitting (tick) thread.
+    private static final RejectedExecutionHandler DROP_HANDLER = (runnable, executor) ->
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a message");
+
+    // The only real HTTP transport; the pure retry engine owns attempt policy.
+    private static final WebhookSender HTTP_SENDER = (uri, json) -> {
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(TIMEOUT)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
+        return new WebhookResponse(response.statusCode(),
+                response.headers().firstValue("Retry-After").orElse(null));
+    };
 
     private static ExecutorService executor;
     private static HttpClient httpClient;
@@ -35,11 +66,8 @@ public final class DiscordNotifier {
 
     private static synchronized ExecutorService executor() {
         if (executor == null || executor.isShutdown()) {
-            executor = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "deathcensus-discord");
-                t.setDaemon(true);
-                return t;
-            });
+            executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                    new ArrayBlockingQueue<>(QUEUE_CAPACITY), DAEMON_FACTORY, DROP_HANDLER);
         }
         return executor;
     }
@@ -92,23 +120,31 @@ public final class DiscordNotifier {
     private static void enqueue(URI uri, String content) {
         String json = payloadJson(content);
         try {
-            executor().execute(() -> {
-                try {
-                    HttpRequest request = HttpRequest.newBuilder(uri)
-                            .timeout(TIMEOUT)
-                            .header("Content-Type", "application/json")
-                            .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
-                            .build();
-                    HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
-                    if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                        DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook returned HTTP {}", response.statusCode());
-                    }
-                } catch (Exception e) {
-                    DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook send failed: {}", e.toString());
-                }
-            });
+            executor().execute(() -> sendWithRetry(uri, json));
         } catch (RejectedExecutionException e) {
+            // Defensive: DROP_HANDLER normally discards without throwing.
             DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a message");
+        }
+    }
+
+    /** Runs on the daemon Discord worker only; sleeps and logs never touch a tick thread. */
+    private static void sendWithRetry(URI uri, String json) {
+        try {
+            WebhookRetry.RetryConfig config = new WebhookRetry.RetryConfig(
+                    Config.discordRetryMaxAttempts(), Config.discordRetryBaseDelayMillis());
+            WebhookRetry.WebhookSendResult result = WebhookRetry.sendWithRetry(
+                    HTTP_SENDER, uri, json, config, Thread::sleep, System::currentTimeMillis);
+            if (!result.delivered()) {
+                Exception failure = result.exception();
+                String detail = failure != null ? failure.getClass().getSimpleName() : "HTTP status";
+                DeathCensus.LOGGER.warn(
+                        "[DeathCensus] Discord webhook failed after {} attempt(s) (HTTP {}): {}; dropping message",
+                        result.attempts(), result.statusCode(), detail);
+            }
+        } catch (Exception e) {
+            // Last-resort guard: no config or engine error may escape into game code.
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook send failed ({}); dropping message",
+                    e.getClass().getSimpleName());
         }
     }
 

@@ -52,6 +52,16 @@ public final class Config {
             .comment("Interval in days between Discord digest messages (1-30).")
             .defineInRange("discordDigestIntervalDays", 7, 1, 30);
 
+    public static final ModConfigSpec.IntValue DISCORD_RETRY_MAX_ATTEMPTS = BUILDER
+            .comment("Total attempts per Discord webhook message, including the initial send (1-6).",
+                    "Retries happen on the daemon Discord worker; failed messages are dropped after the last attempt.")
+            .defineInRange("discordRetryMaxAttempts", 4, 1, 6);
+
+    public static final ModConfigSpec.IntValue DISCORD_RETRY_BASE_DELAY_MILLIS = BUILDER
+            .comment("Base delay in milliseconds before the first Discord webhook retry; doubles per retry (100-5000).",
+                    "A Retry-After header from Discord takes precedence and is capped at 60000 ms.")
+            .defineInRange("discordRetryBaseDelayMillis", 1000, 100, 5000);
+
     public static final ModConfigSpec.BooleanValue INCLUDE_OPTED_OUT_IN_EXPORTS = BUILDER
             .comment("Include players who opted out of public listings in operator exports.")
             .define("includeOptedOutInExports", false);
@@ -171,6 +181,22 @@ public final class Config {
             return DISCORD_DIGEST_INTERVAL_DAYS.get();
         } catch (IllegalStateException notLoaded) {
             return 7;
+        }
+    }
+
+    public static int discordRetryMaxAttempts() {
+        try {
+            return DISCORD_RETRY_MAX_ATTEMPTS.get();
+        } catch (IllegalStateException notLoaded) {
+            return 4;
+        }
+    }
+
+    public static int discordRetryBaseDelayMillis() {
+        try {
+            return DISCORD_RETRY_BASE_DELAY_MILLIS.get();
+        } catch (IllegalStateException notLoaded) {
+            return 1000;
         }
     }
 
