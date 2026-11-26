@@ -236,7 +236,10 @@ public final class CensusExport {
                                 str(d, "killerType"),
                                 str(d, "killerName"),
                                 str(d, "gameMode"),
-                                integer(d, "experienceLevel")));
+                                integer(d, "experienceLevel"),
+                                str(d, "excuse"),
+                                str(d, "lastWords"),
+                                integer(d, "fCount")));
                     }
                 }
                 players.add(new PlayerDeaths(uuid, name, optOut, deaths));

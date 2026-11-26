@@ -54,6 +54,7 @@ public class DeathCensus {
 
     private static void onServerStopped(ServerStoppedEvent event) {
         DiscordNotifier.resetDigestThrottler();
+        DeathTracker.resetTransientState();
     }
 
     private static void onLevelSave(LevelEvent.Save event) {

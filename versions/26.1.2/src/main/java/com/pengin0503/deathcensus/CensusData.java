@@ -39,7 +39,7 @@ public class CensusData extends SavedData {
         public int lastDeathPlayTicks = -1;
     }
 
-    // DeathEntry has 17 components, more than RecordCodecBuilder's 16-field
+    // DeathEntry has 20 components, more than RecordCodecBuilder's 16-field
     // group limit, so its codec is written manually.
     private static final Codec<DeathEntry> ENTRY_CODEC = new Codec<>() {
         @Override
@@ -62,6 +62,9 @@ public class CensusData extends SavedData {
             b.add("killerName", ops.createString(e.killerName()));
             b.add("gameMode", ops.createString(e.gameMode()));
             b.add("experienceLevel", ops.createInt(e.experienceLevel()));
+            b.add("excuse", ops.createString(e.excuse()));
+            b.add("lastWords", ops.createString(e.lastWords()));
+            b.add("fCount", ops.createInt(e.fCount()));
             return b.build(prefix);
         }
 
@@ -84,7 +87,10 @@ public class CensusData extends SavedData {
                     str(ops, map, "killerType"),
                     str(ops, map, "killerName"),
                     str(ops, map, "gameMode"),
-                    (int) lng(ops, map, "experienceLevel")), input));
+                    (int) lng(ops, map, "experienceLevel"),
+                    str(ops, map, "excuse"),
+                    str(ops, map, "lastWords"),
+                    (int) lng(ops, map, "fCount")), input));
         }
 
         private <T> String str(DynamicOps<T> ops, MapLike<T> map, String key) {
@@ -229,6 +235,70 @@ public class CensusData extends SavedData {
         }
         setDirty();
         return excess;
+    }
+
+    /**
+     * Increments the F count of the death with the given timestamp for the
+     * victim, replacing the immutable entry with an updated copy.
+     *
+     * @return true when the death was found and updated
+     */
+    public boolean addRespect(UUID victim, long epochMillis) {
+        PlayerCensus pc = players.get(victim);
+        if (pc == null) {
+            return false;
+        }
+        for (int i = pc.deaths.size() - 1; i >= 0; i--) {
+            DeathEntry e = pc.deaths.get(i);
+            if (e.epochMillis() == epochMillis) {
+                pc.deaths.set(i, copyWithStory(e, e.excuse(), e.lastWords(), e.fCount() + 1));
+                setDirty();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Sets the excuse on the player's most recent death, replacing any existing
+     * excuse.
+     *
+     * @return true when the player has a death record, false otherwise
+     */
+    public boolean setExcuse(UUID uuid, String excuse) {
+        PlayerCensus pc = players.get(uuid);
+        if (pc == null || pc.deaths.isEmpty()) {
+            return false;
+        }
+        int last = pc.deaths.size() - 1;
+        DeathEntry e = pc.deaths.get(last);
+        pc.deaths.set(last, copyWithStory(e, excuse, e.lastWords(), e.fCount()));
+        setDirty();
+        return true;
+    }
+
+    private static DeathEntry copyWithStory(DeathEntry e, String excuse, String lastWords, int fCount) {
+        return new DeathEntry(
+                e.playerUuid(),
+                e.playerName(),
+                e.epochMillis(),
+                e.gameDay(),
+                e.playTicks(),
+                e.survivalTicks(),
+                e.dimension(),
+                e.x(),
+                e.y(),
+                e.z(),
+                e.causeCategory(),
+                e.causeId(),
+                e.deathMessage(),
+                e.killerType(),
+                e.killerName(),
+                e.gameMode(),
+                e.experienceLevel(),
+                excuse,
+                lastWords,
+                fCount);
     }
 
     /** Snapshot of all players as common-model {@link PlayerDeaths}. */

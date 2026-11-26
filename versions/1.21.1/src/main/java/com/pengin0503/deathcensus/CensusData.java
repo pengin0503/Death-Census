@@ -107,6 +107,70 @@ public class CensusData extends SavedData {
         return excess;
     }
 
+    /**
+     * Increments the F count of the death with the given timestamp for the
+     * victim, replacing the immutable entry with an updated copy.
+     *
+     * @return true when the death was found and updated
+     */
+    public boolean addRespect(UUID victim, long epochMillis) {
+        PlayerCensus pc = players.get(victim);
+        if (pc == null) {
+            return false;
+        }
+        for (int i = pc.deaths.size() - 1; i >= 0; i--) {
+            DeathEntry e = pc.deaths.get(i);
+            if (e.epochMillis() == epochMillis) {
+                pc.deaths.set(i, copyWithStory(e, e.excuse(), e.lastWords(), e.fCount() + 1));
+                setDirty();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Sets the excuse on the player's most recent death, replacing any existing
+     * excuse.
+     *
+     * @return true when the player has a death record, false otherwise
+     */
+    public boolean setExcuse(UUID uuid, String excuse) {
+        PlayerCensus pc = players.get(uuid);
+        if (pc == null || pc.deaths.isEmpty()) {
+            return false;
+        }
+        int last = pc.deaths.size() - 1;
+        DeathEntry e = pc.deaths.get(last);
+        pc.deaths.set(last, copyWithStory(e, excuse, e.lastWords(), e.fCount()));
+        setDirty();
+        return true;
+    }
+
+    private static DeathEntry copyWithStory(DeathEntry e, String excuse, String lastWords, int fCount) {
+        return new DeathEntry(
+                e.playerUuid(),
+                e.playerName(),
+                e.epochMillis(),
+                e.gameDay(),
+                e.playTicks(),
+                e.survivalTicks(),
+                e.dimension(),
+                e.x(),
+                e.y(),
+                e.z(),
+                e.causeCategory(),
+                e.causeId(),
+                e.deathMessage(),
+                e.killerType(),
+                e.killerName(),
+                e.gameMode(),
+                e.experienceLevel(),
+                excuse,
+                lastWords,
+                fCount);
+    }
+
     /** Snapshot of all players as common-model {@link PlayerDeaths}. */
     public List<PlayerDeaths> snapshot() {
         List<PlayerDeaths> out = new ArrayList<>(players.size());
@@ -178,6 +242,9 @@ public class CensusData extends SavedData {
         t.putString("kname", e.killerName());
         t.putString("mode", e.gameMode());
         t.putInt("level", e.experienceLevel());
+        t.putString("excuse", e.excuse());
+        t.putString("lastwords", e.lastWords());
+        t.putInt("fcount", e.fCount());
         return t;
     }
 
@@ -203,7 +270,10 @@ public class CensusData extends SavedData {
                 t.getString("ktype"),
                 t.getString("kname"),
                 t.getString("mode"),
-                t.contains("level", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("level")) : 0);
+                t.contains("level", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("level")) : 0,
+                t.getString("excuse"),
+                t.getString("lastwords"),
+                t.contains("fcount", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("fcount")) : 0);
     }
 
     public static CensusData load(CompoundTag tag, HolderLookup.Provider provider) {
