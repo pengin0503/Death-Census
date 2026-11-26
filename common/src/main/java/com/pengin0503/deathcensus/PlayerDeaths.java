@@ -15,18 +15,27 @@ public record PlayerDeaths(
         boolean discordOptOut,
         List<DeathEntry> deaths,
         int vanillaDeathsBaseline,
-        Map<String, Integer> vanillaBaselineCauses
+        Map<String, Integer> vanillaBaselineCauses,
+        List<NearDeathEvent> nearDeaths
 ) {
     /** Compatibility constructor: old callers and old snapshots have no granular flags or baseline. */
     public PlayerDeaths(String uuid, String name, boolean optOutPublic, List<DeathEntry> deaths) {
-        this(uuid, name, optOutPublic, false, false, false, deaths, 0, Map.of());
+        this(uuid, name, optOutPublic, false, false, false, deaths, 0, Map.of(), List.of());
     }
 
     /** Compatibility constructor: baselines are additive metadata, old callers default to zero/empty. */
     public PlayerDeaths(String uuid, String name, boolean optOutPublic, boolean hideCoordinates,
                         boolean hidePvpOpponent, boolean discordOptOut, List<DeathEntry> deaths) {
         this(uuid, name, optOutPublic, hideCoordinates, hidePvpOpponent, discordOptOut,
-                deaths, 0, Map.of());
+                deaths, 0, Map.of(), List.of());
+    }
+
+    /** Compatibility constructor for the 1.3.0 snapshot shape (no near-death history). */
+    public PlayerDeaths(String uuid, String name, boolean optOutPublic, boolean hideCoordinates,
+                        boolean hidePvpOpponent, boolean discordOptOut, List<DeathEntry> deaths,
+                        int vanillaDeathsBaseline, Map<String, Integer> vanillaBaselineCauses) {
+        this(uuid, name, optOutPublic, hideCoordinates, hidePvpOpponent, discordOptOut,
+                deaths, vanillaDeathsBaseline, vanillaBaselineCauses, List.of());
     }
 
     public PlayerDeaths {
@@ -44,5 +53,6 @@ public record PlayerDeaths(
             }
         }
         vanillaBaselineCauses = Collections.unmodifiableMap(causes);
+        nearDeaths = NearDeathEvent.copyOf(nearDeaths);
     }
 }

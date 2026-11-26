@@ -163,7 +163,8 @@ public final class CensusExport {
             if (Files.exists(file)) {
                 return file;
             }
-            Files.writeString(file, ExportRenderers.toBackupJson(data.snapshot(), now), StandardCharsets.UTF_8);
+            Files.writeString(file, ExportRenderers.toBackupJson(
+                    data.snapshot(), now, data.chronicleEvents()), StandardCharsets.UTF_8);
             // The just-written safety backup must not be pruned while protecting the source.
             pruneBackups(server, protectedSource, file);
             return file;
@@ -271,7 +272,8 @@ public final class CensusExport {
         }
         try {
             String json = Files.readString(file, StandardCharsets.UTF_8);
-            List<PlayerDeaths> players = parseBackupJson(json);
+            List<ChronicleEvent> chronicle = new ArrayList<>();
+            List<PlayerDeaths> players = parseBackupJson(json, chronicle);
             if (players == null) {
                 return -1;
             }
@@ -280,7 +282,7 @@ public final class CensusExport {
                 DeathCensus.LOGGER.error("[DeathCensus] Restore aborted: could not write a safety backup for '{}'", file);
                 return -1;
             }
-            CensusData.get(server).replaceAll(players);
+            CensusData.get(server).replaceAll(players, chronicle);
             int total = 0;
             for (PlayerDeaths pd : players) {
                 total += pd.deaths().size();
@@ -299,6 +301,15 @@ public final class CensusExport {
      */
     @Nullable
     static List<PlayerDeaths> parseBackupJson(String json) {
+        return parseBackupJson(json, null);
+    }
+
+    /**
+     * As above, filling {@code chronicleOut} with the optional 1.4.0 aggregate.
+     * Old backups omit every new key; all of them default to empty/absent.
+     */
+    @Nullable
+    static List<PlayerDeaths> parseBackupJson(String json, @Nullable List<ChronicleEvent> chronicleOut) {
         JsonObject root;
         JsonArray playersJson;
         try {
@@ -314,6 +325,26 @@ public final class CensusExport {
         int skippedPlayers = 0;
         int skippedDeaths = 0;
         int skippedEpochless = 0;
+        int skippedChronicle = 0;
+        JsonArray chronicleJson = root.getAsJsonArray("chronicleEvents");
+        if (chronicleJson != null && chronicleOut != null) {
+            for (JsonElement ce : chronicleJson) {
+                try {
+                    if (!ce.isJsonObject()) {
+                        skippedChronicle++;
+                        continue;
+                    }
+                    ChronicleEvent event = chronicleEvent(ce.getAsJsonObject());
+                    if (event.epochMillis() <= 0L) {
+                        skippedChronicle++;
+                        continue;
+                    }
+                    chronicleOut.add(event);
+                } catch (RuntimeException e) {
+                    skippedChronicle++;
+                }
+            }
+        }
         for (JsonElement pe : playersJson) {
             try {
                 if (!pe.isJsonObject()) {
@@ -369,7 +400,9 @@ public final class CensusExport {
                                     integer(d, "experienceLevel"),
                                     str(d, "excuse"),
                                     str(d, "lastWords"),
-                                    integer(d, "fCount")));
+                                    integer(d, "fCount"),
+                                    witnesses(d.get("witnesses")),
+                                    context(d.get("context"))));
                         } catch (RuntimeException e) {
                             skippedDeaths++;
                         }
@@ -377,7 +410,7 @@ public final class CensusExport {
                 }
                 players.add(new PlayerDeaths(uuid, name, optOut,
                         hideCoordinates, hidePvpOpponent, discordOptOut, deaths,
-                        vanillaBaseline, baselineCauses));
+                        vanillaBaseline, baselineCauses, nearDeaths(p.get("nearDeaths"))));
             } catch (RuntimeException e) {
                 skippedPlayers++;
             }
@@ -390,6 +423,9 @@ public final class CensusExport {
         }
         if (skippedPlayers > 0) {
             DeathCensus.LOGGER.warn("[DeathCensus] Skipped {} corrupt backup player record(s)", skippedPlayers);
+        }
+        if (skippedChronicle > 0) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Skipped {} corrupt backup chronicle event(s)", skippedChronicle);
         }
         return players;
     }
@@ -456,5 +492,106 @@ public final class CensusExport {
             }
         }
         return primitive.getAsDouble();
+    }
+
+    // ---- §13.2.4: additive backup fields, absent → empty/default ----------
+
+    /** Absent, wrong-typed or corrupt witness elements are skipped; the death survives. */
+    private static List<WitnessRef> witnesses(JsonElement value) {
+        if (value == null || !value.isJsonArray()) {
+            return List.of();
+        }
+        List<WitnessRef> out = new ArrayList<>();
+        for (JsonElement element : value.getAsJsonArray()) {
+            if (element == null || !element.isJsonObject()) {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt backup witness entry");
+                continue;
+            }
+            JsonObject w = element.getAsJsonObject();
+            WitnessRef ref = new WitnessRef(str(w, "uuid"), str(w, "nameAtDeath"));
+            if (ref.isEmpty()) {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt backup witness entry");
+                continue;
+            }
+            out.add(ref);
+        }
+        return out;
+    }
+
+    /** A missing or malformed context compound decodes as {@link DeathContext#EMPTY}. */
+    private static DeathContext context(JsonElement value) {
+        if (value == null || !value.isJsonObject()) {
+            return DeathContext.EMPTY;
+        }
+        JsonObject c = value.getAsJsonObject();
+        return new DeathContext(
+                str(c, "mainHand"),
+                stringList(c.get("armor")),
+                stringList(c.get("effects")),
+                str(c, "biome"),
+                str(c, "weather"));
+    }
+
+    private static List<String> stringList(JsonElement value) {
+        if (value == null || !value.isJsonArray()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (JsonElement element : value.getAsJsonArray()) {
+            if (element != null && element.isJsonPrimitive()) {
+                out.add(element.getAsString());
+            } else {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt backup context string");
+            }
+        }
+        return out;
+    }
+
+    /** Absent or malformed near-death history is empty; one bad event never drops the player. */
+    private static List<NearDeathEvent> nearDeaths(JsonElement value) {
+        if (value == null || !value.isJsonArray()) {
+            return List.of();
+        }
+        List<NearDeathEvent> out = new ArrayList<>();
+        for (JsonElement element : value.getAsJsonArray()) {
+            if (element == null || !element.isJsonObject()) {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt backup near-death event");
+                continue;
+            }
+            JsonObject n = element.getAsJsonObject();
+            NearDeathEvent event = new NearDeathEvent(
+                    str(n, "uuid"), str(n, "name"), lng(n, "epochMillis"), str(n, "dimension"),
+                    dbl(n, "x"), dbl(n, "y"), dbl(n, "z"),
+                    str(n, "causeCategory"), str(n, "causeId"), nearDeathKind(str(n, "kind")));
+            if (event.epochMillis() <= 0L || event.uuid().isEmpty()) {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt backup near-death event");
+                continue;
+            }
+            out.add(event);
+        }
+        return out;
+    }
+
+    private static NearDeathEvent.Kind nearDeathKind(String raw) {
+        try {
+            return NearDeathEvent.Kind.valueOf(raw);
+        } catch (RuntimeException e) {
+            return NearDeathEvent.Kind.CANCELLED;
+        }
+    }
+
+    private static ChronicleEvent chronicleEvent(JsonObject c) {
+        return new ChronicleEvent(
+                lng(c, "epochMillis"), lng(c, "gameDay"), chronicleKind(str(c, "kind")),
+                str(c, "uuid"), str(c, "name"), str(c, "dimension"), str(c, "causeCategory"),
+                integer(c, "count"), bool(c, "reconstructed"));
+    }
+
+    private static ChronicleEvent.Kind chronicleKind(String raw) {
+        try {
+            return ChronicleEvent.Kind.valueOf(raw);
+        } catch (RuntimeException e) {
+            return ChronicleEvent.Kind.SERVER_FIRST;
+        }
     }
 }
