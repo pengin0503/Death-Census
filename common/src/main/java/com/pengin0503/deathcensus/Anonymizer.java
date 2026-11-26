@@ -88,8 +88,8 @@ public final class Anonymizer {
                         scrub(d.lastWords(), secretPattern, secretReplacements),
                         d.fCount()));
             }
-            // optOutPublic is meaningless for pseudonyms and is normalized (§6).
-            result.add(new PlayerDeaths(anonUuid, pseudo, false, redactedDeaths));
+            // Privacy flags are meaningless for pseudonyms and are normalized (§6).
+            result.add(new PlayerDeaths(anonUuid, pseudo, false, false, false, false, redactedDeaths));
         }
         return result;
     }

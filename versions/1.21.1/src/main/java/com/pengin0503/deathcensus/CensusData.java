@@ -38,6 +38,10 @@ public class CensusData extends SavedData {
         public final Set<String> lifetimeCategories = new LinkedHashSet<>();
         public String lastKnownName = "";
         public boolean optOutPublic = false;
+        /** Granular privacy flags (DESIGN 1.3.0 §7); all default to false on old saves. */
+        public boolean hideCoordinates = false;
+        public boolean hidePvpOpponent = false;
+        public boolean discordOptOut = false;
         /** PLAY_TIME when first seen in this world; -1 = not set yet. */
         public int baselinePlayTicks = -1;
         /** PLAY_TIME at the most recent recorded death; -1 = no death yet. */
@@ -252,7 +256,8 @@ public class CensusData extends SavedData {
         List<PlayerDeaths> out = new ArrayList<>(players.size());
         for (Map.Entry<UUID, PlayerCensus> e : players.entrySet()) {
             PlayerCensus pc = e.getValue();
-            out.add(new PlayerDeaths(e.getKey().toString(), pc.lastKnownName, pc.optOutPublic, pc.deaths));
+            out.add(new PlayerDeaths(e.getKey().toString(), pc.lastKnownName, pc.optOutPublic,
+                    pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths));
         }
         return out;
     }
@@ -271,6 +276,9 @@ public class CensusData extends SavedData {
             PlayerCensus pc = new PlayerCensus();
             pc.lastKnownName = pd.name();
             pc.optOutPublic = pd.optOutPublic();
+            pc.hideCoordinates = pd.hideCoordinates();
+            pc.hidePvpOpponent = pd.hidePvpOpponent();
+            pc.discordOptOut = pd.discordOptOut();
             pc.deaths.addAll(pd.deaths());
             for (DeathEntry death : pd.deaths()) {
                 if (CauseClassifier.isKnownCategory(death.causeCategory())) {
@@ -377,6 +385,11 @@ public class CensusData extends SavedData {
             PlayerCensus pc = new PlayerCensus();
             pc.lastKnownName = entry.getString("lastKnownName");
             pc.optOutPublic = entry.contains("optOut") && entry.getBoolean("optOut");
+            // Absent granular fields mean "all visible"; a wrong-typed field is
+            // read as false by getBoolean and never fails the whole load (§3.3).
+            pc.hideCoordinates = entry.contains("hideCoordinates") && entry.getBoolean("hideCoordinates");
+            pc.hidePvpOpponent = entry.contains("hidePvpOpponent") && entry.getBoolean("hidePvpOpponent");
+            pc.discordOptOut = entry.contains("discordOptOut") && entry.getBoolean("discordOptOut");
             pc.baselinePlayTicks = entry.contains("baseline", Tag.TAG_ANY_NUMERIC) ? entry.getInt("baseline") : -1;
             pc.lastDeathPlayTicks = entry.contains("lastDeath", Tag.TAG_ANY_NUMERIC) ? entry.getInt("lastDeath") : -1;
             if (entry.contains("deaths", Tag.TAG_LIST)) {
@@ -442,6 +455,15 @@ public class CensusData extends SavedData {
             }
             if (pc.optOutPublic) {
                 entry.putBoolean("optOut", true);
+            }
+            if (pc.hideCoordinates) {
+                entry.putBoolean("hideCoordinates", true);
+            }
+            if (pc.hidePvpOpponent) {
+                entry.putBoolean("hidePvpOpponent", true);
+            }
+            if (pc.discordOptOut) {
+                entry.putBoolean("discordOptOut", true);
             }
             if (pc.baselinePlayTicks >= 0) {
                 entry.putInt("baseline", pc.baselinePlayTicks);

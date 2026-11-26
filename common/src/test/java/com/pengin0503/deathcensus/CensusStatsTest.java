@@ -253,4 +253,42 @@ class CensusStatsTest {
         assertTrue(CensusStats.filterRange(List.of(alice), 10L, 9L).isEmpty());
         assertEquals(5, alice.deaths().size());
     }
+
+    @Test
+    void granularFlagsSurviveFilteringAndNeverChangeAnonymousTotals() {
+        PlayerDeaths hiddenCoords = new PlayerDeaths("u1", "Alice", false, true, false, false,
+                List.of(death("u1", "Alice", 500L, 10, "fall")));
+        PlayerDeaths hiddenOpponent = new PlayerDeaths("u2", "Bob", false, false, true, false,
+                List.of(death("u2", "Bob", 600L, 20, "fall")));
+        PlayerDeaths discordOnly = new PlayerDeaths("u3", "Carol", false, false, false, true,
+                List.of(death("u3", "Carol", 700L, 30, "lava")));
+        PlayerDeaths full = new PlayerDeaths("u4", "Dana", true, true, true, true,
+                List.of(death("u4", "Dana", 800L, 40, "fall")));
+        List<PlayerDeaths> players = List.of(hiddenCoords, hiddenOpponent, discordOnly, full);
+
+        List<PlayerDeaths> since = CensusStats.filterSince(players, 0L);
+        List<PlayerDeaths> ranged = CensusStats.filterRange(players, 0L, 1000L);
+        for (List<PlayerDeaths> filtered : List.of(since, ranged)) {
+            assertEquals(4, CensusStats.totalDeaths(filtered));
+            assertTrue(filtered.get(0).hideCoordinates());
+            assertTrue(filtered.get(1).hidePvpOpponent());
+            assertTrue(filtered.get(2).discordOptOut());
+            assertTrue(filtered.get(3).optOutPublic());
+            assertTrue(filtered.get(3).hideCoordinates());
+            assertTrue(filtered.get(3).hidePvpOpponent());
+            assertTrue(filtered.get(3).discordOptOut());
+        }
+
+        // All four deaths are counted anonymously, including the opted-out one.
+        assertEquals(4, CensusStats.totalDeaths(players));
+        assertEquals(3, CensusStats.causeCounts(players, true).stream()
+                .filter(e -> "fall".equals(e.getKey())).findFirst().orElseThrow().getValue());
+        assertEquals(1, CensusStats.causeCounts(players, true).stream()
+                .filter(e -> "lava".equals(e.getKey())).findFirst().orElseThrow().getValue());
+        // Only full opt-out removes a player from named leaderboards.
+        List<CensusStats.PlayerSummary> named = CensusStats.leaderboardDeaths(players, false);
+        assertEquals(3, named.size());
+        assertFalse(named.stream().anyMatch(s -> "Dana".equals(s.name())));
+        assertTrue(named.stream().anyMatch(s -> "Carol".equals(s.name())));
+    }
 }

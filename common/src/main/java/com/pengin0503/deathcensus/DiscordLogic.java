@@ -220,7 +220,14 @@ public final class DiscordLogic {
                     .toList();
             if (!recentDeaths.isEmpty()) {
                 recentCount += recentDeaths.size();
-                recentPlayers.add(new PlayerDeaths(player.uuid(), player.name(), player.optOutPublic(), recentDeaths));
+                recentPlayers.add(new PlayerDeaths(
+                        player.uuid(),
+                        player.name(),
+                        player.optOutPublic(),
+                        player.hideCoordinates(),
+                        player.hidePvpOpponent(),
+                        player.discordOptOut(),
+                        recentDeaths));
             }
         }
         if (recentCount == 0) {
@@ -306,7 +313,9 @@ public final class DiscordLogic {
             }
             if (player.optOutPublic()) {
                 hiddenNames.add(player.name());
-            } else {
+            } else if (!player.discordOptOut()) {
+                // §7 explicit: last-words/award names exclude discordOptOut too,
+                // while digest totals and the "most deaths" ranking do not.
                 publicNames.add(player.name());
             }
         }
@@ -333,7 +342,7 @@ public final class DiscordLogic {
 
         List<SeasonLastWords> lastWords = new ArrayList<>();
         for (PlayerDeaths player : inRange) {
-            if (player == null || player.optOutPublic()) {
+            if (player == null || player.optOutPublic() || player.discordOptOut()) {
                 continue;
             }
             for (DeathEntry death : player.deaths()) {

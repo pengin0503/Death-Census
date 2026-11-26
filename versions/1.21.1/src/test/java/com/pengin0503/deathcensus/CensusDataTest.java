@@ -33,6 +33,9 @@ class CensusDataTest {
         data.recordDeath(entryWithStory(uuid, "Steve", 1700000000000L), 10000);
         data.recordDeath(entry(uuid, "Steve", 1700000100000L, 9000, 4000), 10000);
         data.player(uuid).optOutPublic = true;
+        data.player(uuid).hideCoordinates = true;
+        data.player(uuid).hidePvpOpponent = true;
+        data.player(uuid).discordOptOut = true;
         data.setLastDigestEpochMillis(123456789L);
 
         CompoundTag saved = data.save(new CompoundTag(), null);
@@ -49,8 +52,68 @@ class CensusDataTest {
         assertEquals(9000, pc.lastDeathPlayTicks);
         assertEquals(100, pc.baselinePlayTicks);
         assertTrue(pc.optOutPublic);
+        assertTrue(pc.hideCoordinates);
+        assertTrue(pc.hidePvpOpponent);
+        assertTrue(pc.discordOptOut);
         assertEquals("Steve", pc.lastKnownName);
         assertEquals(123456789L, loaded.lastDigestEpochMillis());
+    }
+
+    @Test
+    void nbtOldSaveWithoutGranularFieldsLoadsWithDefaultsAndRoundTrips() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.player(uuid).optOutPublic = true;
+        data.recordDeath(entry(uuid, "Steve", 1700000000000L, 300, 300), 10000);
+        CompoundTag saved = data.save(new CompoundTag(), null);
+        CompoundTag playerTag = saved.getCompound("players").getCompound(uuid.toString());
+        // Simulate a 1.2.0 save: only the old opt-out field exists.
+        playerTag.remove("hideCoordinates");
+        playerTag.remove("hidePvpOpponent");
+        playerTag.remove("discordOptOut");
+
+        CensusData loaded = CensusData.load(saved, null);
+        CensusData.PlayerCensus pc = loaded.playerOrNull(uuid);
+        assertTrue(pc != null);
+        assertTrue(pc.optOutPublic);
+        assertFalse(pc.hideCoordinates);
+        assertFalse(pc.hidePvpOpponent);
+        assertFalse(pc.discordOptOut);
+        assertEquals(1, pc.deaths.size());
+
+        // New fields are written going forward and survive another save/load.
+        pc.hideCoordinates = true;
+        pc.discordOptOut = true;
+        CensusData reloaded = CensusData.load(loaded.save(new CompoundTag(), null), null);
+        assertTrue(reloaded.playerOrNull(uuid).hideCoordinates);
+        assertFalse(reloaded.playerOrNull(uuid).hidePvpOpponent);
+        assertTrue(reloaded.playerOrNull(uuid).discordOptOut);
+    }
+
+    @Test
+    void nbtWrongTypedGranularFieldsDoNotFailTheLoad() {
+        UUID good = UUID.randomUUID();
+        UUID bad = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(good, "Good", 1700000000000L, 300, 300), 10000);
+        CompoundTag saved = data.save(new CompoundTag(), null);
+        CompoundTag players = saved.getCompound("players");
+        CompoundTag badPlayer = new CompoundTag();
+        badPlayer.putString("lastKnownName", "Bad");
+        badPlayer.putString("hideCoordinates", "not a boolean");
+        badPlayer.putString("hidePvpOpponent", "not a boolean");
+        badPlayer.putString("discordOptOut", "not a boolean");
+        players.put(bad.toString(), badPlayer);
+
+        CensusData loaded = CensusData.load(saved, null);
+        CensusData.PlayerCensus valid = loaded.playerOrNull(good);
+        assertTrue(valid != null);
+        assertEquals(1, valid.deaths.size());
+        CensusData.PlayerCensus malformed = loaded.playerOrNull(bad);
+        assertTrue(malformed != null);
+        assertFalse(malformed.hideCoordinates);
+        assertFalse(malformed.hidePvpOpponent);
+        assertFalse(malformed.discordOptOut);
     }
 
     private static DeathEntry entryWithCategory(UUID uuid, String name, long epoch, String category) {

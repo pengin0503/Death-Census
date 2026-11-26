@@ -406,10 +406,23 @@ public final class DiscordNotifier {
      * announcements do not call this path and are never batched.
      */
     public static void notifyDeath(DeathEntry entry) {
+        notifyDeath(entry, PlayerPrivacy.none());
+    }
+
+    /**
+     * Queues one death with its per-player privacy flags (DESIGN 1.3.0 §7).
+     * Discord is a public viewer: a full opt-out or discord-only opt-out is
+     * suppressed here, and coordinates/opponent names are redacted in the post.
+     */
+    public static void notifyDeath(DeathEntry entry, PlayerPrivacy privacy) {
+        if (privacy != null && privacy.suppressesRealtimeDiscord()) {
+            return;
+        }
         if (!Config.discordNotifyDeaths()) {
             return;
         }
-        if (!DiscordLogic.shouldNotify(entry, Config.discordNotifyDimensions(),
+        DeathEntry rendered = DeathRedactor.apply(entry, privacy, false);
+        if (!DiscordLogic.shouldNotify(rendered, Config.discordNotifyDimensions(),
                 Config.discordNotifyPvpMode())) {
             return;
         }
@@ -418,12 +431,12 @@ public final class DiscordNotifier {
             // Escape hatch (§12 Q4): exactly today's one POST per death.
             URI uri = webhookUri(WebhookChannel.REALTIME);
             if (uri != null) {
-                enqueue(uri, renderDeath(entry));
+                enqueue(uri, renderDeath(rendered));
             }
             return;
         }
 
-        String line = renderDeath(entry);
+        String line = renderDeath(rendered);
         boolean schedule;
         synchronized (DiscordNotifier.class) {
             if (BATCH_BUFFER.size() >= BATCH_BUFFER_CAPACITY) {

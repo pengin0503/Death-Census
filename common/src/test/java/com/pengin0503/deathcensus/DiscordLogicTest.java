@@ -108,6 +108,29 @@ class DiscordLogicTest {
     }
 
     @Test
+    void digestCountsAllDeathsAndNamesOnlyPlayersWithoutFullOptOut() {
+        long since = 1_000L;
+        DeathEntry a = entry("Alice", 1_500L, 1L, 100, "fall", "Alice fell");
+        DeathEntry b = entry("Bob", 1_600L, 1L, 100, "fall", "Bob fell");
+        DeathEntry c = entry("Dana", 1_700L, 1L, 100, "fall", "Dana fell");
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u-Alice", "Alice", false, true, false, false, List.of(a)),
+                new PlayerDeaths("u-Bob", "Bob", false, false, false, true, List.of(b)),
+                new PlayerDeaths("u-Dana", "Dana", true, true, true, true, List.of(c)));
+
+        String content = DiscordLogic.digestContent(
+                players, since, java.time.ZoneOffset.UTC, DiscordLogic.labelsFor("en_us"));
+
+        assertTrue(content.contains("3 death(s) since"));
+        assertTrue(content.contains("Top causes: fall x3"));
+        assertTrue(content.contains("Most deaths: Alice (1), Bob (1)"));
+        assertFalse(content.contains("Dana"));
+        assertTrue(new PlayerPrivacy(false, false, false, true).suppressesRealtimeDiscord());
+        assertFalse(PlayerPrivacy.of(new PlayerDeaths("u", "U", false, List.of()))
+                .suppressesRealtimeDiscord());
+    }
+
+    @Test
     void pvpFilterModeConfigValuesRoundTrip() {
         assertEquals("all", DiscordLogic.PvpFilterMode.ALL.configId());
         assertEquals("pvp_only", DiscordLogic.PvpFilterMode.PVP_ONLY.configId());

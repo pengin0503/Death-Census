@@ -52,6 +52,9 @@ public final class CensusStats {
                     player.uuid(),
                     player.name(),
                     player.optOutPublic(),
+                    player.hideCoordinates(),
+                    player.hidePvpOpponent(),
+                    player.discordOptOut(),
                     deaths
             ));
         }
@@ -83,7 +86,14 @@ public final class CensusStats {
                             && death.epochMillis() >= fromMillisInclusive
                             && death.epochMillis() <= toMillisInclusive)
                     .toList();
-            ranged.add(new PlayerDeaths(player.uuid(), player.name(), player.optOutPublic(), deaths));
+            ranged.add(new PlayerDeaths(
+                    player.uuid(),
+                    player.name(),
+                    player.optOutPublic(),
+                    player.hideCoordinates(),
+                    player.hidePvpOpponent(),
+                    player.discordOptOut(),
+                    deaths));
         }
         return List.copyOf(ranged);
     }
