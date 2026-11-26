@@ -106,6 +106,12 @@ public final class Config {
             .comment("Maximum number of automatic backup files to keep per world (1-20).")
             .defineInRange("autoBackupGenerations", 5, 1, 20);
 
+    public static final ModConfigSpec.BooleanValue DEV_MODE = BUILDER
+            .comment("Development only — never enable on a production server.",
+                    "Enables /dc dev demo when the JVM flag -Ddeathcensus.dev=true is also set.",
+                    "Both gates are required; the JVM flag cannot be toggled at runtime.")
+            .define("devMode", false);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     private Config() {
@@ -309,6 +315,15 @@ public final class Config {
             return AUTO_BACKUP_GENERATIONS.get();
         } catch (IllegalStateException notLoaded) {
             return 5;
+        }
+    }
+
+    /** §8 double gate half 1; always false before config load. Never defaulted on. */
+    public static boolean devMode() {
+        try {
+            return DEV_MODE.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
         }
     }
 
