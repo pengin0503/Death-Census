@@ -84,6 +84,16 @@ public final class Config {
                     "A Retry-After header from Discord takes precedence and is capped at 60000 ms.")
             .defineInRange("discordRetryBaseDelayMillis", 1000, 100, 5000);
 
+    public static final ModConfigSpec.IntValue DISCORD_BATCH_WINDOW_MILLIS = BUILDER
+            .comment("Realtime Discord death notifications in the same window are combined into one message (0-10000 ms).",
+                    "Default 1500 ms; 0 disables batching and restores one message per death.")
+            .defineInRange("discordBatchWindowMillis", 1500, 0, 10000);
+
+    public static final ModConfigSpec.IntValue DISCORD_BATCH_MAX_DEATHS = BUILDER
+            .comment("Maximum number of death lines shown in one batched realtime Discord message (1-25).",
+                    "Additional deaths in the same window are summarized as an \"…and N more\" suffix.")
+            .defineInRange("discordBatchMaxDeaths", 10, 1, 25);
+
     public static final ModConfigSpec.BooleanValue INCLUDE_OPTED_OUT_IN_EXPORTS = BUILDER
             .comment("Include players who opted out of public listings in operator exports.")
             .define("includeOptedOutInExports", false);
@@ -257,6 +267,24 @@ public final class Config {
             return DISCORD_RETRY_BASE_DELAY_MILLIS.get();
         } catch (IllegalStateException notLoaded) {
             return 1000;
+        }
+    }
+
+    /** Batch window in milliseconds; 0 means one webhook POST per death (§2). */
+    public static int discordBatchWindowMillis() {
+        try {
+            return DISCORD_BATCH_WINDOW_MILLIS.get();
+        } catch (IllegalStateException notLoaded) {
+            return 1500;
+        }
+    }
+
+    /** Maximum rendered death lines in one batch; the rest become a "+N more" suffix. */
+    public static int discordBatchMaxDeaths() {
+        try {
+            return DISCORD_BATCH_MAX_DEATHS.get();
+        } catch (IllegalStateException notLoaded) {
+            return 10;
         }
     }
 

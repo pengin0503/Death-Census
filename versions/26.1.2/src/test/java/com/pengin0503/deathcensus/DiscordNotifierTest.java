@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Version-side checks for DESIGN 1.3.0 §1/§4: defaults, channel routing and secret hygiene. */
+/** Version-side checks for DESIGN 1.3.0 §1/§2/§4: defaults, batching gate, routing and secret hygiene. */
 class DiscordNotifierTest {
     private static final String PRIMARY = "https://discord.com/api/webhooks/111/aaa";
     private static final String DIGEST = "https://discord.com/api/webhooks/222/bbb";
@@ -57,6 +57,40 @@ class DiscordNotifierTest {
         assertFalse(Config.validatePvpMode("pvp"));
         assertFalse(Config.validatePvpMode(""));
         assertFalse(Config.validatePvpMode(null));
+    }
+
+    /** DESIGN 1.3.0 §2 / §12 Q4: adopted defaults for the realtime batch window and cap. */
+    @Test
+    void batchConfigAccessorsReturnDefaultsWithoutLoadedConfig() {
+        assertEquals(1500, Config.discordBatchWindowMillis());
+        assertEquals(10, Config.discordBatchMaxDeaths());
+    }
+
+    /**
+     * DESIGN 1.3.0 §2 / DESIGN §8: the opt-out gate is applied before a death is
+     * buffered, so an opted-out player is never named in a batch. No new buffer
+     * test seam is needed: assert structurally that every call site of
+     * {@code notifyDeath} in version sources sits behind the existing gate.
+     */
+    @Test
+    void optedOutDeathsNeverReachTheBatchBuffer() throws IOException {
+        String sourceDir = System.getProperty("deathcensus.mainSourceDir");
+        assertNotNull(sourceDir, "deathcensus.mainSourceDir system property is not set");
+        Pattern notifyCall = Pattern.compile("DiscordNotifier\\.notifyDeath\\(");
+        int guardedCalls = 0;
+        try (Stream<Path> stream = Files.walk(Path.of(sourceDir))) {
+            for (Path file : stream.filter(p -> p.toString().endsWith(".java")).toList()) {
+                String source = Files.readString(file);
+                Matcher calls = notifyCall.matcher(source);
+                while (calls.find()) {
+                    String before = source.substring(Math.max(0, calls.start() - 240), calls.start());
+                    assertTrue(before.contains("!pc.optOutPublic"),
+                            file + ": notifyDeath is not preceded by the opt-out gate");
+                    guardedCalls++;
+                }
+            }
+        }
+        assertTrue(guardedCalls >= 1, "expected the opt-out-gated notifyDeath call in DeathTracker");
     }
 
     @Test
