@@ -1,0 +1,133 @@
+package com.pengin0503.deathcensus.ui;
+
+import com.pengin0503.deathcensus.DeathEntry;
+import com.pengin0503.deathcensus.PlayerDeaths;
+
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/** Test double: all Minecraft-free, with a live session store and action log. */
+final class FakeUiContext implements UiContext {
+    final UUID viewer;
+    final List<PlayerDeaths> players;
+    final UiSessionStore sessions;
+    final List<String> notices = new ArrayList<>();
+    final List<String> calls = new ArrayList<>();
+    boolean admin;
+    int dataVersion = 1;
+    int survivalTicks = 42;
+    long nowMillis = 1_700_000_000_000L;
+    ZoneId zone = ZoneId.of("UTC");
+    boolean excuseResult = true;
+    boolean respectResult = true;
+    boolean deleteResult = true;
+    boolean optOut;
+
+    FakeUiContext(UUID viewer, List<PlayerDeaths> players) {
+        this.viewer = viewer;
+        this.players = new ArrayList<>(players);
+        this.sessions = new UiSessionStore(() -> nowMillis);
+    }
+
+    @Override
+    public UUID viewer() {
+        return viewer;
+    }
+
+    @Override
+    public List<PlayerDeaths> snapshot() {
+        return List.copyOf(players);
+    }
+
+    @Override
+    public boolean isAdmin() {
+        return admin;
+    }
+
+    @Override
+    public boolean isSelf(UUID uuid) {
+        return viewer.equals(uuid);
+    }
+
+    @Override
+    public boolean isOptedOut(UUID uuid) {
+        return uuid != null && UiPrivacy.optOutFor(players, uuid.toString());
+    }
+
+    @Override
+    public int dataVersion() {
+        return dataVersion;
+    }
+
+    @Override
+    public int currentSurvivalTicks(UUID uuid) {
+        return survivalTicks;
+    }
+
+    @Override
+    public ZoneId zoneId() {
+        return zone;
+    }
+
+    @Override
+    public long nowMillis() {
+        return nowMillis;
+    }
+
+    @Override
+    public UiSession currentSession() {
+        return sessions.current(viewer);
+    }
+
+    @Override
+    public UiSession newSession(HistoryFilter filter, UiSession.RankingSelection ranking) {
+        return sessions.issue(viewer, filter, ranking, dataVersion);
+    }
+
+    @Override
+    public UiSession touchSession(UiSession presented, HistoryFilter filter, UiSession.RankingSelection ranking) {
+        return sessions.rotate(viewer, presented, filter, ranking, dataVersion);
+    }
+
+    @Override
+    public void invalidateSession() {
+        sessions.clear(viewer);
+    }
+
+    @Override
+    public void sendNotice(UiText text) {
+        notices.add(text.key());
+    }
+
+    @Override
+    public boolean setExcuse(UUID uuid, long epoch, String text) {
+        calls.add("excuse:" + uuid + ":" + epoch + ":" + text);
+        return excuseResult;
+    }
+
+    @Override
+    public boolean payRespect(UUID sender, UUID victim, long epoch) {
+        calls.add("respect:" + sender + ":" + victim + ":" + epoch);
+        return respectResult;
+    }
+
+    @Override
+    public boolean deleteAfterBackup(UUID uuid, long epoch) {
+        calls.add("delete:" + uuid + ":" + epoch);
+        return deleteResult;
+    }
+
+    @Override
+    public void setOptOut(boolean value) {
+        calls.add("optout:" + value);
+        optOut = value;
+        dataVersion++;
+    }
+
+    String token() {
+        UiSession session = currentSession();
+        return session == null ? "" : session.token();
+    }
+}
