@@ -2,28 +2,32 @@
   "homepage": "https://github.com/pengin0503/Death-Census",
   "1.21.1": {
     "1.0.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.0.0",
-    "1.1.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.1.0"
+    "1.1.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.1.0",
+    "1.2.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.2.0"
   },
   "26.1.2": {
     "1.0.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.0.0",
-    "1.1.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.1.0"
+    "1.1.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.1.0",
+    "1.2.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.2.0"
   },
   "26.2": {
     "1.0.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.0.0",
-    "1.1.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.1.0"
+    "1.1.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.1.0",
+    "1.2.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.2.0"
   },
   "26.3": {
     "1.0.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.0.0",
-    "1.1.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.1.0"
+    "1.1.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.1.0",
+    "1.2.0": "https://github.com/pengin0503/Death-Census/releases/tag/v1.2.0"
   },
   "promos": {
-    "1.21.1-latest": "1.1.0",
-    "1.21.1-recommended": "1.1.0",
-    "26.1.2-latest": "1.1.0",
-    "26.1.2-recommended": "1.1.0",
-    "26.2-latest": "1.1.0",
-    "26.2-recommended": "1.1.0",
-    "26.3-latest": "1.1.0",
-    "26.3-recommended": "1.1.0"
+    "1.21.1-latest": "1.2.0",
+    "1.21.1-recommended": "1.2.0",
+    "26.1.2-latest": "1.2.0",
+    "26.1.2-recommended": "1.2.0",
+    "26.2-latest": "1.2.0",
+    "26.2-recommended": "1.2.0",
+    "26.3-latest": "1.2.0",
+    "26.3-recommended": "1.2.0"
   }
 }
