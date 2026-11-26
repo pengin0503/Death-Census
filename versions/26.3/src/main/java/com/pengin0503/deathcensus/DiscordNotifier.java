@@ -2,14 +2,18 @@ package com.pengin0503.deathcensus;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.pengin0503.deathcensus.DiscordLogic.SeasonSection;
 import net.minecraft.server.MinecraftServer;
 
 import javax.annotation.Nullable;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -23,6 +27,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 
 /**
  * Asynchronous Discord webhook sender. The webhook URL is a secret: it is
@@ -46,6 +51,9 @@ public final class DiscordNotifier {
     private static final long DAY_MILLIS = 86400000L;
     private static final int QUEUE_CAPACITY = 256;
     private static final int BATCH_BUFFER_CAPACITY = 256;
+    private static final int EMBED_FIELD_NAME_LIMIT = 256;
+    private static final int EMBED_FIELD_VALUE_LIMIT = 1024;
+    private static final String SEASON_EMBED_TITLE = "Death Census — Season summary";
 
     private static final ThreadFactory DAEMON_FACTORY = r -> {
         Thread t = new Thread(r, "deathcensus-discord");
@@ -156,6 +164,10 @@ public final class DiscordNotifier {
     }
 
     static String payloadJson(String content) {
+        return payloadObject(content).toString();
+    }
+
+    private static JsonObject payloadObject(String content) {
         String safe = content != null ? content : "";
         if (safe.length() > 2000) {
             safe = safe.substring(0, 2000);
@@ -165,13 +177,50 @@ public final class DiscordNotifier {
         JsonObject allowed = new JsonObject();
         allowed.add("parse", new JsonArray());
         body.add("allowed_mentions", allowed);
+        return body;
+    }
+
+    /**
+     * Season posts alone get one embed with a field per rendered section. All
+     * other sends keep the original content-only {@link #payloadJson} shape.
+     */
+    static String seasonPayloadJson(String content, List<SeasonSection> sections) {
+        JsonObject body = payloadObject(content);
+        JsonObject embed = new JsonObject();
+        embed.addProperty("title", SEASON_EMBED_TITLE);
+        JsonArray fields = new JsonArray();
+        if (sections != null) {
+            for (SeasonSection section : sections) {
+                if (section == null) {
+                    continue;
+                }
+                JsonObject field = new JsonObject();
+                field.addProperty("name", clamp(section.label(), EMBED_FIELD_NAME_LIMIT));
+                field.addProperty("value", clamp(section.value().isEmpty() ? "-" : section.value(),
+                        EMBED_FIELD_VALUE_LIMIT));
+                field.addProperty("inline", false);
+                fields.add(field);
+            }
+        }
+        embed.add("fields", fields);
+        JsonArray embeds = new JsonArray();
+        embeds.add(embed);
+        body.add("embeds", embeds);
         return body.toString();
     }
 
+    private static String clamp(String value, int maxChars) {
+        String safe = value == null ? "" : value;
+        return safe.length() > maxChars ? safe.substring(0, maxChars) : safe;
+    }
+
     private static void enqueue(URI uri, String content) {
-        String json = payloadJson(content);
+        enqueueJson(uri, payloadJson(content));
+    }
+
+    private static void enqueueJson(URI uri, String json) {
         try {
-            executor().execute(() -> sendWithRetry(uri, json));
+            executor().execute(() -> sendWithRetry(HTTP_SENDER, uri, json));
         } catch (RejectedExecutionException e) {
             // Defensive: DROP_HANDLER normally discards without throwing.
             DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a message");
@@ -179,12 +228,12 @@ public final class DiscordNotifier {
     }
 
     /** Runs on the daemon Discord worker only; sleeps and logs never touch a tick thread. */
-    private static void sendWithRetry(URI uri, String json) {
+    private static void sendWithRetry(WebhookSender sender, URI uri, String json) {
         try {
             WebhookRetry.RetryConfig config = new WebhookRetry.RetryConfig(
                     Config.discordRetryMaxAttempts(), Config.discordRetryBaseDelayMillis());
             WebhookRetry.WebhookSendResult result = WebhookRetry.sendWithRetry(
-                    HTTP_SENDER, uri, json, config, Thread::sleep, System::currentTimeMillis);
+                    sender, uri, json, config, Thread::sleep, System::currentTimeMillis);
             if (!result.delivered()) {
                 Exception failure = result.exception();
                 String detail = failure != null ? failure.getClass().getSimpleName() : "HTTP status";
@@ -196,6 +245,146 @@ public final class DiscordNotifier {
             // Last-resort guard: no config or engine error may escape into game code.
             DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook send failed ({}); dropping message",
                     e.getClass().getSimpleName());
+        }
+    }
+
+    /** Outcome reported to the invoking admin; the actual send is asynchronous. */
+    public enum SeasonPostResult {
+        NO_CHANNEL,
+        CONTENT_ONLY,
+        ATTACHED,
+        ATTACHMENT_TOO_LARGE
+    }
+
+    /** Callback used to tell the invoking admin that the attachment was not delivered. */
+    @FunctionalInterface
+    public interface MessageCallback {
+        void onAttachmentFailure();
+    }
+
+    @FunctionalInterface
+    interface MultipartSender {
+        WebhookResponse send(URI uri, String body, String contentType) throws Exception;
+    }
+
+    /**
+     * Posts a manual season digest with an embed and, when present and within
+     * the 1 MB cap, a multipart HTML attachment. The command passes
+     * {@link WebhookChannel#DIGEST}; the periodic digest state is never read
+     * or written here.
+     *
+     * <p>Multipart I/O and retry stay on the daemon worker; a terminal
+     * attachment failure falls back to a content-only post and invokes the
+     * callback, which the command uses to tell the admin the local file path.
+     */
+    public static SeasonPostResult postSeason(WebhookChannel channel, String content,
+                                              List<SeasonSection> sections, @Nullable Path html,
+                                              @Nullable MessageCallback onFailure) {
+        URI uri = webhookUri(channel);
+        if (uri == null) {
+            return SeasonPostResult.NO_CHANNEL;
+        }
+        String json = seasonPayloadJson(content, sections);
+        if (html == null || !Files.isRegularFile(html)) {
+            enqueueJson(uri, json);
+            return SeasonPostResult.CONTENT_ONLY;
+        }
+        long bytes;
+        try {
+            bytes = Files.size(html);
+        } catch (IOException e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Season HTML attachment could not be read ({}); sending content only",
+                    e.getClass().getSimpleName());
+            notifyFailure(onFailure);
+            enqueueJson(uri, json);
+            return SeasonPostResult.ATTACHMENT_TOO_LARGE;
+        }
+        if (DiscordMultipart.tooLarge(bytes)) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Season HTML attachment is larger than {} MB; sending content only",
+                    DiscordMultipart.sizeLimitLabel());
+            notifyFailure(onFailure);
+            enqueueJson(uri, json);
+            return SeasonPostResult.ATTACHMENT_TOO_LARGE;
+        }
+        String fileContent;
+        try {
+            fileContent = Files.readString(html, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Season HTML attachment could not be read ({}); sending content only",
+                    e.getClass().getSimpleName());
+            notifyFailure(onFailure);
+            enqueueJson(uri, json);
+            return SeasonPostResult.ATTACHMENT_TOO_LARGE;
+        }
+        DiscordMultipart.Body body = DiscordMultipart.compose(
+                json, html.getFileName().toString(), fileContent);
+        MultipartSender multipartSender = DiscordNotifier::sendMultipart;
+        try {
+            executor().execute(() -> sendMultipartWithRetry(uri, json, body, multipartSender, onFailure));
+        } catch (RejectedExecutionException e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a season attachment");
+            notifyFailure(onFailure);
+            enqueueJson(uri, json);
+            return SeasonPostResult.CONTENT_ONLY;
+        }
+        return SeasonPostResult.ATTACHED;
+    }
+
+    private static void notifyFailure(@Nullable MessageCallback onFailure) {
+        if (onFailure != null) {
+            onFailure.onAttachmentFailure();
+        }
+    }
+
+    /** The only multipart HTTP call; built from the pure {@link DiscordMultipart} body. */
+    private static WebhookResponse sendMultipart(URI uri, String body, String contentType)
+            throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(TIMEOUT)
+                .header("Content-Type", contentType)
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
+        return new WebhookResponse(response.statusCode(),
+                response.headers().firstValue("Retry-After").orElse(null));
+    }
+
+    /**
+     * Runs the PR-2 retry engine over an injected multipart sender, with all
+     * clocks/sleep injected. Package-visible so tests can use a fake sender and
+     * never touch HttpClient; production supplies the real transport below.
+     */
+    static WebhookRetry.WebhookSendResult retryMultipart(
+            MultipartSender sender, URI uri, String json, DiscordMultipart.Body body,
+            WebhookRetry.RetryConfig config, WebhookRetry.Sleeper sleeper, LongSupplier clock) {
+        WebhookSender adapter = (target, ignored) -> sender.send(target, body.body(), body.contentType());
+        return WebhookRetry.sendWithRetry(adapter, uri, json, config, sleeper, clock);
+    }
+
+    /** Runs on the daemon worker: retry the multipart POST, then fall back if needed. */
+    private static void sendMultipartWithRetry(URI uri, String json, DiscordMultipart.Body body,
+                                               MultipartSender sender,
+                                               @Nullable MessageCallback onFailure) {
+        try {
+            WebhookRetry.RetryConfig config = new WebhookRetry.RetryConfig(
+                    Config.discordRetryMaxAttempts(), Config.discordRetryBaseDelayMillis());
+            WebhookRetry.WebhookSendResult result = retryMultipart(
+                    sender, uri, json, body, config, Thread::sleep, System::currentTimeMillis);
+            if (!result.delivered()) {
+                Exception failure = result.exception();
+                String detail = failure != null ? failure.getClass().getSimpleName() : "HTTP status";
+                DeathCensus.LOGGER.warn(
+                        "[DeathCensus] Season HTML attachment failed after {} attempt(s) (HTTP {}): {}; "
+                                + "sending content only",
+                        result.attempts(), result.statusCode(), detail);
+                notifyFailure(onFailure);
+                enqueueJson(uri, json);
+            }
+        } catch (Exception e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Season HTML attachment send failed ({}); sending content only",
+                    e.getClass().getSimpleName());
+            notifyFailure(onFailure);
+            enqueueJson(uri, json);
         }
     }
 

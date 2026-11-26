@@ -58,6 +58,36 @@ public final class CensusStats {
         return List.copyOf(filtered);
     }
 
+    /**
+     * Returns new snapshots containing only deaths in the inclusive window
+     * {@code [fromMillisInclusive, toMillisInclusive]} (DESIGN 1.3.0 §5). This
+     * is the upper-bounded companion to {@link #filterSince}; null players are
+     * skipped, players with no in-range deaths remain with an empty list, and
+     * uuid/name/opt-out metadata is preserved so aggregate callers can still
+     * count opted-out deaths anonymously.
+     */
+    public static List<PlayerDeaths> filterRange(
+            List<PlayerDeaths> players, long fromMillisInclusive, long toMillisInclusive) {
+        if (players == null || toMillisInclusive < fromMillisInclusive) {
+            return List.of();
+        }
+        List<PlayerDeaths> ranged = new ArrayList<>(players.size());
+        for (PlayerDeaths player : players) {
+            if (player == null) {
+                continue;
+            }
+            // Do not delegate to filterSince: its non-positive cutoff means
+            // "no lower bound", while epoch:0 and negative epochs are valid here.
+            List<DeathEntry> deaths = player.deaths().stream()
+                    .filter(death -> death != null
+                            && death.epochMillis() >= fromMillisInclusive
+                            && death.epochMillis() <= toMillisInclusive)
+                    .toList();
+            ranged.add(new PlayerDeaths(player.uuid(), player.name(), player.optOutPublic(), deaths));
+        }
+        return List.copyOf(ranged);
+    }
+
     public static int totalDeaths(Collection<PlayerDeaths> players) {
         if (players == null) {
             return 0;
