@@ -12,13 +12,47 @@ import net.minecraft.world.level.GameType;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 /** Records player deaths (server side) and keeps name/baseline state fresh. */
 public final class DeathTracker {
+    private static final long CAPTURE_WINDOW_MILLIS = 30_000L;
+    private static final int LAST_WORDS_MAX_CHARS = 200;
+
+    private record LastChat(String message, long epochMillis) {
+    }
+
+    private static final class RecentDeath {
+        final UUID victim;
+        final long epochMillis;
+        final Set<UUID> respects = ConcurrentHashMap.newKeySet();
+
+        RecentDeath(UUID victim, long epochMillis) {
+            this.victim = victim;
+            this.epochMillis = epochMillis;
+        }
+    }
+
+    /** Transient: last non-command chat message per player. */
+    private static final Map<UUID, LastChat> LAST_CHATS = new ConcurrentHashMap<>();
+    /** Transient: recent deaths that can still receive "F" respects. */
+    private static final Set<RecentDeath> RECENT_DEATHS = ConcurrentHashMap.newKeySet();
+
     private DeathTracker() {
+    }
+
+    /** Clears transient chat/death capture state when the server stops. */
+    static void resetTransientState() {
+        LAST_CHATS.clear();
+        RECENT_DEATHS.clear();
     }
 
     static int currentPlayTicks(ServerPlayer player) {
@@ -51,6 +85,43 @@ public final class DeathTracker {
         }
         if (changed) {
             CensusData.get(server).setDirty();
+        }
+    }
+
+    @SubscribeEvent
+    public static void onServerChat(ServerChatEvent event) {
+        ServerPlayer player = event.getPlayer();
+        if (player == null || player instanceof FakePlayer) {
+            return;
+        }
+        String message = event.getRawText();
+        if (message == null || message.startsWith("/")) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        UUID sender = player.getUUID();
+        LAST_CHATS.put(sender, new LastChat(message, now));
+        RECENT_DEATHS.removeIf(death -> now - death.epochMillis > CAPTURE_WINDOW_MILLIS);
+
+        String trimmed = message.trim();
+        if (!trimmed.equals("F") && !trimmed.equals("f")) {
+            return;
+        }
+        RecentDeath latest = null;
+        for (RecentDeath death : RECENT_DEATHS) {
+            if (death.victim.equals(sender) || now - death.epochMillis > CAPTURE_WINDOW_MILLIS) {
+                continue;
+            }
+            if (latest == null || death.epochMillis > latest.epochMillis) {
+                latest = death;
+            }
+        }
+        if (latest == null || latest.respects.contains(sender)) {
+            return;
+        }
+        MinecraftServer server = player.level().getServer();
+        if (server != null && CensusData.get(server).addRespect(latest.victim, latest.epochMillis)) {
+            latest.respects.add(sender);
         }
     }
 
@@ -103,10 +174,12 @@ public final class DeathTracker {
         int survival = CensusLogic.survivalTicks(playTicks, pc.lastDeathPlayTicks, pc.baselinePlayTicks);
 
         String playerName = player.getGameProfile().name() != null ? player.getGameProfile().name() : "";
+        long deathEpochMillis = System.currentTimeMillis();
+        String lastWords = lastWordsFor(player.getUUID(), deathEpochMillis);
         DeathEntry entry = new DeathEntry(
                 player.getUUID().toString(),
                 playerName,
-                System.currentTimeMillis(),
+                deathEpochMillis,
                 currentDay(server),
                 playTicks,
                 survival,
@@ -118,13 +191,30 @@ public final class DeathTracker {
                 killerType,
                 killerName,
                 mode.getName(),
-                player.experienceLevel);
+                player.experienceLevel,
+                "",
+                lastWords,
+                0);
 
         data.recordDeath(entry, Config.maxRecordsPerPlayer());
+        RECENT_DEATHS.removeIf(death -> deathEpochMillis - death.epochMillis > CAPTURE_WINDOW_MILLIS);
+        RECENT_DEATHS.add(new RecentDeath(player.getUUID(), deathEpochMillis));
         DeathCensus.LOGGER.info("[DeathCensus] Recorded death of {} ({})", playerName, category);
         if (!pc.optOutPublic) {
             DiscordNotifier.notifyDeath(entry);
         }
+    }
+
+    private static String lastWordsFor(UUID player, long deathEpochMillis) {
+        LastChat chat = LAST_CHATS.get(player);
+        if (chat == null || deathEpochMillis < chat.epochMillis()
+                || deathEpochMillis - chat.epochMillis() > CAPTURE_WINDOW_MILLIS) {
+            return "";
+        }
+        String message = chat.message();
+        return message.length() <= LAST_WORDS_MAX_CHARS
+                ? message
+                : message.substring(0, LAST_WORDS_MAX_CHARS);
     }
 
     private static String causeId(ServerPlayer player, DamageSource source) {

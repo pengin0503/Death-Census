@@ -21,13 +21,13 @@ class ExportRenderersTest {
                 "u1", "Alice, Jr.", T2, 5L, 2000, 1200,
                 "minecraft:the_nether", 12.34, 64.0, -30.56,
                 "lava", "minecraft:lava", "Alice \"tried\" to swim, badly",
-                "", "", "survival", 12
+                "", "", "survival", 12, "It was the lava's fault", "See you on the other side", 3
         );
         DeathEntry earlier = new DeathEntry(
                 "u2", "Bob", T1, 2L, 500, 500,
                 "minecraft:overworld", 1.0, 70.5, 2.0,
                 "fall", "minecraft:fall", "Bob fell\nfrom high",
-                "", "", "survival", 3
+                "", "", "survival", 3, "", "", 0
         );
         List<PlayerDeaths> players = List.of(
                 new PlayerDeaths("u1", "Alice, Jr.", false, List.of(later)),
@@ -37,7 +37,7 @@ class ExportRenderersTest {
         String csv = ExportRenderers.toCsv(players);
         String expectedHeader = "player_uuid,player_name,epoch_millis,datetime_iso,game_day,play_ticks,"
                 + "survival_ticks,dimension,x,y,z,cause_category,cause_id,killer_type,killer_name,"
-                + "game_mode,experience_level,death_message\n";
+                + "game_mode,experience_level,death_message,excuse,last_words,f_count\n";
         assertTrue(csv.startsWith(expectedHeader));
         assertTrue(csv.endsWith("\n"));
 
@@ -50,6 +50,7 @@ class ExportRenderersTest {
         assertTrue(csv.contains("\"Alice \"\"tried\"\" to swim, badly\""));
         assertTrue(csv.contains(",12.3,64.0,-30.6,"));
         assertTrue(csv.contains(",2026-11-24T10:15:00Z,"));
+        assertTrue(csv.contains(",\"Alice \"\"tried\"\" to swim, badly\",It was the lava's fault,See you on the other side,3\n"));
     }
 
     @Test
@@ -58,7 +59,8 @@ class ExportRenderersTest {
                 "u1", "A\"B\\C", T1, 3L, 1000, 600,
                 "minecraft:overworld", 10.5, 64.0, -5.25,
                 "mob", "minecraft:mob", "Line1\nLine2\t\"quote\"",
-                "minecraft:zombie", "Bob\\Zombie", "survival", 7
+                "minecraft:zombie", "Bob\\Zombie", "survival", 7,
+                "not \"my\" fault", "goodbye\nworld", 2
         );
         List<PlayerDeaths> players = List.of(new PlayerDeaths("u1", "A\"B\\C", true, List.of(d)));
 
@@ -70,6 +72,9 @@ class ExportRenderersTest {
         assertTrue(json.contains("\"deathMessage\": \"Line1\\nLine2\\t\\\"quote\\\"\""));
         assertTrue(json.contains("\"killerName\": \"Bob\\\\Zombie\""));
         assertTrue(json.contains("\"experienceLevel\": 7"));
+        assertTrue(json.contains("\"excuse\": \"not \\\"my\\\" fault\""));
+        assertTrue(json.contains("\"lastWords\": \"goodbye\\nworld\""));
+        assertTrue(json.contains("\"fCount\": 2"));
     }
 
     @Test
@@ -78,7 +83,8 @@ class ExportRenderersTest {
                 "u1", "<script>alert(1)</script>", T1, 4L, 2400, 1200,
                 "minecraft:overworld", 1.2, 64.0, 3.4,
                 "fire", "minecraft:in_fire", "Burned by <b>fire</b> & \"sparks\"",
-                "", "", "survival", 1
+                "", "", "survival", 1,
+                "It was <b>not</b> my fault", "goodbye <script>alert(2)</script>", 4
         );
         List<PlayerDeaths> players = List.of(
                 new PlayerDeaths("u1", "<script>alert(1)</script>", false, List.of(d))
@@ -93,5 +99,8 @@ class ExportRenderersTest {
         assertTrue(html.contains("Burned by &lt;b&gt;fire&lt;/b&gt; &amp; &quot;sparks&quot;"));
         assertTrue(html.contains("2026-11-24 10:15"));
         assertTrue(html.contains("1m 0s"));
+        assertTrue(html.contains("Excuse: &quot;It was &lt;b&gt;not&lt;/b&gt; my fault&quot;"));
+        assertTrue(html.contains("Last words: &quot;goodbye &lt;script&gt;alert(2)&lt;/script&gt;&quot;"));
+        assertTrue(html.contains("F x4"));
     }
 }

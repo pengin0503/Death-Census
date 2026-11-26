@@ -49,6 +49,11 @@ public final class CensusCommands {
 
         root.then(literal("help").executes(CensusCommands::help));
 
+        root.then(literal("excuse")
+                .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                        .<CommandSourceStack, String>argument("text", StringArgumentType.greedyString())
+                        .executes(CensusCommands::excuse)));
+
         root.then(literal("history")
                 .executes(ctx -> history(ctx, null, 1))
                 .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
@@ -188,7 +193,10 @@ public final class CensusCommands {
                 + " · " + e.dimension()
                 + " (" + (int) Math.floor(e.x()) + ", " + (int) Math.floor(e.y()) + ", " + (int) Math.floor(e.z()) + ")"
                 + " · " + (e.deathMessage().isEmpty() ? e.causeCategory() : e.deathMessage())
-                + " · survived " + TimeFormat.formatDuration(e.survivalTicks());
+                + " · survived " + TimeFormat.formatDuration(e.survivalTicks())
+                + (e.excuse().isEmpty() ? "" : " · \"" + e.excuse() + "\"")
+                + (e.lastWords().isEmpty() ? "" : " · last words: \"" + e.lastWords() + "\"")
+                + (e.fCount() > 0 ? " · F x" + e.fCount() : "");
     }
 
     private static int showHistory(CommandContext<CommandSourceStack> ctx, UUID uuid, String displayName, int page) {
@@ -216,6 +224,7 @@ public final class CensusCommands {
 
     private static int help(CommandContext<CommandSourceStack> ctx) {
         send(ctx, "command.deathcensus.help.title");
+        send(ctx, "command.deathcensus.help.excuse");
         send(ctx, "command.deathcensus.help.history");
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
@@ -223,6 +232,26 @@ public final class CensusCommands {
         if (isAdmin(ctx)) {
             send(ctx, "command.deathcensus.help.admin");
         }
+        return 1;
+    }
+
+    private static int excuse(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = server(ctx);
+        ServerPlayer self = ctx.getSource().getPlayer();
+        if (server == null || self == null) {
+            fail(ctx, "command.deathcensus.players_only");
+            return 0;
+        }
+        String text = StringArgumentType.getString(ctx, "text");
+        if (text.length() > 100) {
+            fail(ctx, "command.deathcensus.excuse.too_long");
+            return 0;
+        }
+        if (!CensusData.get(server).setExcuse(self.getUUID(), text)) {
+            fail(ctx, "command.deathcensus.excuse.no_deaths");
+            return 0;
+        }
+        send(ctx, "command.deathcensus.excuse.done");
         return 1;
     }
 

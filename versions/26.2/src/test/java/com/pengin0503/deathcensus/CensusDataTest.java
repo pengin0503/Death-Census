@@ -1,6 +1,7 @@
 package com.pengin0503.deathcensus;
 
 import com.mojang.serialization.DynamicOps;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import org.junit.jupiter.api.Test;
@@ -16,7 +17,14 @@ class CensusDataTest {
     private static DeathEntry entry(UUID uuid, String name, long epoch, int play, int surv) {
         return new DeathEntry(uuid.toString(), name, epoch, 3L, play, surv,
                 "minecraft:overworld", 10.0, 64.0, -20.0, "fall", "minecraft:fall",
-                name + " fell from a high place", "", "", "survival", 5);
+                name + " fell from a high place", "", "", "survival", 5, "", "", 0);
+    }
+
+    private static DeathEntry entryWithStory(UUID uuid, String name, long epoch) {
+        return new DeathEntry(uuid.toString(), name, epoch, 3L, 500, 400,
+                "minecraft:overworld", 10.0, 64.0, -20.0, "fall", "minecraft:fall",
+                name + " fell from a high place", "", "", "survival", 5,
+                "It wasn't my fault", "See you on the other side", 4);
     }
 
     @Test
@@ -24,7 +32,7 @@ class CensusDataTest {
         UUID uuid = UUID.randomUUID();
         CensusData data = new CensusData();
         data.player(uuid).baselinePlayTicks = 100;
-        data.recordDeath(entry(uuid, "Steve", 1700000000000L, 5000, 4900), 10000);
+        data.recordDeath(entryWithStory(uuid, "Steve", 1700000000000L), 10000);
         data.recordDeath(entry(uuid, "Steve", 1700000100000L, 9000, 4000), 10000);
         data.player(uuid).optOutPublic = true;
         data.setLastDigestEpochMillis(123456789L);
@@ -37,12 +45,38 @@ class CensusDataTest {
         assertTrue(pc != null);
         assertEquals(2, pc.deaths.size());
         assertEquals("fall", pc.deaths.get(0).causeCategory());
-        assertEquals(4900, pc.deaths.get(0).survivalTicks());
+        assertEquals(400, pc.deaths.get(0).survivalTicks());
+        assertEquals("It wasn't my fault", pc.deaths.get(0).excuse());
+        assertEquals("See you on the other side", pc.deaths.get(0).lastWords());
+        assertEquals(4, pc.deaths.get(0).fCount());
         assertEquals(9000, pc.lastDeathPlayTicks);
         assertEquals(100, pc.baselinePlayTicks);
         assertTrue(pc.optOutPublic);
         assertEquals("Steve", pc.lastKnownName);
         assertEquals(123456789L, loaded.lastDigestEpochMillis());
+    }
+
+    @Test
+    void codecDefaultsWhenStoryFieldsAbsent() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entryWithStory(uuid, "Steve", 1700000000000L), 10000);
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        Tag encoded = CensusData.CODEC.encodeStart(ops, data).getOrThrow();
+        CompoundTag root = (CompoundTag) encoded;
+        CompoundTag deathTag = root.getCompoundOrEmpty("players")
+                .getCompoundOrEmpty(uuid.toString())
+                .getListOrEmpty("deaths")
+                .getCompoundOrEmpty(0);
+        deathTag.remove("excuse");
+        deathTag.remove("lastWords");
+        deathTag.remove("fCount");
+
+        CensusData loaded = CensusData.CODEC.parse(ops, encoded).getOrThrow();
+        DeathEntry e = loaded.playerOrNull(uuid).deaths.get(0);
+        assertEquals("", e.excuse());
+        assertEquals("", e.lastWords());
+        assertEquals(0, e.fCount());
     }
 
     @Test

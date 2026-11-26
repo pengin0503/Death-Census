@@ -12,7 +12,7 @@ public final class ExportRenderers {
     private static final String CSV_HEADER =
             "player_uuid,player_name,epoch_millis,datetime_iso,game_day,play_ticks,survival_ticks,"
                     + "dimension,x,y,z,cause_category,cause_id,killer_type,killer_name,"
-                    + "game_mode,experience_level,death_message";
+                    + "game_mode,experience_level,death_message,excuse,last_words,f_count";
 
     private ExportRenderers() {
     }
@@ -49,7 +49,10 @@ public final class ExportRenderers {
                     d.killerName(),
                     d.gameMode(),
                     Integer.toString(d.experienceLevel()),
-                    d.deathMessage()
+                    d.deathMessage(),
+                    d.excuse(),
+                    d.lastWords(),
+                    Integer.toString(d.fCount())
             };
             for (int i = 0; i < fields.length; i++) {
                 if (i > 0) {
@@ -102,7 +105,10 @@ public final class ExportRenderers {
                         sb.append("          \"killerType\": \"").append(TextEscaping.jsonString(d.killerType())).append("\",\n");
                         sb.append("          \"killerName\": \"").append(TextEscaping.jsonString(d.killerName())).append("\",\n");
                         sb.append("          \"gameMode\": \"").append(TextEscaping.jsonString(d.gameMode())).append("\",\n");
-                        sb.append("          \"experienceLevel\": ").append(d.experienceLevel()).append('\n');
+                        sb.append("          \"experienceLevel\": ").append(d.experienceLevel()).append(",\n");
+                        sb.append("          \"excuse\": \"").append(TextEscaping.jsonString(d.excuse())).append("\",\n");
+                        sb.append("          \"lastWords\": \"").append(TextEscaping.jsonString(d.lastWords())).append("\",\n");
+                        sb.append("          \"fCount\": ").append(d.fCount()).append('\n');
                         sb.append("        }");
                         if (j + 1 < deaths.size()) {
                             sb.append(',');
@@ -225,8 +231,21 @@ public final class ExportRenderers {
                         .append("</td><td>")
                         .append(TextEscaping.html(d.causeCategory()))
                         .append("</td><td>")
-                        .append(TextEscaping.html(d.deathMessage()))
-                        .append("</td><td>")
+                        .append(TextEscaping.html(d.deathMessage()));
+                if (!d.excuse().isEmpty()) {
+                    sb.append("<br><small>Excuse: ")
+                            .append(TextEscaping.html("\"" + d.excuse() + "\""))
+                            .append("</small>");
+                }
+                if (!d.lastWords().isEmpty()) {
+                    sb.append("<br><small>Last words: ")
+                            .append(TextEscaping.html("\"" + d.lastWords() + "\""))
+                            .append("</small>");
+                }
+                if (d.fCount() > 0) {
+                    sb.append("<br><small>F x").append(d.fCount()).append("</small>");
+                }
+                sb.append("</td><td>")
                         .append(TextEscaping.html(TimeFormat.formatDuration(d.survivalTicks())))
                         .append("</td></tr>\n");
             }

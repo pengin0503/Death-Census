@@ -16,7 +16,7 @@ class DiscordLogicTest {
                 "u-" + name, name, epoch, day, survival + 10, survival,
                 "minecraft:overworld", 0, 64, 0,
                 cause, "minecraft:" + cause, msg,
-                "", "", "survival", 0
+                "", "", "survival", 0, "", "", 0
         );
     }
 

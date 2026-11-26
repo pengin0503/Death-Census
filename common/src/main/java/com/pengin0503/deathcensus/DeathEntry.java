@@ -17,7 +17,10 @@ public record DeathEntry(
         String killerType,
         String killerName,
         String gameMode,
-        int experienceLevel
+        int experienceLevel,
+        String excuse,
+        String lastWords,
+        int fCount
 ) {
     public DeathEntry {
         playerUuid = playerUuid == null ? "" : playerUuid;
@@ -32,5 +35,8 @@ public record DeathEntry(
         killerName = killerName == null ? "" : killerName;
         gameMode = gameMode == null ? "" : gameMode;
         experienceLevel = Math.max(0, experienceLevel);
+        excuse = excuse == null ? "" : excuse;
+        lastWords = lastWords == null ? "" : lastWords;
+        fCount = Math.max(0, fCount);
     }
 }

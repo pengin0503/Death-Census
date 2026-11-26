@@ -36,7 +36,10 @@ class CensusStatsTest {
                 "",
                 "",
                 "survival",
-                5
+                5,
+                "",
+                "",
+                0
         );
     }
 
@@ -144,7 +147,8 @@ class CensusStatsTest {
     void modelsNormalizeNullsAndDefensiveCopy() {
         DeathEntry entry = new DeathEntry(
                 null, null, 0L, 0L, -5, -10,
-                null, 0, 0, 0, null, null, null, null, null, null, -3
+                null, 0, 0, 0, null, null, null, null, null, null, -3,
+                null, null, -7
         );
         assertEquals("", entry.playerUuid());
         assertEquals("", entry.playerName());
@@ -152,6 +156,9 @@ class CensusStatsTest {
         assertEquals(0, entry.survivalTicks());
         assertEquals(0, entry.experienceLevel());
         assertEquals("", entry.deathMessage());
+        assertEquals("", entry.excuse());
+        assertEquals("", entry.lastWords());
+        assertEquals(0, entry.fCount());
 
         List<DeathEntry> mutable = new ArrayList<>();
         mutable.add(entry);
