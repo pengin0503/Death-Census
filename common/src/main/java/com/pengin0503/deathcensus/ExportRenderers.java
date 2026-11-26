@@ -83,11 +83,26 @@ public final class ExportRenderers {
      * HTML/JSON/CSV export format.
      */
     public static String toBackupJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
-        return renderJson(players, generatedAtEpochMillis, false, true);
+        return toBackupJson(players, generatedAtEpochMillis, List.of());
+    }
+
+    /**
+     * As above, including the §13.4 chronicle aggregate. 1.3.0 backups omit
+     * every 1.4.0 field; the parser defaults them to empty.
+     */
+    public static String toBackupJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                      List<ChronicleEvent> chronicleEvents) {
+        return renderJson(players, generatedAtEpochMillis, false, true, chronicleEvents);
     }
 
     private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
                                      boolean anonymized, boolean includeBaselines) {
+        return renderJson(players, generatedAtEpochMillis, anonymized, includeBaselines, List.of());
+    }
+
+    private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                     boolean anonymized, boolean includeBaselines,
+                                     List<ChronicleEvent> chronicleEvents) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
         // per-death rows use the public redaction view.
@@ -101,6 +116,10 @@ public final class ExportRenderers {
             sb.append("  \"anonymized\": true,\n");
         }
         sb.append("  \"totalDeaths\": ").append(totalDeaths).append(",\n");
+        if (includeBaselines) {
+            appendChronicleEvents(sb, ChronicleEvent.copyOf(chronicleEvents), "  ");
+            sb.append(",\n");
+        }
         sb.append("  \"players\": [");
         if (!safePlayers.isEmpty()) {
             sb.append('\n');
@@ -153,7 +172,15 @@ public final class ExportRenderers {
                         sb.append("          \"experienceLevel\": ").append(d.experienceLevel()).append(",\n");
                         sb.append("          \"excuse\": \"").append(TextEscaping.jsonString(d.excuse())).append("\",\n");
                         sb.append("          \"lastWords\": \"").append(TextEscaping.jsonString(d.lastWords())).append("\",\n");
-                        sb.append("          \"fCount\": ").append(d.fCount()).append('\n');
+                        if (includeBaselines) {
+                            sb.append("          \"fCount\": ").append(d.fCount()).append(",\n");
+                            appendWitnesses(sb, d.witnesses(), "          ");
+                            sb.append(",\n");
+                            appendContext(sb, d.context(), "          ");
+                            sb.append('\n');
+                        } else {
+                            sb.append("          \"fCount\": ").append(d.fCount()).append('\n');
+                        }
                         sb.append("        }");
                         if (j + 1 < deaths.size()) {
                             sb.append(',');
@@ -163,6 +190,10 @@ public final class ExportRenderers {
                     sb.append("      ]");
                 } else {
                     sb.append(']');
+                }
+                if (includeBaselines) {
+                    sb.append(",\n");
+                    appendNearDeaths(sb, safePlayers.get(i).nearDeaths(), "      ");
                 }
                 sb.append('\n');
                 sb.append("    }");
@@ -346,5 +377,104 @@ public final class ExportRenderers {
         return hidden
                 ? "\"" + DeathRedactor.COORDINATE_MARKER + "\""
                 : jsonNumber(value);
+    }
+
+    // Backup-only 1.4.0 aggregates (§13.2.4). Public HTML/JSON/CSV never call
+    // these, and old backups simply omit the keys.
+
+    private static void appendWitnesses(StringBuilder sb, List<WitnessRef> witnesses, String indent) {
+        List<WitnessRef> refs = WitnessRef.copyOf(witnesses);
+        sb.append(indent).append("\"witnesses\": [");
+        boolean first = true;
+        for (WitnessRef w : refs) {
+            sb.append(first ? "\n" : ",\n").append(indent).append("  {\n")
+                    .append(indent).append("    \"uuid\": \"").append(TextEscaping.jsonString(w.uuid())).append("\",\n")
+                    .append(indent).append("    \"nameAtDeath\": \"")
+                    .append(TextEscaping.jsonString(w.nameAtDeath())).append("\"\n")
+                    .append(indent).append("  }");
+            first = false;
+        }
+        if (!first) {
+            sb.append('\n').append(indent);
+        }
+        sb.append(']');
+    }
+
+    private static void appendContext(StringBuilder sb, DeathContext context, String indent) {
+        DeathContext c = context == null ? DeathContext.EMPTY : context;
+        sb.append(indent).append("\"context\": {\n")
+                .append(indent).append("  \"mainHand\": \"").append(TextEscaping.jsonString(c.mainHand())).append("\",\n")
+                .append(indent).append("  \"armor\": [");
+        appendStrings(sb, c.armor());
+        sb.append("],\n").append(indent).append("  \"effects\": [");
+        appendStrings(sb, c.effects());
+        sb.append("],\n").append(indent).append("  \"biome\": \"")
+                .append(TextEscaping.jsonString(c.biome())).append("\",\n")
+                .append(indent).append("  \"weather\": \"")
+                .append(TextEscaping.jsonString(c.weather())).append("\"\n")
+                .append(indent).append('}');
+    }
+
+    private static void appendStrings(StringBuilder sb, List<String> values) {
+        boolean first = true;
+        for (String value : values) {
+            if (value == null) {
+                continue;
+            }
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append('"').append(TextEscaping.jsonString(value)).append('"');
+        }
+    }
+
+    private static void appendNearDeaths(StringBuilder sb, List<NearDeathEvent> events, String indent) {
+        List<NearDeathEvent> clean = NearDeathEvent.copyOf(events);
+        sb.append(indent).append("\"nearDeaths\": [");
+        boolean first = true;
+        for (NearDeathEvent e : clean) {
+            sb.append(first ? "\n" : ",\n").append(indent).append("  {\n")
+                    .append(indent).append("    \"uuid\": \"").append(TextEscaping.jsonString(e.uuid())).append("\",\n")
+                    .append(indent).append("    \"name\": \"").append(TextEscaping.jsonString(e.name())).append("\",\n")
+                    .append(indent).append("    \"epochMillis\": ").append(e.epochMillis()).append(",\n")
+                    .append(indent).append("    \"dimension\": \"").append(TextEscaping.jsonString(e.dimension())).append("\",\n")
+                    .append(indent).append("    \"x\": ").append(jsonNumber(e.x())).append(",\n")
+                    .append(indent).append("    \"y\": ").append(jsonNumber(e.y())).append(",\n")
+                    .append(indent).append("    \"z\": ").append(jsonNumber(e.z())).append(",\n")
+                    .append(indent).append("    \"causeCategory\": \"").append(TextEscaping.jsonString(e.causeCategory())).append("\",\n")
+                    .append(indent).append("    \"causeId\": \"").append(TextEscaping.jsonString(e.causeId())).append("\",\n")
+                    .append(indent).append("    \"kind\": \"").append(e.kind().name()).append("\"\n")
+                    .append(indent).append("  }");
+            first = false;
+        }
+        if (!first) {
+            sb.append('\n').append(indent);
+        }
+        sb.append(']');
+    }
+
+    private static void appendChronicleEvents(StringBuilder sb, List<ChronicleEvent> events, String indent) {
+        List<ChronicleEvent> clean = ChronicleEvent.copyOf(events);
+        sb.append(indent).append("\"chronicleEvents\": [");
+        boolean first = true;
+        for (ChronicleEvent e : clean) {
+            sb.append(first ? "\n" : ",\n").append(indent).append("  {\n")
+                    .append(indent).append("    \"epochMillis\": ").append(e.epochMillis()).append(",\n")
+                    .append(indent).append("    \"gameDay\": ").append(e.gameDay()).append(",\n")
+                    .append(indent).append("    \"kind\": \"").append(e.kind().name()).append("\",\n")
+                    .append(indent).append("    \"uuid\": \"").append(TextEscaping.jsonString(e.uuid())).append("\",\n")
+                    .append(indent).append("    \"name\": \"").append(TextEscaping.jsonString(e.name())).append("\",\n")
+                    .append(indent).append("    \"dimension\": \"").append(TextEscaping.jsonString(e.dimension())).append("\",\n")
+                    .append(indent).append("    \"causeCategory\": \"").append(TextEscaping.jsonString(e.causeCategory())).append("\",\n")
+                    .append(indent).append("    \"count\": ").append(e.count()).append(",\n")
+                    .append(indent).append("    \"reconstructed\": ").append(e.reconstructed()).append('\n')
+                    .append(indent).append("  }");
+            first = false;
+        }
+        if (!first) {
+            sb.append('\n').append(indent);
+        }
+        sb.append(']');
     }
 }

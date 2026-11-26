@@ -34,6 +34,8 @@ public class CensusData extends SavedData {
     /** Per-player state. */
     public static final class PlayerCensus {
         public final List<DeathEntry> deaths = new ArrayList<>();
+        /** §10: bounded near-death saves, separate from real deaths. Empty on old saves. */
+        public final List<NearDeathEvent> nearDeaths = new ArrayList<>();
         /** Cause categories this player has ever died to (known categories only), even after record trimming. */
         public final Set<String> lifetimeCategories = new LinkedHashSet<>();
         public String lastKnownName = "";
@@ -57,9 +59,16 @@ public class CensusData extends SavedData {
     }
 
     private final Map<UUID, PlayerCensus> players = new LinkedHashMap<>();
+    /** §3: server-level chronicle rows; empty on old saves, nothing reconstructed in PR-1. */
+    public final List<ChronicleEvent> chronicleEvents = new ArrayList<>();
     private long lastDigestEpochMillis = 0L;
     /** Lifetime deaths across all players; survives trimming of retained records. */
     private long lifetimeDeaths = 0L;
+
+    /** Immutable view of the persisted chronicle aggregate. */
+    public List<ChronicleEvent> chronicleEvents() {
+        return Collections.unmodifiableList(chronicleEvents);
+    }
 
     public static CensusData get(MinecraftServer server) {
         return server.overworld().getDataStorage().computeIfAbsent(FACTORY, DATA_NAME);
@@ -329,14 +338,21 @@ public class CensusData extends SavedData {
             PlayerCensus pc = e.getValue();
             out.add(new PlayerDeaths(e.getKey().toString(), pc.lastKnownName, pc.optOutPublic,
                     pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths,
-                    pc.vanillaDeathsBaseline, pc.vanillaBaselineCauses));
+                    pc.vanillaDeathsBaseline, pc.vanillaBaselineCauses, pc.nearDeaths));
         }
         return out;
     }
 
     /** Replaces all stored data with the given snapshot (used by admin restore). */
     public void replaceAll(List<PlayerDeaths> snapshot) {
+        replaceAll(snapshot, List.of());
+    }
+
+    /** As above, also restoring the §3 chronicle aggregate from a backup. */
+    public void replaceAll(List<PlayerDeaths> snapshot, List<ChronicleEvent> chronicle) {
         players.clear();
+        chronicleEvents.clear();
+        chronicleEvents.addAll(ChronicleEvent.copyOf(chronicle));
         long restoredTotal = 0L;
         for (PlayerDeaths pd : snapshot) {
             UUID uuid;
@@ -354,6 +370,7 @@ public class CensusData extends SavedData {
             pc.vanillaDeathsBaseline = Math.max(0, pd.vanillaDeathsBaseline());
             pc.vanillaBaselineCauses.putAll(pd.vanillaBaselineCauses());
             pc.deaths.addAll(pd.deaths());
+            pc.nearDeaths.addAll(pd.nearDeaths());
             for (DeathEntry death : pd.deaths()) {
                 if (CauseClassifier.isKnownCategory(death.causeCategory())) {
                     pc.lifetimeCategories.add(death.causeCategory());
@@ -413,6 +430,18 @@ public class CensusData extends SavedData {
         t.putString("excuse", e.excuse());
         t.putString("lastwords", e.lastWords());
         t.putInt("fcount", e.fCount());
+        // §13.2.2: additive keys are written only when non-default, so an
+        // untouched 1.4.0 save stays byte-compatible with a 1.3.0 save.
+        if (!e.witnesses().isEmpty()) {
+            ListTag witnesses = new ListTag();
+            for (WitnessRef w : e.witnesses()) {
+                witnesses.add(witnessToTag(w));
+            }
+            t.put("witnesses", witnesses);
+        }
+        if (!e.context().isEmpty()) {
+            t.put("context", contextToTag(e.context()));
+        }
         return t;
     }
 
@@ -441,7 +470,161 @@ public class CensusData extends SavedData {
                 t.contains("level", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("level")) : 0,
                 t.getString("excuse"),
                 t.getString("lastwords"),
-                t.contains("fcount", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("fcount")) : 0);
+                t.contains("fcount", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("fcount")) : 0,
+                witnessesFromTag(t),
+                contextFromTag(t));
+    }
+
+    // ---- §13.2.2: additive NBT shapes with absent/per-element defaults -----
+
+    private static CompoundTag witnessToTag(WitnessRef w) {
+        CompoundTag t = new CompoundTag();
+        t.putString("uuid", w.uuid());
+        t.putString("nameAtDeath", w.nameAtDeath());
+        return t;
+    }
+
+    @Nullable
+    private static WitnessRef witnessFromTag(CompoundTag t) {
+        if (!t.contains("uuid", Tag.TAG_STRING) && !t.contains("nameAtDeath", Tag.TAG_STRING)) {
+            return null;
+        }
+        return new WitnessRef(t.getString("uuid"), t.getString("nameAtDeath"));
+    }
+
+    private static List<WitnessRef> witnessesFromTag(CompoundTag t) {
+        List<WitnessRef> out = new ArrayList<>();
+        if (!t.contains("witnesses", Tag.TAG_LIST) || !(t.get("witnesses") instanceof ListTag list)) {
+            return out;
+        }
+        for (Tag raw : list) {
+            WitnessRef ref = raw instanceof CompoundTag w ? witnessFromTag(w) : null;
+            if (ref != null) {
+                out.add(ref);
+            } else {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed witness in SavedData");
+            }
+        }
+        return out;
+    }
+
+    private static CompoundTag contextToTag(DeathContext c) {
+        CompoundTag t = new CompoundTag();
+        t.putString("mainHand", c.mainHand());
+        ListTag armor = new ListTag();
+        for (String value : c.armor()) {
+            armor.add(StringTag.valueOf(value));
+        }
+        t.put("armor", armor);
+        ListTag effects = new ListTag();
+        for (String value : c.effects()) {
+            effects.add(StringTag.valueOf(value));
+        }
+        t.put("effects", effects);
+        t.putString("biome", c.biome());
+        t.putString("weather", c.weather());
+        return t;
+    }
+
+    private static List<String> stringListFromTag(CompoundTag t, String key) {
+        List<String> out = new ArrayList<>();
+        if (!t.contains(key, Tag.TAG_LIST) || !(t.get(key) instanceof ListTag list)) {
+            return out;
+        }
+        for (Tag raw : list) {
+            if (raw instanceof StringTag s) {
+                out.add(s.getAsString());
+            }
+        }
+        return out;
+    }
+
+    private static DeathContext contextFromTag(CompoundTag t) {
+        if (!t.contains("context", Tag.TAG_COMPOUND)) {
+            return DeathContext.EMPTY;
+        }
+        CompoundTag c = t.getCompound("context");
+        return new DeathContext(
+                c.contains("mainHand", Tag.TAG_STRING) ? c.getString("mainHand") : "",
+                stringListFromTag(c, "armor"),
+                stringListFromTag(c, "effects"),
+                c.contains("biome", Tag.TAG_STRING) ? c.getString("biome") : "",
+                c.contains("weather", Tag.TAG_STRING) ? c.getString("weather") : "");
+    }
+
+    private static CompoundTag chronicleToTag(ChronicleEvent e) {
+        CompoundTag t = new CompoundTag();
+        t.putLong("epochMillis", e.epochMillis());
+        t.putLong("gameDay", e.gameDay());
+        t.putString("kind", e.kind().name());
+        t.putString("uuid", e.uuid());
+        t.putString("name", e.name());
+        t.putString("dimension", e.dimension());
+        t.putString("causeCategory", e.causeCategory());
+        t.putInt("count", e.count());
+        t.putBoolean("reconstructed", e.reconstructed());
+        return t;
+    }
+
+    @Nullable
+    private static ChronicleEvent chronicleFromTag(CompoundTag t) {
+        if (!t.contains("epochMillis", Tag.TAG_ANY_NUMERIC)) {
+            return null;
+        }
+        ChronicleEvent.Kind kind;
+        try {
+            kind = t.contains("kind", Tag.TAG_STRING)
+                    ? ChronicleEvent.Kind.valueOf(t.getString("kind"))
+                    : ChronicleEvent.Kind.SERVER_FIRST;
+        } catch (IllegalArgumentException e) {
+            kind = ChronicleEvent.Kind.SERVER_FIRST;
+        }
+        return new ChronicleEvent(
+                t.getLong("epochMillis"),
+                t.contains("gameDay", Tag.TAG_ANY_NUMERIC) ? t.getLong("gameDay") : 0L,
+                kind,
+                t.getString("uuid"), t.getString("name"), t.getString("dimension"),
+                t.getString("causeCategory"),
+                t.contains("count", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("count")) : 0,
+                t.contains("reconstructed") && t.getBoolean("reconstructed"));
+    }
+
+    private static CompoundTag nearDeathToTag(NearDeathEvent e) {
+        CompoundTag t = new CompoundTag();
+        t.putString("uuid", e.uuid());
+        t.putString("name", e.name());
+        t.putLong("epochMillis", e.epochMillis());
+        t.putString("dimension", e.dimension());
+        t.putDouble("x", e.x());
+        t.putDouble("y", e.y());
+        t.putDouble("z", e.z());
+        t.putString("causeCategory", e.causeCategory());
+        t.putString("causeId", e.causeId());
+        t.putString("kind", e.kind().name());
+        return t;
+    }
+
+    @Nullable
+    private static NearDeathEvent nearDeathFromTag(CompoundTag t) {
+        if (!t.contains("epochMillis", Tag.TAG_ANY_NUMERIC)
+                || !t.contains("uuid", Tag.TAG_STRING)) {
+            return null;
+        }
+        NearDeathEvent.Kind kind;
+        try {
+            kind = t.contains("kind", Tag.TAG_STRING)
+                    ? NearDeathEvent.Kind.valueOf(t.getString("kind"))
+                    : NearDeathEvent.Kind.CANCELLED;
+        } catch (IllegalArgumentException e) {
+            kind = NearDeathEvent.Kind.CANCELLED;
+        }
+        return new NearDeathEvent(
+                t.getString("uuid"), t.getString("name"), t.getLong("epochMillis"),
+                t.getString("dimension"),
+                t.contains("x", Tag.TAG_ANY_NUMERIC) ? t.getDouble("x") : 0.0,
+                t.contains("y", Tag.TAG_ANY_NUMERIC) ? t.getDouble("y") : 0.0,
+                t.contains("z", Tag.TAG_ANY_NUMERIC) ? t.getDouble("z") : 0.0,
+                t.getString("causeCategory"), t.getString("causeId"), kind);
     }
 
     public static CensusData load(CompoundTag tag, HolderLookup.Provider provider) {
@@ -489,7 +672,23 @@ public class CensusData extends SavedData {
                         } else {
                             DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed death entry for '{}' in SavedData", uuidKey);
                         }
+                    } else {
+                        DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed death entry for '{}' in SavedData", uuidKey);
                     }
+                }
+            }
+            if (entry.contains("nearDeaths", Tag.TAG_LIST)) {
+                if (entry.get("nearDeaths") instanceof ListTag nearDeaths) {
+                    for (Tag raw : nearDeaths) {
+                        NearDeathEvent e = raw instanceof CompoundTag n ? nearDeathFromTag(n) : null;
+                        if (e != null) {
+                            pc.nearDeaths.add(e);
+                        } else {
+                            DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed near-death event for '{}' in SavedData", uuidKey);
+                        }
+                    }
+                } else {
+                    DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed near-death list for '{}' in SavedData", uuidKey);
                 }
             }
             if (entry.contains("lifetimeCategories", Tag.TAG_LIST)) {
@@ -527,6 +726,20 @@ public class CensusData extends SavedData {
             // Old data has no counter: the retained deaths are the best available approximation.
             for (PlayerCensus pc : data.players.values()) {
                 data.lifetimeDeaths += pc.deaths.size();
+            }
+        }
+        if (tag.contains("chronicleEvents", Tag.TAG_LIST)) {
+            if (tag.get("chronicleEvents") instanceof ListTag events) {
+                for (Tag raw : events) {
+                    ChronicleEvent e = raw instanceof CompoundTag c ? chronicleFromTag(c) : null;
+                    if (e != null) {
+                        data.chronicleEvents.add(e);
+                    } else {
+                        DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed chronicle event in SavedData");
+                    }
+                }
+            } else {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed chronicle list in SavedData");
             }
         }
         return data;
@@ -574,6 +787,13 @@ public class CensusData extends SavedData {
                 deaths.add(entryToTag(d));
             }
             entry.put("deaths", deaths);
+            if (!pc.nearDeaths.isEmpty()) {
+                ListTag nearDeaths = new ListTag();
+                for (NearDeathEvent n : pc.nearDeaths) {
+                    nearDeaths.add(nearDeathToTag(n));
+                }
+                entry.put("nearDeaths", nearDeaths);
+            }
             if (!pc.lifetimeCategories.isEmpty()) {
                 ListTag categories = new ListTag();
                 for (String category : pc.lifetimeCategories) {
@@ -589,6 +809,13 @@ public class CensusData extends SavedData {
         }
         if (lifetimeDeaths > 0L) {
             tag.putLong("lifetimeDeaths", lifetimeDeaths);
+        }
+        if (!chronicleEvents.isEmpty()) {
+            ListTag events = new ListTag();
+            for (ChronicleEvent c : chronicleEvents) {
+                events.add(chronicleToTag(c));
+            }
+            tag.put("chronicleEvents", events);
         }
         return tag;
     }

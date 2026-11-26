@@ -53,7 +53,9 @@ public final class DeathRedactor {
                 entry.experienceLevel(),
                 entry.excuse(),
                 entry.lastWords(),
-                entry.fCount());
+                entry.fCount(),
+                entry.witnesses(),
+                entry.context());
     }
 
     /** True when the entry carries the NaN coordinate sentinel written by {@link #apply}. */

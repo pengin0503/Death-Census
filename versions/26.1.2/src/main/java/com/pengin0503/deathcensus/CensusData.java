@@ -38,6 +38,8 @@ public class CensusData extends SavedData {
     /** Per-player state. */
     public static final class PlayerCensus {
         public final List<DeathEntry> deaths = new ArrayList<>();
+        /** §10: bounded near-death saves, separate from real deaths. Empty on old saves. */
+        public final List<NearDeathEvent> nearDeaths = new ArrayList<>();
         /** Cause categories this player has ever died to (known categories only), even after record trimming. */
         public final Set<String> lifetimeCategories = new LinkedHashSet<>();
         public String lastKnownName = "";
@@ -60,7 +62,126 @@ public class CensusData extends SavedData {
         }
     }
 
-    // DeathEntry has 20 components, more than RecordCodecBuilder's 16-field
+    // ---- §13.2.3: additive codecs. Missing keys decode to empty/defaults and
+    // one bad element is skipped instead of failing its death or player. -----
+
+    private static final Codec<WitnessRef> WITNESS_CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<T> encode(WitnessRef w, DynamicOps<T> ops, T prefix) {
+            return ops.mapBuilder()
+                    .add("uuid", ops.createString(w.uuid()))
+                    .add("nameAtDeath", ops.createString(w.nameAtDeath()))
+                    .build(prefix);
+        }
+
+        @Override
+        public <T> DataResult<Pair<WitnessRef, T>> decode(DynamicOps<T> ops, T input) {
+            return ops.getMap(input).flatMap(map -> {
+                WitnessRef ref = new WitnessRef(
+                        stringValue(ops, map, "uuid"), stringValue(ops, map, "nameAtDeath"));
+                return ref.isEmpty()
+                        ? DataResult.error(() -> "Empty witness entry")
+                        : DataResult.success(Pair.of(ref, input));
+            });
+        }
+    };
+
+    private static final Codec<DeathContext> CONTEXT_CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<T> encode(DeathContext c, DynamicOps<T> ops, T prefix) {
+            return ops.mapBuilder()
+                    .add("mainHand", ops.createString(c.mainHand()))
+                    .add("armor", Codec.STRING.listOf().encodeStart(ops, c.armor()))
+                    .add("effects", Codec.STRING.listOf().encodeStart(ops, c.effects()))
+                    .add("biome", ops.createString(c.biome()))
+                    .add("weather", ops.createString(c.weather()))
+                    .build(prefix);
+        }
+
+        @Override
+        public <T> DataResult<Pair<DeathContext, T>> decode(DynamicOps<T> ops, T input) {
+            return ops.getMap(input).map(map -> Pair.of(new DeathContext(
+                    stringValue(ops, map, "mainHand"),
+                    stringListValue(ops, map, "armor"),
+                    stringListValue(ops, map, "effects"),
+                    stringValue(ops, map, "biome"),
+                    stringValue(ops, map, "weather")), input));
+        }
+    };
+
+    private static final Codec<ChronicleEvent> CHRONICLE_CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<T> encode(ChronicleEvent e, DynamicOps<T> ops, T prefix) {
+            return ops.mapBuilder()
+                    .add("epochMillis", ops.createLong(e.epochMillis()))
+                    .add("gameDay", ops.createLong(e.gameDay()))
+                    .add("kind", ops.createString(e.kind().name()))
+                    .add("uuid", ops.createString(e.uuid()))
+                    .add("name", ops.createString(e.name()))
+                    .add("dimension", ops.createString(e.dimension()))
+                    .add("causeCategory", ops.createString(e.causeCategory()))
+                    .add("count", ops.createInt(e.count()))
+                    .add("reconstructed", ops.createBoolean(e.reconstructed()))
+                    .build(prefix);
+        }
+
+        @Override
+        public <T> DataResult<Pair<ChronicleEvent, T>> decode(DynamicOps<T> ops, T input) {
+            return ops.getMap(input).flatMap(map -> {
+                ChronicleEvent event = new ChronicleEvent(
+                        longValue(ops, map, "epochMillis"),
+                        longValue(ops, map, "gameDay"),
+                        enumValue(ops, map, "kind", ChronicleEvent.Kind.class, ChronicleEvent.Kind.SERVER_FIRST),
+                        stringValue(ops, map, "uuid"),
+                        stringValue(ops, map, "name"),
+                        stringValue(ops, map, "dimension"),
+                        stringValue(ops, map, "causeCategory"),
+                        intValue(ops, map, "count"),
+                        booleanValue(ops, map, "reconstructed"));
+                return event.epochMillis() <= 0L
+                        ? DataResult.error(() -> "Chronicle event without a valid epoch")
+                        : DataResult.success(Pair.of(event, input));
+            });
+        }
+    };
+
+    private static final Codec<NearDeathEvent> NEAR_DEATH_CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<T> encode(NearDeathEvent e, DynamicOps<T> ops, T prefix) {
+            return ops.mapBuilder()
+                    .add("uuid", ops.createString(e.uuid()))
+                    .add("name", ops.createString(e.name()))
+                    .add("epochMillis", ops.createLong(e.epochMillis()))
+                    .add("dimension", ops.createString(e.dimension()))
+                    .add("x", ops.createDouble(e.x()))
+                    .add("y", ops.createDouble(e.y()))
+                    .add("z", ops.createDouble(e.z()))
+                    .add("causeCategory", ops.createString(e.causeCategory()))
+                    .add("causeId", ops.createString(e.causeId()))
+                    .add("kind", ops.createString(e.kind().name()))
+                    .build(prefix);
+        }
+
+        @Override
+        public <T> DataResult<Pair<NearDeathEvent, T>> decode(DynamicOps<T> ops, T input) {
+            return ops.getMap(input).flatMap(map -> {
+                NearDeathEvent event = new NearDeathEvent(
+                        stringValue(ops, map, "uuid"),
+                        stringValue(ops, map, "name"),
+                        longValue(ops, map, "epochMillis"),
+                        stringValue(ops, map, "dimension"),
+                        dbl(ops, map, "x"), dbl(ops, map, "y"), dbl(ops, map, "z"),
+                        stringValue(ops, map, "causeCategory"),
+                        stringValue(ops, map, "causeId"),
+                        enumValue(ops, map, "kind", NearDeathEvent.Kind.class, NearDeathEvent.Kind.CANCELLED));
+                return event.epochMillis() <= 0L || event.uuid().isEmpty()
+                        ? DataResult.error(() -> "Near-death event without uuid/epoch")
+                        : DataResult.success(Pair.of(event, input));
+            });
+        }
+    };
+
+    // DeathEntry's 20 existing components exceed RecordCodecBuilder's 16-field
     // group limit, so its codec is written manually.
     private static final Codec<DeathEntry> ENTRY_CODEC = new Codec<>() {
         @Override
@@ -86,6 +207,12 @@ public class CensusData extends SavedData {
             b.add("excuse", ops.createString(e.excuse()));
             b.add("lastWords", ops.createString(e.lastWords()));
             b.add("fCount", ops.createInt(e.fCount()));
+            if (!e.witnesses().isEmpty()) {
+                b.add("witnesses", WITNESS_CODEC.listOf().encodeStart(ops, e.witnesses()));
+            }
+            if (!e.context().isEmpty()) {
+                b.add("context", CONTEXT_CODEC.encodeStart(ops, e.context()));
+            }
             return b.build(prefix);
         }
 
@@ -111,7 +238,9 @@ public class CensusData extends SavedData {
                     (int) lng(ops, map, "experienceLevel"),
                     str(ops, map, "excuse"),
                     str(ops, map, "lastWords"),
-                    (int) lng(ops, map, "fCount")), input));
+                    (int) lng(ops, map, "fCount"),
+                    decodeList(ops, map, "witnesses", WITNESS_CODEC, "witness"),
+                    contextValue(ops, map)), input));
         }
 
         private <T> String str(DynamicOps<T> ops, MapLike<T> map, String key) {
@@ -149,12 +278,90 @@ public class CensusData extends SavedData {
         return v != null && ops.getBooleanValue(v).result().orElse(false);
     }
 
+    private static <T> double dbl(DynamicOps<T> ops, MapLike<T> map, String key) {
+        T v = map.get(key);
+        return v == null ? 0.0 : ops.getNumberValue(v).result().map(Number::doubleValue).orElse(0.0);
+    }
+
+    /** Absent key → empty list; a bad element is skipped with a warning, siblings survive. */
+    private static <T, V> List<V> decodeList(DynamicOps<T> ops, MapLike<T> map, String key,
+                                             Codec<V> codec, String label) {
+        List<V> out = new ArrayList<>();
+        T value = map.get(key);
+        if (value == null) {
+            return out;
+        }
+        DataResult<Consumer<Consumer<T>>> listResult = ops.getList(value);
+        if (listResult.result().isEmpty()) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed {} list in SavedData", label);
+            return out;
+        }
+        listResult.result().get().accept(element -> {
+            DataResult<V> parsed = codec.parse(ops, element);
+            if (parsed.result().isPresent()) {
+                out.add(parsed.result().get());
+            } else {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt {} entry in SavedData", label);
+            }
+        });
+        return out;
+    }
+
+    private static <T> List<String> stringListValue(DynamicOps<T> ops, MapLike<T> map, String key) {
+        List<String> out = new ArrayList<>();
+        T value = map.get(key);
+        if (value == null) {
+            return out;
+        }
+        DataResult<Consumer<Consumer<T>>> listResult = ops.getList(value);
+        if (listResult.result().isEmpty()) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed {} list in SavedData", key);
+            return out;
+        }
+        listResult.result().get().accept(element -> {
+            String parsed = ops.getStringValue(element).result().orElse("");
+            if (!parsed.isEmpty()) {
+                out.add(parsed);
+            }
+        });
+        return out;
+    }
+
+    /** Missing or malformed context decodes to the immutable EMPTY singleton. */
+    private static <T> DeathContext contextValue(DynamicOps<T> ops, MapLike<T> map) {
+        T value = map.get("context");
+        if (value == null) {
+            return DeathContext.EMPTY;
+        }
+        DataResult<MapLike<T>> result = ops.getMap(value);
+        if (result.result().isEmpty()) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed context in SavedData");
+            return DeathContext.EMPTY;
+        }
+        MapLike<T> c = result.result().get();
+        return new DeathContext(
+                stringValue(ops, c, "mainHand"),
+                stringListValue(ops, c, "armor"),
+                stringListValue(ops, c, "effects"),
+                stringValue(ops, c, "biome"),
+                stringValue(ops, c, "weather"));
+    }
+
+    private static <T, E extends Enum<E>> E enumValue(DynamicOps<T> ops, MapLike<T> map, String key,
+                                                       Class<E> type, E fallback) {
+        try {
+            return Enum.valueOf(type, stringValue(ops, map, key));
+        } catch (IllegalArgumentException e) {
+            return fallback;
+        }
+    }
+
     private static DeathEntry withPlayerUuid(DeathEntry e, String uuid) {
         return new DeathEntry(
                 uuid, e.playerName(), e.epochMillis(), e.gameDay(), e.playTicks(), e.survivalTicks(),
                 e.dimension(), e.x(), e.y(), e.z(), e.causeCategory(), e.causeId(), e.deathMessage(),
                 e.killerType(), e.killerName(), e.gameMode(), e.experienceLevel(), e.excuse(),
-                e.lastWords(), e.fCount());
+                e.lastWords(), e.fCount(), e.witnesses(), e.context());
     }
 
     private static void initializeCategoriesFromDeaths(PlayerCensus pc) {
@@ -182,6 +389,9 @@ public class CensusData extends SavedData {
         b.add("vanillaBaselineCauses", causesBuilder.build(ops.empty()));
         b.add("deaths", ENTRY_CODEC.listOf().encodeStart(ops, pc.deaths));
         b.add("lifetimeCategories", Codec.STRING.listOf().encodeStart(ops, new ArrayList<>(pc.lifetimeCategories)));
+        if (!pc.nearDeaths.isEmpty()) {
+            b.add("nearDeaths", NEAR_DEATH_CODEC.listOf().encodeStart(ops, pc.nearDeaths));
+        }
         return b.build(ops.empty()).result().orElse(ops.empty());
     }
 
@@ -243,6 +453,8 @@ public class CensusData extends SavedData {
                 DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed death list for '{}' in SavedData", uuidKey);
             }
         }
+        // §10: absent or corrupt near-death history never drops the player.
+        pc.nearDeaths.addAll(decodeList(ops, map, "nearDeaths", NEAR_DEATH_CODEC, "near-death event"));
 
         T categoriesValue = map.get("lifetimeCategories");
         if (categoriesValue == null) {
@@ -274,6 +486,9 @@ public class CensusData extends SavedData {
             b.add("players", playersBuilder.build(ops.empty()));
             b.add("lastDigestEpoch", ops.createLong(data.lastDigestEpochMillis));
             b.add("lifetimeDeaths", ops.createLong(data.lifetimeDeaths));
+            if (!data.chronicleEvents.isEmpty()) {
+                b.add("chronicleEvents", CHRONICLE_CODEC.listOf().encodeStart(ops, data.chronicleEvents));
+            }
             return b.build(prefix);
         }
 
@@ -312,6 +527,8 @@ public class CensusData extends SavedData {
                     }
                 }
                 data.lifetimeDeaths = storedLifetime;
+                data.chronicleEvents.addAll(decodeList(ops, map, "chronicleEvents",
+                        CHRONICLE_CODEC, "chronicle event"));
                 return Pair.of(data, input);
             });
         }
@@ -323,9 +540,16 @@ public class CensusData extends SavedData {
             CODEC);
 
     private final Map<UUID, PlayerCensus> players = new LinkedHashMap<>();
+    /** §3: server-level chronicle rows; empty on old saves, nothing reconstructed in PR-1. */
+    public final List<ChronicleEvent> chronicleEvents = new ArrayList<>();
     private long lastDigestEpochMillis = 0L;
     /** Lifetime deaths across all players; survives trimming of retained records. */
     private long lifetimeDeaths = 0L;
+
+    /** Immutable view of the persisted chronicle aggregate. */
+    public List<ChronicleEvent> chronicleEvents() {
+        return Collections.unmodifiableList(chronicleEvents);
+    }
 
     public static CensusData get(MinecraftServer server) {
         var storage = server.getDataStorage();
@@ -591,7 +815,9 @@ public class CensusData extends SavedData {
                 e.experienceLevel(),
                 excuse,
                 lastWords,
-                fCount);
+                fCount,
+                e.witnesses(),
+                e.context());
     }
 
     /** Snapshot of all players as common-model {@link PlayerDeaths}. */
@@ -601,14 +827,21 @@ public class CensusData extends SavedData {
             PlayerCensus pc = e.getValue();
             out.add(new PlayerDeaths(e.getKey().toString(), pc.lastKnownName, pc.optOutPublic,
                     pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths,
-                    pc.vanillaDeathsBaseline, pc.vanillaBaselineCauses));
+                    pc.vanillaDeathsBaseline, pc.vanillaBaselineCauses, pc.nearDeaths));
         }
         return out;
     }
 
     /** Replaces all stored data with the given snapshot (used by admin restore). */
     public void replaceAll(List<PlayerDeaths> snapshot) {
+        replaceAll(snapshot, List.of());
+    }
+
+    /** As above, also restoring the §3 chronicle aggregate from a backup. */
+    public void replaceAll(List<PlayerDeaths> snapshot, List<ChronicleEvent> chronicle) {
         players.clear();
+        chronicleEvents.clear();
+        chronicleEvents.addAll(ChronicleEvent.copyOf(chronicle));
         long restoredTotal = 0L;
         for (PlayerDeaths pd : snapshot) {
             UUID uuid;
@@ -626,6 +859,7 @@ public class CensusData extends SavedData {
             pc.vanillaDeathsBaseline = Math.max(0, pd.vanillaDeathsBaseline());
             pc.vanillaBaselineCauses.putAll(pd.vanillaBaselineCauses());
             pc.deaths.addAll(pd.deaths());
+            pc.nearDeaths.addAll(pd.nearDeaths());
             for (DeathEntry death : pd.deaths()) {
                 if (CauseClassifier.isKnownCategory(death.causeCategory())) {
                     pc.lifetimeCategories.add(death.causeCategory());
