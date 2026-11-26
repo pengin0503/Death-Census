@@ -84,6 +84,27 @@ class UiPrivacyTest {
     }
 
     @Test
+    void granularFlagsAreSubordinateToFullOptOutVisibility() {
+        List<PlayerDeaths> data = List.of(
+                new com.pengin0503.deathcensus.PlayerDeaths(
+                        TestData.BOB.toString(), "Bob", true, true, true, true,
+                        List.of(TestData.death(TestData.BOB, "Bob", 1_000L, "fall"))),
+                new com.pengin0503.deathcensus.PlayerDeaths(
+                        TestData.CAROL.toString(), "Carol", false, true, true, true,
+                        List.of(TestData.death(TestData.CAROL, "Carol", 2_000L, "fall"))));
+
+        // The full opt-out still governs who is visible at all; granular flags
+        // never widen or narrow that gate.
+        assertEquals(List.of("Carol"), UiPrivacy.visiblePlayers(data, TestData.ALICE, false).stream()
+                .map(PlayerDeaths::name).toList());
+        assertEquals(2, UiPrivacy.visiblePlayers(data, TestData.ALICE, true).size());
+        assertFalse(UiPrivacy.canViewDetail(TestData.ALICE, data.get(0), false));
+        assertTrue(UiPrivacy.canViewDetail(TestData.BOB, data.get(0), false));
+        // Anonymous totals count every death regardless of any flag.
+        assertEquals(2, UiPrivacy.anonymousServerTotal(data));
+    }
+
+    @Test
     void mutationPermissionsAreSelfAndAdminOnly() {
         assertTrue(UiPrivacy.canEditExcuse(TestData.ALICE, TestData.ALICE.toString()));
         assertFalse(UiPrivacy.canEditExcuse(TestData.CAROL, TestData.ALICE.toString()));

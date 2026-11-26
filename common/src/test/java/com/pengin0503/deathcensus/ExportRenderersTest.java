@@ -143,4 +143,36 @@ class ExportRenderersTest {
             assertFalse(rendered.contains("Bob"), rendered);
         }
     }
+
+    @Test
+    void granularPrivacyRedactsRowsButKeepsAnonymousTotals() {
+        DeathEntry d = new DeathEntry(
+                "u1", "Alex", T1, 4L, 2400, 1200,
+                "minecraft:overworld", 130.0, -130.0, 64.0,
+                "player", "minecraft:player", "Alex was slain by Steve",
+                "minecraft:player", "Steve", "survival", 9, "", "", 1
+        );
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u1", "Alex", false, true, true, true, List.of(d))
+        );
+
+        String csv = ExportRenderers.toCsv(players);
+        String json = ExportRenderers.toJson(players, T2);
+        String html = ExportRenderers.toHtml(players, T2, ZoneOffset.UTC);
+        for (String rendered : List.of(csv, json, html)) {
+            assertTrue(rendered.contains("~"), rendered);
+            assertFalse(rendered.contains("Steve"), rendered);
+            assertTrue(rendered.contains("player"), rendered);
+        }
+        assertTrue(csv.contains("~,~,~,"));
+        assertTrue(json.contains("\"x\": \"~\""));
+        assertTrue(json.contains("\"y\": \"~\""));
+        assertTrue(json.contains("\"z\": \"~\""));
+        assertTrue(json.contains("\"hideCoordinates\": true"));
+        assertTrue(json.contains("\"hidePvpOpponent\": true"));
+        assertTrue(json.contains("\"discordOptOut\": true"));
+        assertTrue(json.contains("\"totalDeaths\": 1"));
+        assertTrue(html.contains("~</td>"));
+        assertFalse(DeathRedactor.isCoordinateHidden(d), "the source snapshot is not redacted");
+    }
 }

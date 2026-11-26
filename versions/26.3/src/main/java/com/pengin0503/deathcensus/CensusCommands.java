@@ -544,7 +544,8 @@ public final class CensusCommands {
             return 0;
         }
         PlayerDeaths selfDeaths = new PlayerDeaths(self.getUUID().toString(),
-                self.getGameProfile().name(), pc.optOutPublic, pc.deaths);
+                self.getGameProfile().name(), pc.optOutPublic,
+                pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths);
         List<CensusStats.PlayerSummary> summaries = CensusStats.summaries(List.of(selfDeaths), true);
         CensusStats.PlayerSummary s = summaries.get(0);
         send(ctx, "command.deathcensus.stats.header", s.name());

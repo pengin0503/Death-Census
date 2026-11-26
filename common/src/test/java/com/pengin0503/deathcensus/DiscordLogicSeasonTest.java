@@ -119,6 +119,31 @@ class DiscordLogicSeasonTest {
     }
 
     @Test
+    void discordOptOutIsExcludedFromNamedLastWordsButKeptInDigestRankings() {
+        long from = epoch("2026-01-01T00:00:00Z");
+        long to = epoch("2026-01-04T00:00:00Z");
+        DeathEntry aliceDeath = death("Alice", epoch("2026-01-02T10:00:00Z"), "fall", "gg", 5);
+        DeathEntry carolDeath = death("Carol", epoch("2026-01-02T11:00:00Z"), "fall", "secret", 9);
+        DeathEntry danaDeath = death("Dana", epoch("2026-01-02T12:00:00Z"), "fall", "hidden words", 9);
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u-Alice", "Alice", false, false, false, false, List.of(aliceDeath)),
+                new PlayerDeaths("u-Carol", "Carol", false, false, false, true, List.of(carolDeath)),
+                new PlayerDeaths("u-Dana", "Dana", true, false, false, false, List.of(danaDeath)));
+
+        String content = DiscordLogic.seasonContent(
+                players, new SeasonRange(from, to), UTC, EN, SeasonAwards.none());
+
+        assertTrue(content.startsWith("Season digest: 3 death(s)"));
+        assertTrue(content.contains("Top causes: fall x3"));
+        assertTrue(content.contains("Most deaths: Alice (1), Carol (1)"));
+        assertTrue(content.contains("Alice: \"gg\" (F x5)"));
+        assertFalse(content.contains("Carol:"));
+        assertFalse(content.contains("secret"));
+        assertFalse(content.contains("Dana:"));
+        assertFalse(content.contains("hidden words"));
+    }
+
+    @Test
     void awardsRenderOneAndManyQualifiers() {
         long from = epoch("2026-01-01T00:00:00Z");
         long to = epoch("2026-01-02T00:00:00Z");

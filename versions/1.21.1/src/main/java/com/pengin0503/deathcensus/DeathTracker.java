@@ -255,7 +255,8 @@ public final class DeathTracker {
             }
         }
         if (!pc.optOutPublic) {
-            DiscordNotifier.notifyDeath(entry);
+            DiscordNotifier.notifyDeath(entry, new PlayerPrivacy(
+                    pc.optOutPublic, pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut));
         }
         if (Config.milestoneAnnouncements()) {
             int playerDistinctCategoriesAfter = pc.lifetimeCategories.size();

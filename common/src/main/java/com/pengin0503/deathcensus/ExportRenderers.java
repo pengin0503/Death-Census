@@ -19,12 +19,9 @@ public final class ExportRenderers {
 
     public static String toCsv(List<PlayerDeaths> players) {
         List<DeathEntry> rows = new ArrayList<>();
-        if (players != null) {
-            for (PlayerDeaths player : players) {
-                if (player != null) {
-                    rows.addAll(player.deaths());
-                }
-            }
+        // Aggregates are never built from these copies; only the rendered rows are.
+        for (PlayerDeaths player : DeathRedactor.publicView(players)) {
+            rows.addAll(player.deaths());
         }
         rows.sort(Comparator.comparingLong(DeathEntry::epochMillis));
 
@@ -40,9 +37,9 @@ public final class ExportRenderers {
                     Integer.toString(d.playTicks()),
                     Integer.toString(d.survivalTicks()),
                     d.dimension(),
-                    String.format(Locale.ROOT, "%.1f", d.x()),
-                    String.format(Locale.ROOT, "%.1f", d.y()),
-                    String.format(Locale.ROOT, "%.1f", d.z()),
+                    csvCoordinate(d.x(), hiddenCoordinates(d)),
+                    csvCoordinate(d.y(), hiddenCoordinates(d)),
+                    csvCoordinate(d.z(), hiddenCoordinates(d)),
                     d.causeCategory(),
                     d.causeId(),
                     d.killerType(),
@@ -81,6 +78,9 @@ public final class ExportRenderers {
 
     private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis, boolean anonymized) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
+        // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
+        // per-death rows use the public redaction view.
+        List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
 
         StringBuilder sb = new StringBuilder(256 + totalDeaths * 256);
@@ -99,8 +99,11 @@ public final class ExportRenderers {
                 sb.append("      \"uuid\": \"").append(TextEscaping.jsonString(p.uuid())).append("\",\n");
                 sb.append("      \"name\": \"").append(TextEscaping.jsonString(p.name())).append("\",\n");
                 sb.append("      \"optOutPublic\": ").append(p.optOutPublic()).append(",\n");
+                sb.append("      \"hideCoordinates\": ").append(p.hideCoordinates()).append(",\n");
+                sb.append("      \"hidePvpOpponent\": ").append(p.hidePvpOpponent()).append(",\n");
+                sb.append("      \"discordOptOut\": ").append(p.discordOptOut()).append(",\n");
                 sb.append("      \"deaths\": [");
-                List<DeathEntry> deaths = p.deaths();
+                List<DeathEntry> deaths = renderPlayers.get(i).deaths();
                 if (!deaths.isEmpty()) {
                     sb.append('\n');
                     for (int j = 0; j < deaths.size(); j++) {
@@ -113,9 +116,9 @@ public final class ExportRenderers {
                         sb.append("          \"playTicks\": ").append(d.playTicks()).append(",\n");
                         sb.append("          \"survivalTicks\": ").append(d.survivalTicks()).append(",\n");
                         sb.append("          \"dimension\": \"").append(TextEscaping.jsonString(d.dimension())).append("\",\n");
-                        sb.append("          \"x\": ").append(jsonNumber(d.x())).append(",\n");
-                        sb.append("          \"y\": ").append(jsonNumber(d.y())).append(",\n");
-                        sb.append("          \"z\": ").append(jsonNumber(d.z())).append(",\n");
+                        sb.append("          \"x\": ").append(jsonCoordinate(d.x(), hiddenCoordinates(d))).append(",\n");
+                        sb.append("          \"y\": ").append(jsonCoordinate(d.y(), hiddenCoordinates(d))).append(",\n");
+                        sb.append("          \"z\": ").append(jsonCoordinate(d.z(), hiddenCoordinates(d))).append(",\n");
                         sb.append("          \"causeCategory\": \"").append(TextEscaping.jsonString(d.causeCategory())).append("\",\n");
                         sb.append("          \"causeId\": \"").append(TextEscaping.jsonString(d.causeId())).append("\",\n");
                         sb.append("          \"deathMessage\": \"").append(TextEscaping.jsonString(d.deathMessage())).append("\",\n");
@@ -154,6 +157,9 @@ public final class ExportRenderers {
 
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
+        // Summaries and rankings stay unredacted (DESIGN §8); timelines render
+        // the public redaction view of the same records.
+        List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
         List<Map.Entry<String, Integer>> causes = CensusStats.causeCounts(safePlayers, true);
         List<CensusStats.PlayerSummary> leaderboard = CensusStats.leaderboardDeaths(safePlayers, true);
@@ -228,7 +234,7 @@ public final class ExportRenderers {
 
         sb.append("<section>\n");
         sb.append("<h2>Player Timelines</h2>\n");
-        for (PlayerDeaths player : safePlayers) {
+        for (PlayerDeaths player : renderPlayers) {
             sb.append("<article>\n");
             sb.append("<h3>").append(TextEscaping.html(player.name())).append("</h3>\n");
             sb.append("<p>Deaths: ").append(player.deaths().size()).append("</p>\n");
@@ -236,7 +242,10 @@ public final class ExportRenderers {
             sb.append("<thead><tr><th>Date/Time</th><th>Day</th><th>Dimension</th><th>Position</th><th>Cause</th><th>Death Message</th><th>Survived</th></tr></thead>\n");
             sb.append("<tbody>\n");
             for (DeathEntry d : player.deaths()) {
-                String position = String.format(Locale.ROOT, "%.1f, %.1f, %.1f", d.x(), d.y(), d.z());
+                String position = hiddenCoordinates(d)
+                        ? DeathRedactor.COORDINATE_MARKER + ", " + DeathRedactor.COORDINATE_MARKER
+                                + ", " + DeathRedactor.COORDINATE_MARKER
+                        : String.format(Locale.ROOT, "%.1f, %.1f, %.1f", d.x(), d.y(), d.z());
                 sb.append("<tr><td>")
                         .append(TextEscaping.html(TimeFormat.formatDateTime(d.epochMillis(), zone)))
                         .append("</td><td>")
@@ -298,5 +307,19 @@ public final class ExportRenderers {
 
     private static String jsonNumber(double value) {
         return Double.isFinite(value) ? Double.toString(value) : "0";
+    }
+
+    private static boolean hiddenCoordinates(DeathEntry entry) {
+        return DeathRedactor.isCoordinateHidden(entry);
+    }
+
+    private static String csvCoordinate(double value, boolean hidden) {
+        return hidden ? DeathRedactor.COORDINATE_MARKER : String.format(Locale.ROOT, "%.1f", value);
+    }
+
+    private static String jsonCoordinate(double value, boolean hidden) {
+        return hidden
+                ? "\"" + DeathRedactor.COORDINATE_MARKER + "\""
+                : jsonNumber(value);
     }
 }

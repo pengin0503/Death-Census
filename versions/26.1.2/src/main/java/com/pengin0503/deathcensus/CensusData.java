@@ -42,6 +42,10 @@ public class CensusData extends SavedData {
         public final Set<String> lifetimeCategories = new LinkedHashSet<>();
         public String lastKnownName = "";
         public boolean optOutPublic = false;
+        /** Granular privacy flags (DESIGN 1.3.0 §7); all default to false on old saves. */
+        public boolean hideCoordinates = false;
+        public boolean hidePvpOpponent = false;
+        public boolean discordOptOut = false;
         /** PLAY_TIME when first seen in this world; -1 = not set yet. */
         public int baselinePlayTicks = -1;
         /** PLAY_TIME at the most recent recorded death; -1 = no death yet. */
@@ -161,6 +165,9 @@ public class CensusData extends SavedData {
         RecordBuilder<T> b = ops.mapBuilder();
         b.add("lastKnownName", ops.createString(pc.lastKnownName));
         b.add("optOutPublic", ops.createBoolean(pc.optOutPublic));
+        b.add("hideCoordinates", ops.createBoolean(pc.hideCoordinates));
+        b.add("hidePvpOpponent", ops.createBoolean(pc.hidePvpOpponent));
+        b.add("discordOptOut", ops.createBoolean(pc.discordOptOut));
         b.add("baselinePlayTicks", ops.createInt(pc.baselinePlayTicks));
         b.add("lastDeathPlayTicks", ops.createInt(pc.lastDeathPlayTicks));
         b.add("deaths", ENTRY_CODEC.listOf().encodeStart(ops, pc.deaths));
@@ -179,6 +186,11 @@ public class CensusData extends SavedData {
         PlayerCensus pc = new PlayerCensus();
         pc.lastKnownName = stringValue(ops, map, "lastKnownName");
         pc.optOutPublic = booleanValue(ops, map, "optOutPublic");
+        // Old saves have no granular fields; booleanValue defaults missing and
+        // wrong-typed values to false without discarding the player (§3.3).
+        pc.hideCoordinates = booleanValue(ops, map, "hideCoordinates");
+        pc.hidePvpOpponent = booleanValue(ops, map, "hidePvpOpponent");
+        pc.discordOptOut = booleanValue(ops, map, "discordOptOut");
         pc.baselinePlayTicks = intValue(ops, map, "baselinePlayTicks");
         pc.lastDeathPlayTicks = intValue(ops, map, "lastDeathPlayTicks");
 
@@ -495,7 +507,8 @@ public class CensusData extends SavedData {
         List<PlayerDeaths> out = new ArrayList<>(players.size());
         for (Map.Entry<UUID, PlayerCensus> e : players.entrySet()) {
             PlayerCensus pc = e.getValue();
-            out.add(new PlayerDeaths(e.getKey().toString(), pc.lastKnownName, pc.optOutPublic, pc.deaths));
+            out.add(new PlayerDeaths(e.getKey().toString(), pc.lastKnownName, pc.optOutPublic,
+                    pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths));
         }
         return out;
     }
@@ -514,6 +527,9 @@ public class CensusData extends SavedData {
             PlayerCensus pc = new PlayerCensus();
             pc.lastKnownName = pd.name();
             pc.optOutPublic = pd.optOutPublic();
+            pc.hideCoordinates = pd.hideCoordinates();
+            pc.hidePvpOpponent = pd.hidePvpOpponent();
+            pc.discordOptOut = pd.discordOptOut();
             pc.deaths.addAll(pd.deaths());
             for (DeathEntry death : pd.deaths()) {
                 if (CauseClassifier.isKnownCategory(death.causeCategory())) {
