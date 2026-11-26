@@ -132,6 +132,18 @@ public final class DiscordNotifier {
         enqueue(uri, content);
     }
 
+    /** Posts a milestone announcement to the configured webhook, if any. */
+    public static void notifyMilestone(String content) {
+        if (!Config.milestoneAnnouncements()) {
+            return;
+        }
+        URI uri = webhookUri();
+        if (uri == null) {
+            return;
+        }
+        enqueue(uri, content);
+    }
+
     /** Sends a test message; returns true when a webhook is configured and the message was queued. */
     public static boolean sendTest() {
         URI uri = webhookUri();

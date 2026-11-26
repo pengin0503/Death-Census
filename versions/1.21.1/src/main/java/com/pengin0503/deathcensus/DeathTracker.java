@@ -16,6 +16,8 @@ import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -196,6 +198,13 @@ public final class DeathTracker {
                 lastWords,
                 0);
 
+        int totalDeathsBefore = 0;
+        for (CensusData.PlayerCensus other : data.allPlayers().values()) {
+            totalDeathsBefore += other.deaths.size();
+        }
+        int playerDeathsBefore = pc.deaths.size();
+        int playerDistinctCategoriesBefore = distinctCategoryCount(pc);
+
         data.recordDeath(entry, Config.maxRecordsPerPlayer());
         RECENT_DEATHS.removeIf(death -> deathEpochMillis - death.epochMillis > CAPTURE_WINDOW_MILLIS);
         RECENT_DEATHS.add(new RecentDeath(player.getUUID(), deathEpochMillis));
@@ -203,6 +212,34 @@ public final class DeathTracker {
         if (!pc.optOutPublic) {
             DiscordNotifier.notifyDeath(entry);
         }
+        if (Config.milestoneAnnouncements()) {
+            int playerDistinctCategoriesAfter = distinctCategoryCount(pc);
+            for (Milestones.Milestone milestone : Milestones.evaluate(
+                    totalDeathsBefore,
+                    playerDeathsBefore,
+                    playerDistinctCategoriesBefore,
+                    playerDistinctCategoriesAfter,
+                    entry)) {
+                announceMilestone(server, playerName, milestone);
+            }
+        }
+    }
+
+    private static int distinctCategoryCount(CensusData.PlayerCensus pc) {
+        Set<String> categories = new HashSet<>();
+        for (DeathEntry death : pc.deaths) {
+            categories.add(death.causeCategory());
+        }
+        return categories.size();
+    }
+
+    private static void announceMilestone(MinecraftServer server, String playerName, Milestones.Milestone milestone) {
+        String key = milestone.kind().langKey();
+        Object arg = milestone.kind() == Milestones.Kind.TOTAL_COUNT
+                ? Integer.valueOf(milestone.value())
+                : playerName;
+        server.getPlayerList().broadcastSystemMessage(ServerLang.tr(key, arg), false);
+        DiscordNotifier.notifyMilestone(ServerLang.formatForLang(Config.discordLanguage(), key, arg));
     }
 
     private static String lastWordsFor(UUID player, long deathEpochMillis) {
