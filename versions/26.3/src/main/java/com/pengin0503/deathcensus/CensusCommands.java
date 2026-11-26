@@ -276,12 +276,94 @@ public final class CensusCommands {
         reset.then(literal("all").then(literal("confirm").executes(CensusCommands::resetAll)));
         root.then(reset);
 
+        // §8: /dc dev demo <count>. Both gates must be open at registration
+        // time; a refusing stub (no data-writing handler) is registered when
+        // either gate is closed so the gated lang message remains reachable.
+        root.then(devTree(Config.devMode(), System.getProperty(DemoGate.SYSTEM_PROPERTY), Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)));
+
         root.then(literal("doctor")
                 .requires(PermissionBridge.requires(DeathCensusPermission.LOOKUP,
                         Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)))
                 .executes(CensusCommands::doctor));
 
         return root;
+    }
+
+    // ------------------------------------------------------------ §8 dev/demo data
+
+    /**
+     * Builds the {@code /dc dev demo <count>} subtree. The real handler exists
+     * only when {@link DemoGate} opens both gates; otherwise only a stub that
+     * fails with {@code command.deathcensus.dev.gated} is registered. The DEV
+     * node routes through the PR-1 PermissionBridge (vanilla OP level 2).
+     */
+    static LiteralArgumentBuilder<CommandSourceStack> devTree(boolean configFlag, String systemProperty,
+                                                   Predicate<CommandSourceStack> opLevelTwoFallback) {
+        boolean open = DemoGate.enabled(configFlag, systemProperty);
+        LiteralArgumentBuilder<CommandSourceStack> dev = literal("dev")
+                .requires(PermissionBridge.requires(DeathCensusPermission.DEV, opLevelTwoFallback));
+        com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, Integer> count = com.mojang.brigadier.builder.RequiredArgumentBuilder.argument("count", IntegerArgumentType.integer(1, 500));
+        if (open) {
+            dev.executes(CensusCommands::devHelp);
+            dev.then(literal("help").executes(CensusCommands::devHelp));
+            count.executes(ctx -> demo(ctx, IntegerArgumentType.getInteger(ctx, "count")));
+        } else {
+            dev.executes(CensusCommands::devGated);
+            count.executes(CensusCommands::devGated);
+        }
+        dev.then(literal("demo").then(count));
+        return dev;
+    }
+
+    private static int devHelp(CommandContext<CommandSourceStack> ctx) {
+        send(ctx, "command.deathcensus.dev.help");
+        return 1;
+    }
+
+    private static int devGated(CommandContext<CommandSourceStack> ctx) {
+        fail(ctx, "command.deathcensus.dev.gated");
+        return 0;
+    }
+
+    /**
+     * Population never goes through DeathTracker: no realtime post, milestone
+     * evaluation, digest change or chat death line is produced here. Records
+     * are ordinary CensusData entries and are cleaned up with
+     * {@code /dc reset all confirm} (a backup is written first here too).
+     */
+    private static int demo(CommandContext<CommandSourceStack> ctx, int count) {
+        // Re-check at execution time: the property/config may have changed
+        // since the command tree was built; nothing is written when closed.
+        if (!DemoGate.enabled(Config.devMode(), System.getProperty(DemoGate.SYSTEM_PROPERTY))) {
+            fail(ctx, "command.deathcensus.dev.gated");
+            return 0;
+        }
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        if (count < DemoDataGenerator.MIN_COUNT || count > DemoDataGenerator.MAX_COUNT) {
+            fail(ctx, "command.deathcensus.dev.demo.count",
+                    DemoDataGenerator.MIN_COUNT, DemoDataGenerator.MAX_COUNT);
+            return 0;
+        }
+        // Backup FIRST, same convention as delete/reset; abort on failure.
+        if (CensusExport.writeBackup(server) == null) {
+            fail(ctx, "command.deathcensus.delete.backup_failed");
+            return 0;
+        }
+        List<DeathEntry> entries = DemoDataGenerator.generate(count, System.currentTimeMillis(),
+                Config.displayTimeZone(), DemoDataGenerator.DEFAULT_SEED);
+        CensusData data = CensusData.get(server);
+        for (DeathEntry entry : entries) {
+            // Normal record/trim bookkeeping; lifetime counters behave as on a
+            // real death, but no announcement code runs on this path.
+            data.recordDeath(entry, Config.maxRecordsPerPlayer());
+        }
+        DeathCensus.LOGGER.warn("[DeathCensus] DEMO DATA GENERATED: {} synthetic deaths (source: {})",
+                count, ctx.getSource().getTextName());
+        send(ctx, "command.deathcensus.dev.demo.done", count);
+        return count;
     }
 
     // ------------------------------------------------------------ helpers
