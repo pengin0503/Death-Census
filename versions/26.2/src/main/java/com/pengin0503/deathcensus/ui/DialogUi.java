@@ -222,8 +222,10 @@ public final class DialogUi {
     private static Dialog detailDialog(ServerPlayer player, DeathDetailView view) {
         List<DialogBody> body = new ArrayList<>();
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.date", view.dateTime())));
-        body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.coords",
-                view.x(), view.y(), view.z(), view.dimension())));
+        body.add(view.coordsHidden()
+                ? line(ServerLang.tr(player, "command.deathcensus.ui.detail.coords_hidden", view.dimension()))
+                : line(ServerLang.tr(player, "command.deathcensus.ui.detail.coords",
+                        view.x(), view.y(), view.z(), view.dimension())));
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.cause",
                 view.causeCategory(), truncate(view.deathMessage()))));
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.killer",
@@ -294,19 +296,35 @@ public final class DialogUi {
 
     private static Dialog privacyDialog(ServerPlayer player, PrivacyView view) {
         List<DialogBody> body = new ArrayList<>();
-        body.add(line(ServerLang.tr(player, "command.deathcensus.ui.privacy.state",
-                ServerLang.tr(player, view.optOut()
-                        ? "command.deathcensus.ui.privacy.hidden"
-                        : "command.deathcensus.ui.privacy.visible"))));
+        body.add(privacyLine(player, "command.deathcensus.ui.privacy.full", view.optOut()));
+        body.add(privacyLine(player, "command.deathcensus.ui.privacy.coords", view.hideCoordinates()));
+        body.add(privacyLine(player, "command.deathcensus.ui.privacy.opponent", view.hidePvpOpponent()));
+        body.add(privacyLine(player, "command.deathcensus.ui.privacy.discord", view.discordOptOut()));
         body.add(line(tr(player, view.explanation())));
-        List<Input> inputs = List.of(new Input("in_optout", new BooleanInput(
-                ServerLang.tr(player, "command.deathcensus.ui.input.optout"),
-                view.optOut(), "true", "false")));
+        List<Input> inputs = List.of(
+                booleanInput(player, "in_optout", "command.deathcensus.ui.input.optout", view.optOut()),
+                booleanInput(player, "in_hide_coords", "command.deathcensus.ui.input.hide_coords",
+                        view.hideCoordinates()),
+                booleanInput(player, "in_hide_opponent", "command.deathcensus.ui.input.hide_opponent",
+                        view.hidePvpOpponent()),
+                booleanInput(player, "in_discord_optout", "command.deathcensus.ui.input.discord_optout",
+                        view.discordOptOut()));
         List<ActionButton> actions = List.of(actionButton(player, "command.deathcensus.ui.privacy.save",
                 "privacy_save", Map.of("s", sessionToken(player), "p", "1"),
                 "command.deathcensus.ui.tooltip.save"));
         return new MultiActionDialog(common(player, "command.deathcensus.ui.privacy.title", body, inputs),
                 actions, Optional.of(backButton(player)), 1);
+    }
+
+    /** One localized state line per flag; both words come from bundled lang keys. */
+    private static DialogBody privacyLine(ServerPlayer player, String key, boolean value) {
+        return line(ServerLang.tr(player, key, ServerLang.tr(player, value
+                ? "command.deathcensus.ui.privacy.hidden"
+                : "command.deathcensus.ui.privacy.visible")));
+    }
+
+    private static Input booleanInput(ServerPlayer player, String id, String labelKey, boolean value) {
+        return new Input(id, new BooleanInput(ServerLang.tr(player, labelKey), value, "true", "false"));
     }
 
     private static Dialog noticeDialog(ServerPlayer player, NoticeView view) {

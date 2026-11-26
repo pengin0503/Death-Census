@@ -53,6 +53,27 @@ public final class UiPrivacy {
         return admin && viewer != null && targetUuid != null && !targetUuid.isEmpty();
     }
 
+    /** DESIGN §7: self always, other only with the PRIVACY_OTHER decision. */
+    public static boolean canManagePrivacy(UUID viewer, UUID targetUuid, boolean otherAllowed) {
+        return viewer != null && targetUuid != null
+                && (viewer.equals(targetUuid) || otherAllowed);
+    }
+
+    /** Resolves the four flags from a snapshot; absent players get the defaults. */
+    public static com.pengin0503.deathcensus.PlayerPrivacy privacyFor(
+            Collection<PlayerDeaths> players, String uuid
+    ) {
+        if (players == null || uuid == null) {
+            return com.pengin0503.deathcensus.PlayerPrivacy.none();
+        }
+        for (PlayerDeaths player : players) {
+            if (player != null && player.uuid().equalsIgnoreCase(uuid)) {
+                return com.pengin0503.deathcensus.PlayerPrivacy.of(player);
+            }
+        }
+        return com.pengin0503.deathcensus.PlayerPrivacy.none();
+    }
+
     /** Players whose names/records may be shown; the viewer always sees themselves. */
     public static List<PlayerDeaths> visiblePlayers(
             Collection<PlayerDeaths> players, UUID viewer, boolean admin

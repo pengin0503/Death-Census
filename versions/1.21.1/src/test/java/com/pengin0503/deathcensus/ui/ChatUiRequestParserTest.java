@@ -119,6 +119,19 @@ class ChatUiRequestParserTest {
     }
 
     @Test
+    void allFourPrivacyTogglesEncodeTheirBoundedInputs() {
+        UiRequest coords = parsed("privacy", "coords", "on", TOKEN);
+        assertEquals("privacy_save", coords.action());
+        assertEquals("true", coords.inputs().get("in_hide_coords"));
+        assertEquals(TOKEN, coords.token());
+        assertEquals("false", parsed("privacy", "opponent", "off").inputs().get("in_hide_opponent"));
+        assertEquals("true", parsed("privacy", "discord", "enabled").inputs().get("in_discord_optout"));
+        assertEquals("false", parsed("privacy", "full", "0").inputs().get("in_optout"));
+        assertTrue(ChatUiRequestParser.parse(VIEWER, "privacy", "coords", "maybe").isEmpty());
+        assertTrue(ChatUiRequestParser.parse(VIEWER, "privacy", "nope", "on").isEmpty());
+    }
+
+    @Test
     void malformedCommandsAreRejected() {
         assertTrue(ChatUiRequestParser.parse(VIEWER, "unknown").isEmpty());
         assertTrue(ChatUiRequestParser.parse(VIEWER, "detail", "not-a-uuid", "1").isEmpty());

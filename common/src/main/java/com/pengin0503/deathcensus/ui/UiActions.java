@@ -3,8 +3,10 @@ package com.pengin0503.deathcensus.ui;
 import com.pengin0503.deathcensus.CensusStats;
 import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
+import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.Pagination;
 import com.pengin0503.deathcensus.PlayerDeaths;
+import com.pengin0503.deathcensus.PlayerPrivacy;
 import com.pengin0503.deathcensus.TimeFormat;
 
 import java.nio.charset.StandardCharsets;
@@ -12,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,7 +40,8 @@ public final class UiActions {
     private static final String ALL = HistoryFilter.ALL;
     private static final Set<String> BOUNDED_KEYS = Set.of(
             "s", "p", "t", "d", "f",
-            "in_period", "in_category", "in_dimension", "in_query", "in_excuse", "in_optout", "in_type"
+            "in_period", "in_category", "in_dimension", "in_query", "in_excuse", "in_type",
+            "in_optout", "in_hide_coords", "in_hide_opponent", "in_discord_optout"
     );
 
     private UiActions() {
@@ -138,9 +142,9 @@ public final class UiActions {
                         return Optional.of("invalid_excuse");
                     }
                 }
-                case "in_optout" -> {
+                case "in_optout", "in_hide_coords", "in_hide_opponent", "in_discord_optout" -> {
                     if (parseBoolean(value).isEmpty()) {
-                        return Optional.of("invalid_optout");
+                        return Optional.of("invalid_" + key.substring(3));
                     }
                 }
                 case "p" -> {
@@ -311,7 +315,7 @@ public final class UiActions {
             }
         }
         String lastLine = UiPrivacy.lastVisibleDeath(ctx.snapshot(), viewer, ctx.isAdmin())
-                .map(death -> truncate(formatDeath(death, ctx.zoneId())))
+                .map(death -> truncate(formatDeath(ctx, death)))
                 .orElse(UiText.RECORD_UNAVAILABLE_KEY);
         return new HomeView(
                 CensusStats.totalDeaths(own),
@@ -352,7 +356,7 @@ public final class UiActions {
                     death.epochMillis(),
                     death.playerUuid(),
                     UiPrivacy.displayName(ctx.snapshot(), death.playerUuid()),
-                    truncate("#" + number + " · " + formatDeath(death, ctx.zoneId()))
+                    truncate("#" + number + " · " + formatDeath(ctx, death))
             ));
         }
         return new HistoryView(rows, page.page(), page.pageCount(), page.total(), filter, session.token());
@@ -371,25 +375,30 @@ public final class UiActions {
 
     private static DeathDetailView detailView(UiContext ctx, DeathEntry death) {
         UUID target = parseUuidOrNull(death.playerUuid());
+        // §12 Q18: self/admin keep full detail; every other viewer gets the
+        // PR-8a redactor's rendering (including the NaN coordinate sentinel).
+        DeathEntry rendered = redacted(ctx, death);
+        boolean hidden = DeathRedactor.isCoordinateHidden(rendered);
         return new DeathDetailView(
-                death.playerUuid(),
-                death.epochMillis(),
-                UiPrivacy.displayName(ctx.snapshot(), death.playerUuid()),
-                TimeFormat.formatDateTime(death.epochMillis(), ctx.zoneId()),
-                death.dimension(),
-                (int) Math.floor(death.x()),
-                (int) Math.floor(death.y()),
-                (int) Math.floor(death.z()),
-                death.causeCategory(),
-                death.deathMessage(),
-                death.lastWords(),
-                death.excuse(),
-                death.fCount(),
-                death.survivalTicks(),
-                death.experienceLevel(),
-                death.killerName(),
-                UiPrivacy.canEditExcuse(ctx.viewer(), death.playerUuid()),
-                UiPrivacy.canDelete(ctx.viewer(), death.playerUuid(), ctx.isAdmin())
+                rendered.playerUuid(),
+                rendered.epochMillis(),
+                UiPrivacy.displayName(ctx.snapshot(), rendered.playerUuid()),
+                TimeFormat.formatDateTime(rendered.epochMillis(), ctx.zoneId()),
+                rendered.dimension(),
+                hidden ? 0 : (int) Math.floor(rendered.x()),
+                hidden ? 0 : (int) Math.floor(rendered.y()),
+                hidden ? 0 : (int) Math.floor(rendered.z()),
+                rendered.causeCategory(),
+                rendered.deathMessage(),
+                rendered.lastWords(),
+                rendered.excuse(),
+                rendered.fCount(),
+                rendered.survivalTicks(),
+                rendered.experienceLevel(),
+                rendered.killerName(),
+                UiPrivacy.canEditExcuse(ctx.viewer(), rendered.playerUuid()),
+                UiPrivacy.canDelete(ctx.viewer(), rendered.playerUuid(), ctx.isAdmin()),
+                hidden
         );
     }
 
@@ -460,24 +469,71 @@ public final class UiActions {
     }
 
     private static UiResult openPrivacy(UiRequest request, UiContext ctx) {
+        UUID target = privacyTarget(request, ctx);
+        if (target == null) {
+            return noChange("not_allowed");
+        }
         if (rotate(request, ctx, null, null) == null) {
             return expired(ctx);
         }
-        return new UiResult.Open(new PrivacyView(ctx.isOptedOut(ctx.viewer()),
-                UiText.of("command.deathcensus.optout.done")));
+        return new UiResult.Open(PrivacyView.of(ctx.getPrivacyFlags(target),
+                UiText.of("command.deathcensus.ui.privacy.explanation")));
     }
 
+    /**
+     * Applies any subset of the four flags. Values are parsed and permission-
+     * checked before the token is consumed, so malformed or forged payloads
+     * cannot rotate the session or mutate storage (DESIGN §3.2 / §7).
+     */
     private static UiResult savePrivacy(UiRequest request, UiContext ctx) {
-        Optional<Boolean> optOut = parseBoolean(input(request, "in_optout"));
-        if (optOut.isEmpty()) {
-            return noChange("invalid_optout");
+        UUID target = privacyTarget(request, ctx);
+        if (target == null) {
+            return noChange("not_allowed");
+        }
+        Map<PlayerPrivacy.Flag, Boolean> changes = new LinkedHashMap<>();
+        for (PlayerPrivacy.Flag flag : PlayerPrivacy.Flag.values()) {
+            String raw = input(request, flag.inputKey());
+            if (raw == null) {
+                continue;
+            }
+            Optional<Boolean> value = parseBoolean(raw);
+            if (value.isEmpty()) {
+                return noChange("invalid_" + flag.token());
+            }
+            changes.put(flag, value.get());
+        }
+        if (changes.isEmpty()) {
+            return noChange("invalid_privacy_input");
         }
         if (consume(request, ctx) == null) {
             return expired(ctx);
         }
-        ctx.setOptOut(optOut.get());
-        String key = optOut.get() ? "command.deathcensus.optout.done" : "command.deathcensus.optin.done";
-        return new UiResult.SideEffect("privacy_save", true, UiText.of(key), new UiResult.Open(homeView(ctx)));
+        for (Map.Entry<PlayerPrivacy.Flag, Boolean> change : changes.entrySet()) {
+            ctx.setPrivacyFlag(target, change.getKey(), change.getValue());
+        }
+        UiText feedback = changes.size() == 1
+                ? UiText.of(privacyFeedbackKey(changes.entrySet().iterator().next()))
+                : UiText.of("command.deathcensus.privacy.saved");
+        return new UiResult.SideEffect("privacy_save", true, feedback, new UiResult.Open(homeView(ctx)));
+    }
+
+    /** Null when the target is malformed or the viewer may not change that player. */
+    private static UUID privacyTarget(UiRequest request, UiContext ctx) {
+        String raw = request.targetUuid();
+        if (raw == null || raw.isEmpty()) {
+            return ctx.viewer();
+        }
+        UUID target = parseUuid(raw).orElse(null);
+        return target != null && ctx.canManagePrivacy(target) ? target : null;
+    }
+
+    private static String privacyFeedbackKey(Map.Entry<PlayerPrivacy.Flag, Boolean> change) {
+        if (change.getKey() == PlayerPrivacy.Flag.FULL) {
+            return change.getValue()
+                    ? "command.deathcensus.optout.done" : "command.deathcensus.optin.done";
+        }
+        return "command.deathcensus" + ".privacy." + change.getKey().token()
+                + (change.getValue() ? ".on" : ".off");
     }
 
     private static UiResult openExcuse(UiRequest request, UiContext ctx) {
@@ -692,14 +748,28 @@ public final class UiActions {
         return uuid;
     }
 
-    private static String formatDeath(DeathEntry death, java.time.ZoneId zone) {
+    /** Applies the owner's §7 flags for this viewer; aggregates never pass through here. */
+    private static DeathEntry redacted(UiContext ctx, DeathEntry death) {
+        if (death == null) {
+            return null;
+        }
+        UUID owner = parseUuidOrNull(death.playerUuid());
+        boolean privileged = ctx.isAdmin() || (owner != null && ctx.isSelf(owner));
+        return DeathRedactor.apply(death, UiPrivacy.privacyFor(ctx.snapshot(), death.playerUuid()), privileged);
+    }
+
+    private static String formatDeath(UiContext ctx, DeathEntry raw) {
+        DeathEntry death = redacted(ctx, raw);
         String message = death.deathMessage().isEmpty() ? death.causeCategory() : death.deathMessage();
+        String coords = DeathRedactor.isCoordinateHidden(death)
+                ? DeathRedactor.COORDINATE_MARKER + ", " + DeathRedactor.COORDINATE_MARKER
+                        + ", " + DeathRedactor.COORDINATE_MARKER
+                : (int) Math.floor(death.x()) + ", " + (int) Math.floor(death.y()) + ", "
+                        + (int) Math.floor(death.z());
         StringBuilder line = new StringBuilder()
-                .append(TimeFormat.formatDateTime(death.epochMillis(), zone))
+                .append(TimeFormat.formatDateTime(death.epochMillis(), ctx.zoneId()))
                 .append(" · ").append(death.dimension())
-                .append(" (").append((int) Math.floor(death.x())).append(", ")
-                .append((int) Math.floor(death.y())).append(", ")
-                .append((int) Math.floor(death.z())).append(")")
+                .append(" (").append(coords).append(")")
                 .append(" · ").append(message);
         if (!death.excuse().isEmpty()) {
             line.append(" · \"").append(death.excuse()).append("\"");

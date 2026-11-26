@@ -8,6 +8,7 @@ import com.pengin0503.deathcensus.DeathCensusPermission;
 import com.pengin0503.deathcensus.DeathTracker;
 import com.pengin0503.deathcensus.PermissionBridge;
 import com.pengin0503.deathcensus.PlayerDeaths;
+import com.pengin0503.deathcensus.PlayerPrivacy;
 import com.pengin0503.deathcensus.ServerLang;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.MinecraftServer;
@@ -72,6 +73,48 @@ public final class ChatUiContext implements UiContext {
         }
         CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
         return pc != null && pc.optOutPublic;
+    }
+
+    @Override
+    public boolean canManagePrivacy(UUID target) {
+        if (target == null) {
+            return false;
+        }
+        if (isSelf(target)) {
+            return true;
+        }
+        CommandSourceStack source = player == null ? null : player.createCommandSourceStack();
+        return source != null && PermissionBridge.allowed(source,
+                DeathCensusPermission.PRIVACY_OTHER, source.hasPermission(2));
+    }
+
+    @Override
+    public PlayerPrivacy getPrivacyFlags(UUID uuid) {
+        MinecraftServer server = server();
+        if (uuid == null || server == null) {
+            return PlayerPrivacy.none();
+        }
+        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        return pc == null ? PlayerPrivacy.none() : new PlayerPrivacy(
+                pc.optOutPublic, pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut);
+    }
+
+    @Override
+    public void setPrivacyFlag(UUID uuid, PlayerPrivacy.Flag flag, boolean value) {
+        MinecraftServer server = server();
+        if (uuid == null || server == null || flag == null) {
+            return;
+        }
+        CensusData data = CensusData.get(server);
+        CensusData.PlayerCensus pc = data.player(uuid);
+        switch (flag) {
+            case FULL -> pc.optOutPublic = value;
+            case COORDS -> pc.hideCoordinates = value;
+            case OPPONENT -> pc.hidePvpOpponent = value;
+            case DISCORD -> pc.discordOptOut = value;
+        }
+        data.setDirty();
+        bumpDataVersion();
     }
 
     @Override
@@ -171,14 +214,7 @@ public final class ChatUiContext implements UiContext {
 
     @Override
     public void setOptOut(boolean optOut) {
-        MinecraftServer server = server();
-        if (server == null) {
-            return;
-        }
-        CensusData data = CensusData.get(server);
-        data.player(viewer()).optOutPublic = optOut;
-        data.setDirty();
-        bumpDataVersion();
+        setPrivacyFlag(viewer(), PlayerPrivacy.Flag.FULL, optOut);
     }
 
     /** Token of the viewer's live session, used by chat-only commands that reuse UiActions. */

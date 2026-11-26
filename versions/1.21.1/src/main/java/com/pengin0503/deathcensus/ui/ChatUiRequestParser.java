@@ -1,5 +1,7 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.PlayerPrivacy;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -246,20 +248,41 @@ public final class ChatUiRequestParser {
         if (args.size() == 1) {
             return Optional.of(request(viewer, "privacy", "", 1, "", -1L, Map.of()));
         }
-        if (args.size() < 2 || args.size() > 3) {
-            return Optional.empty();
-        }
-        Boolean optOut = switch (args.get(1).toLowerCase(Locale.ROOT)) {
+        String inputKey;
+        Boolean value;
+        String token;
+        String toggle = args.get(1).toLowerCase(Locale.ROOT);
+        Boolean legacy = switch (toggle) {
             case "optout" -> Boolean.TRUE;
             case "optin" -> Boolean.FALSE;
             default -> null;
         };
-        String token = args.size() == 3 ? args.get(2) : "";
-        if (optOut == null || !validToken(token)) {
+        if (legacy != null) {
+            if (args.size() > 3) {
+                return Optional.empty();
+            }
+            inputKey = "in_optout";
+            value = legacy;
+            token = args.size() == 3 ? args.get(2) : "";
+        } else {
+            // /dc ui privacy <full|coords|opponent|discord> <on|off> [token]
+            if (args.size() < 3 || args.size() > 4) {
+                return Optional.empty();
+            }
+            PlayerPrivacy.Flag flag = PlayerPrivacy.Flag.parse(toggle);
+            Boolean on = PlayerPrivacy.parseState(args.get(2));
+            if (flag == null || on == null) {
+                return Optional.empty();
+            }
+            inputKey = flag.inputKey();
+            value = on;
+            token = args.size() == 4 ? args.get(3) : "";
+        }
+        if (!validToken(token)) {
             return Optional.empty();
         }
         Map<String, String> inputs = new LinkedHashMap<>();
-        inputs.put("in_optout", optOut.toString());
+        inputs.put(inputKey, value.toString());
         return Optional.of(request(viewer, "privacy_save", token, 1, "", -1L, inputs));
     }
 

@@ -63,6 +63,15 @@ class UiActionsValidationTest {
         assertEquals("invalid_excuse", UiActions.validatePayload(Map.of("in_excuse", "x".repeat(101))).orElseThrow());
         assertEquals("invalid_query", UiActions.validatePayload(Map.of("in_query", "q".repeat(65))).orElseThrow());
         assertEquals("invalid_optout", UiActions.validatePayload(Map.of("in_optout", "maybe")).orElseThrow());
+        assertEquals("invalid_hide_coords",
+                UiActions.validatePayload(Map.of("in_hide_coords", "maybe")).orElseThrow());
+        assertEquals("invalid_hide_opponent",
+                UiActions.validatePayload(Map.of("in_hide_opponent", "x")).orElseThrow());
+        assertEquals("invalid_discord_optout",
+                UiActions.validatePayload(Map.of("in_discord_optout", "")).orElseThrow());
+        assertTrue(UiActions.validatePayload(Map.of(
+                "in_optout", "true", "in_hide_coords", "false",
+                "in_hide_opponent", "1", "in_discord_optout", "0")).isEmpty());
         assertEquals("invalid_ranking_type", UiActions.validatePayload(Map.of("in_type", "bogus")).orElseThrow());
         assertTrue(UiActions.validatePayload(Map.of("in_excuse", "x".repeat(100))).isEmpty());
     }

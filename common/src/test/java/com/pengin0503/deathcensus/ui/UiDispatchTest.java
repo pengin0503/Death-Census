@@ -225,4 +225,114 @@ class UiDispatchTest {
         assertTrue(deathLine.calls.contains("respect:" + TestData.ALICE + ":" + TestData.BOB + ":4000"));
         assertTrue(deathLine.currentSession() == null); // no token to consume or issue
     }
+
+    // ------------------------------------------------------------ PR-8b privacy
+
+    private static DeathEntry pvpDeath() {
+        return new DeathEntry(TestData.BOB.toString(), "Bob", 1_000L, 1L, 100, 100,
+                "minecraft:overworld", 12.0, 64.0, -8.0, "player", "minecraft:player",
+                "Bob was slain by Steve", "minecraft:player", "Steve",
+                "survival", 5, "gg", "oops", 1);
+    }
+
+    @Test
+    void privacyViewShowsFourFlagsAndSavesThemIndependently() {
+        FakeUiContext ctx = new FakeUiContext(TestData.ALICE, List.of());
+        ctx.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        PrivacyView before = assertInstanceOf(PrivacyView.class, open(UiActions.handle(
+                new UiRequest(TestData.ALICE, "deathcensus:ui/privacy", ctx.token(),
+                        1, "", -1L, Map.of()), ctx)));
+        assertFalse(before.optOut());
+        assertFalse(before.hideCoordinates());
+        assertFalse(before.hidePvpOpponent());
+        assertFalse(before.discordOptOut());
+
+        ctx.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        UiResult saved = UiActions.handle(new UiRequest(TestData.ALICE, "privacy_save", ctx.token(),
+                1, "", -1L, Map.of("in_optout", "true", "in_hide_coords", "true",
+                "in_hide_opponent", "false", "in_discord_optout", "true")), ctx);
+        assertInstanceOf(UiResult.SideEffect.class, saved);
+        assertTrue(ctx.calls.contains("privacy:" + TestData.ALICE + ":full:true"));
+        assertTrue(ctx.calls.contains("privacy:" + TestData.ALICE + ":coords:true"));
+        assertTrue(ctx.calls.contains("privacy:" + TestData.ALICE + ":opponent:false"));
+        assertTrue(ctx.calls.contains("privacy:" + TestData.ALICE + ":discord:true"));
+
+        ctx.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        PrivacyView after = assertInstanceOf(PrivacyView.class, open(UiActions.handle(
+                new UiRequest(TestData.ALICE, "privacy"), ctx)));
+        assertTrue(after.optOut());
+        assertTrue(after.hideCoordinates());
+        assertFalse(after.hidePvpOpponent());
+        assertTrue(after.discordOptOut());
+        assertEquals("command.deathcensus.ui.privacy.explanation", after.explanation().key());
+    }
+
+    @Test
+    void otherPlayersPrivacyRequiresThePrivacyOtherDecision() {
+        PlayerDeaths bob = new PlayerDeaths(TestData.BOB.toString(), "Bob", false,
+                true, true, true, List.of(pvpDeath()));
+        FakeUiContext viewer = new FakeUiContext(TestData.ALICE, List.of(bob));
+        viewer.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        assertEquals("not_allowed", assertInstanceOf(UiResult.NoChange.class, UiActions.handle(
+                new UiRequest(TestData.ALICE, "privacy", viewer.token(), 1,
+                        TestData.BOB.toString(), -1L, Map.of()), viewer)).reason());
+        assertEquals("not_allowed", assertInstanceOf(UiResult.NoChange.class, UiActions.handle(
+                new UiRequest(TestData.ALICE, "privacy_save", viewer.token(), 1,
+                        TestData.BOB.toString(), -1L, Map.of("in_hide_coords", "false")), viewer)).reason());
+        assertTrue(viewer.calls.isEmpty());
+
+        viewer.privacyOtherAllowed = true;
+        viewer.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        PrivacyView view = assertInstanceOf(PrivacyView.class, open(UiActions.handle(
+                new UiRequest(TestData.ALICE, "privacy", viewer.token(), 1,
+                        TestData.BOB.toString(), -1L, Map.of()), viewer)));
+        assertTrue(view.hideCoordinates());
+        assertTrue(view.hidePvpOpponent());
+        assertTrue(view.discordOptOut());
+        viewer.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        UiActions.handle(new UiRequest(TestData.ALICE, "privacy_save", viewer.token(), 1,
+                TestData.BOB.toString(), -1L, Map.of("in_hide_coords", "false")), viewer);
+        assertTrue(viewer.calls.contains("privacy:" + TestData.BOB + ":coords:false"));
+    }
+
+    @Test
+    void detailAndHistoryRedactForStrangersButNotOwnerOrAdmin() {
+        PlayerDeaths bob = new PlayerDeaths(TestData.BOB.toString(), "Bob", false,
+                true, true, false, List.of(pvpDeath()));
+
+        FakeUiContext stranger = new FakeUiContext(TestData.ALICE, List.of(bob));
+        stranger.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        HistoryView rows = assertInstanceOf(HistoryView.class, open(UiActions.handle(
+                new UiRequest(TestData.ALICE, "deathcensus:ui/history", stranger.token(),
+                        1, "", -1L, Map.of()), stranger)));
+        assertEquals(1, rows.rows().size());
+        assertTrue(rows.rows().get(0).displayLine().contains("~, ~, ~"));
+        assertFalse(rows.rows().get(0).displayLine().contains("Steve"));
+        assertFalse(rows.rows().get(0).displayLine().contains("12, 64, -8"));
+
+        stranger.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        DeathDetailView redacted = assertInstanceOf(DeathDetailView.class, open(UiActions.handle(
+                new UiRequest(TestData.ALICE, "deathcensus:ui/detail", stranger.token(), 1,
+                        TestData.BOB.toString(), 1_000L, Map.of()), stranger)));
+        assertTrue(redacted.coordsHidden());
+        assertEquals("", redacted.killerName());
+        assertFalse(redacted.deathMessage().contains("Steve"));
+        assertEquals("player", redacted.causeCategory());
+
+        for (FakeUiContext privileged : List.of(
+                new FakeUiContext(TestData.BOB, List.of(bob)),
+                new FakeUiContext(TestData.ALICE, List.of(bob)))) {
+            if (privileged.viewer.equals(TestData.ALICE)) {
+                privileged.admin = true;
+            }
+            privileged.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+            DeathDetailView full = assertInstanceOf(DeathDetailView.class, open(UiActions.handle(
+                    new UiRequest(privileged.viewer, "detail", privileged.token(), 1,
+                            TestData.BOB.toString(), 1_000L, Map.of()), privileged)));
+            assertFalse(full.coordsHidden());
+            assertEquals(12, full.x());
+            assertEquals("Steve", full.killerName());
+            assertTrue(full.deathMessage().contains("Steve"));
+        }
+    }
 }

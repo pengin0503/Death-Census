@@ -19,8 +19,21 @@ public record DeathDetailView(
         int experienceLevel,
         String killerName,
         boolean canEditExcuse,
-        boolean canDelete
+        boolean canDelete,
+        boolean coordsHidden
 ) {
+    /** Compatibility constructor for callers that have no redaction marker yet. */
+    public DeathDetailView(
+            String targetUuid, long epochMillis, String displayName, String dateTime,
+            String dimension, int x, int y, int z, String causeCategory, String deathMessage,
+            String lastWords, String excuse, int fCount, long survivalTicks, int experienceLevel,
+            String killerName, boolean canEditExcuse, boolean canDelete
+    ) {
+        this(targetUuid, epochMillis, displayName, dateTime, dimension, x, y, z,
+                causeCategory, deathMessage, lastWords, excuse, fCount, survivalTicks,
+                experienceLevel, killerName, canEditExcuse, canDelete, false);
+    }
+
     public DeathDetailView {
         targetUuid = targetUuid == null ? "" : targetUuid;
         displayName = displayName == null ? "" : displayName;

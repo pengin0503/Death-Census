@@ -11,6 +11,8 @@ import com.mojang.brigadier.context.CommandContext;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonAwards;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonLabels;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonSection;
+import com.pengin0503.deathcensus.DeathRedactor;
+import com.pengin0503.deathcensus.PlayerPrivacy;
 import com.pengin0503.deathcensus.ui.ChatUi;
 import com.pengin0503.deathcensus.ui.UiActions;
 import com.pengin0503.deathcensus.ui.UiPrivacy;
@@ -122,6 +124,12 @@ public final class CensusCommands {
             privacy.then(literal(toggle).executes(CensusCommands::runUi)
                     .then(arg("token", StringArgumentType.word()).executes(CensusCommands::runUi)));
         }
+        // §7: the chat GUI toggles all four fields through the same input keys.
+        for (String toggle : List.of("full", "coords", "opponent", "discord")) {
+            privacy.then(literal(toggle).executes(CensusCommands::runUi)
+                    .then(arg("value", StringArgumentType.word()).executes(CensusCommands::runUi)
+                            .then(arg("token", StringArgumentType.word()).executes(CensusCommands::runUi))));
+        }
         ui.then(privacy);
 
         ui.then(literal("admin").executes(CensusCommands::runUi));
@@ -232,6 +240,31 @@ public final class CensusCommands {
 
         root.then(literal("optout").executes(ctx -> setOptOut(ctx, true)));
         root.then(literal("optin").executes(ctx -> setOptOut(ctx, false)));
+
+        // PR-8b: self-service flags need no node; reading/changing someone else
+        // is gated by PRIVACY_OTHER through the PR-1 bridge (OP 2 fallback).
+        LiteralArgumentBuilder<CommandSourceStack> privacy = literal("privacy")
+                .executes(ctx -> privacy(ctx, null));
+        for (PlayerPrivacy.Flag flag : PlayerPrivacy.Flag.values()) {
+            privacy.then(literal(flag.token())
+                    .then(arg("value", StringArgumentType.word())
+                            .executes(ctx -> setPrivacy(ctx, null, flag.token(),
+                                    StringArgumentType.getString(ctx, "value")))));
+        }
+        privacy.then(literal("optout").executes(ctx -> setPrivacy(ctx, null, "full", "on")));
+        privacy.then(literal("optin").executes(ctx -> setPrivacy(ctx, null, "full", "off")));
+        privacy.then(arg("player", StringArgumentType.word())
+                .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
+                .requires(PermissionBridge.requires(DeathCensusPermission.PRIVACY_OTHER,
+                        src -> src.hasPermission(2)))
+                .executes(ctx -> privacy(ctx, StringArgumentType.getString(ctx, "player")))
+                .then(arg("flag", StringArgumentType.word())
+                        .then(arg("value", StringArgumentType.word())
+                                .executes(ctx -> setPrivacy(ctx,
+                                        StringArgumentType.getString(ctx, "player"),
+                                        StringArgumentType.getString(ctx, "flag"),
+                                        StringArgumentType.getString(ctx, "value"))))));
+        root.then(privacy);
 
         root.then(literal("lookup")
                 .requires(PermissionBridge.requires(DeathCensusPermission.LOOKUP,
@@ -479,12 +512,17 @@ public final class CensusCommands {
         return suggestions;
     }
 
-    private static String formatEntryLine(DeathEntry e, int index) {
+    private static String formatEntryLine(DeathEntry raw, PlayerPrivacy privacy, boolean privileged, int index) {
+        DeathEntry e = DeathRedactor.apply(raw, privacy, privileged);
+        String coords = DeathRedactor.isCoordinateHidden(e)
+                ? DeathRedactor.COORDINATE_MARKER + ", " + DeathRedactor.COORDINATE_MARKER
+                        + ", " + DeathRedactor.COORDINATE_MARKER
+                : (int) Math.floor(e.x()) + ", " + (int) Math.floor(e.y()) + ", " + (int) Math.floor(e.z());
         return "#" + index
                 + " · Day " + (e.gameDay() + 1)
                 + " · " + TimeFormat.formatDateTime(e.epochMillis(), Config.displayTimeZone())
                 + " · " + e.dimension()
-                + " (" + (int) Math.floor(e.x()) + ", " + (int) Math.floor(e.y()) + ", " + (int) Math.floor(e.z()) + ")"
+                + " (" + coords + ")"
                 + " · " + (e.deathMessage().isEmpty() ? e.causeCategory() : e.deathMessage())
                 + " · survived " + TimeFormat.formatDuration(e.survivalTicks())
                 + (e.excuse().isEmpty() ? "" : " · \"" + e.excuse() + "\"")
@@ -525,9 +563,13 @@ public final class CensusCommands {
         java.util.Collections.reverse(newestFirst);
         Pagination.Page<DeathEntry> p = Pagination.of(newestFirst, page, PAGE_SIZE);
         send(ctx, "command.deathcensus.history.header", displayName, p.total(), p.page(), p.pageCount());
+        PlayerPrivacy privacy = new PlayerPrivacy(pc.optOutPublic, pc.hideCoordinates,
+                pc.hidePvpOpponent, pc.discordOptOut);
+        ServerPlayer self = ctx.getSource().getPlayer();
+        boolean privileged = isAdmin(ctx) || (self != null && self.getUUID().equals(uuid));
         int base = (p.page() - 1) * PAGE_SIZE;
         for (int i = 0; i < p.items().size(); i++) {
-            sendLiteral(ctx, formatEntryLine(p.items().get(i), p.total() - (base + i)));
+            sendLiteral(ctx, formatEntryLine(p.items().get(i), privacy, privileged, p.total() - (base + i)));
         }
         if (p.pageCount() > 1) {
             send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
@@ -555,6 +597,7 @@ public final class CensusCommands {
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
+        send(ctx, "command.deathcensus.help.privacy");
         send(ctx, "command.deathcensus.help.discordfilters");
         if (isAdmin(ctx)) {
             send(ctx, "command.deathcensus.help.admin");
@@ -803,6 +846,105 @@ public final class CensusCommands {
             default -> {
                 return 0;
             }
+        }
+        return 1;
+    }
+
+    private record PrivacyTarget(UUID uuid, String name) {
+    }
+
+    private static boolean privacyOtherAllowed(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        return PermissionBridge.allowed(source, DeathCensusPermission.PRIVACY_OTHER,
+                source.hasPermission(2));
+    }
+
+    /** Resolves a privacy target; self is always allowed, others need PRIVACY_OTHER. */
+    @Nullable
+    private static PrivacyTarget privacyTarget(CommandContext<CommandSourceStack> ctx, @Nullable String playerName) {
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return null;
+        }
+        ServerPlayer self = ctx.getSource().getPlayer();
+        UUID viewer = self == null ? null : self.getUUID();
+        boolean other = privacyOtherAllowed(ctx);
+        if (playerName == null || playerName.isEmpty()) {
+            if (self == null) {
+                fail(ctx, "command.deathcensus.players_only");
+                return null;
+            }
+            return new PrivacyTarget(viewer, self.getGameProfile().getName());
+        }
+        if (!other) {
+            fail(ctx, "command.deathcensus.privacy.denied");
+            return null;
+        }
+        UUID uuid = resolvePlayer(server, playerName);
+        if (uuid == null || !PlayerPrivacy.canAccess(viewer, uuid, other)) {
+            fail(ctx, "command.deathcensus.player_not_found", playerName);
+            return null;
+        }
+        return new PrivacyTarget(uuid, playerName);
+    }
+
+    private static PlayerPrivacy storedPrivacy(MinecraftServer server, UUID uuid) {
+        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        return pc == null ? PlayerPrivacy.none() : new PlayerPrivacy(
+                pc.optOutPublic, pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut);
+    }
+
+    private static String privacyState(boolean value) {
+        return value ? "command.deathcensus.privacy.on" : "command.deathcensus.privacy.off";
+    }
+
+    /** {@code /dc privacy [player]} — read the four flags with no redaction for the viewer. */
+    private static int privacy(CommandContext<CommandSourceStack> ctx, @Nullable String playerName) {
+        MinecraftServer server = server(ctx);
+        PrivacyTarget target = privacyTarget(ctx, playerName);
+        if (server == null || target == null) {
+            return 0;
+        }
+        PlayerPrivacy flags = storedPrivacy(server, target.uuid());
+        send(ctx, "command.deathcensus.privacy.view", target.name(),
+                ServerLang.tr(ctx.getSource(), privacyState(flags.optOutPublic())),
+                ServerLang.tr(ctx.getSource(), privacyState(flags.hideCoordinates())),
+                ServerLang.tr(ctx.getSource(), privacyState(flags.hidePvpOpponent())),
+                ServerLang.tr(ctx.getSource(), privacyState(flags.discordOptOut())));
+        return 1;
+    }
+
+    /** {@code /dc privacy [player] <flag> <on|off>} — four independent booleans. */
+    private static int setPrivacy(CommandContext<CommandSourceStack> ctx, @Nullable String playerName,
+                                  String flagToken, String stateToken) {
+        MinecraftServer server = server(ctx);
+        PrivacyTarget target = privacyTarget(ctx, playerName);
+        if (server == null || target == null) {
+            return 0;
+        }
+        PlayerPrivacy.Flag flag = PlayerPrivacy.Flag.parse(flagToken);
+        Boolean state = PlayerPrivacy.parseState(stateToken);
+        if (flag == null || state == null) {
+            fail(ctx, "command.deathcensus.privacy.invalid");
+            return 0;
+        }
+        CensusData data = CensusData.get(server);
+        CensusData.PlayerCensus pc = data.player(target.uuid());
+        switch (flag) {
+            case FULL -> pc.optOutPublic = state;
+            case COORDS -> pc.hideCoordinates = state;
+            case OPPONENT -> pc.hidePvpOpponent = state;
+            case DISCORD -> pc.discordOptOut = state;
+        }
+        data.setDirty();
+        if (playerName != null && !playerName.isEmpty()) {
+            send(ctx, "command.deathcensus.privacy.other.done", target.name(), flag.token(),
+                    ServerLang.tr(ctx.getSource(), privacyState(state)));
+        } else if (flag == PlayerPrivacy.Flag.FULL) {
+            send(ctx, state ? "command.deathcensus.optout.done" : "command.deathcensus.optin.done");
+        } else {
+            send(ctx, "command.deathcensus" + ".privacy." + flag.token()
+                    + (state ? ".on" : ".off"));
         }
         return 1;
     }
