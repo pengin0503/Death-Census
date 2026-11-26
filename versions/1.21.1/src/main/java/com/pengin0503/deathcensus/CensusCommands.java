@@ -8,6 +8,9 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.pengin0503.deathcensus.DiscordLogic.SeasonAwards;
+import com.pengin0503.deathcensus.DiscordLogic.SeasonLabels;
+import com.pengin0503.deathcensus.DiscordLogic.SeasonSection;
 import com.pengin0503.deathcensus.ui.ChatUi;
 import com.pengin0503.deathcensus.ui.UiActions;
 import com.pengin0503.deathcensus.ui.UiPrivacy;
@@ -288,6 +291,25 @@ public final class CensusCommands {
                 // Inherits the DIGEST-node gate from its parent (PR-1 seam).
                 .then(literal("digest").executes(ctx -> discordTest(ctx, true))));
 
+        // PR-6: /dc digest season <from> <to> [html]. The whole subtree is
+        // gated by the DIGEST permission node via the PR-1 PermissionBridge;
+        // both bounds are Brigadier word() arguments (yyyy-MM-dd or epoch:millis).
+        LiteralArgumentBuilder<CommandSourceStack> digest = literal("digest")
+                .requires(PermissionBridge.requires(DeathCensusPermission.DIGEST,
+                        src -> src.hasPermission(2)));
+        digest.then(literal("season")
+                .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                        .<CommandSourceStack, String>argument("from", StringArgumentType.word())
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, String>argument("to", StringArgumentType.word())
+                                .executes(ctx -> digestSeason(ctx,
+                                        StringArgumentType.getString(ctx, "from"),
+                                        StringArgumentType.getString(ctx, "to"), false))
+                                .then(literal("html").executes(ctx -> digestSeason(ctx,
+                                        StringArgumentType.getString(ctx, "from"),
+                                        StringArgumentType.getString(ctx, "to"), true))))));
+        root.then(digest);
+
         root.then(literal("reload")
                 .requires(PermissionBridge.requires(DeathCensusPermission.DIGEST,
                         src -> src.hasPermission(2)))
@@ -524,6 +546,7 @@ public final class CensusCommands {
         send(ctx, "command.deathcensus.help.discordfilters");
         if (isAdmin(ctx)) {
             send(ctx, "command.deathcensus.help.admin");
+            send(ctx, "command.deathcensus.digest.season.help");
         }
         return 1;
     }
@@ -853,6 +876,119 @@ public final class CensusCommands {
         return 0;
     }
 
+    /** Builds the season award data from public snapshots and in-range deaths. */
+    private static SeasonAwards seasonAwards(CensusData data, List<PlayerDeaths> snapshot,
+                                              List<PlayerDeaths> inRange) {
+        List<String> completers = new ArrayList<>();
+        for (PlayerDeaths pd : snapshot) {
+            if (pd.optOutPublic() || pd.name().isEmpty()) {
+                continue;
+            }
+            CensusData.PlayerCensus pc;
+            try {
+                pc = data.playerOrNull(UUID.fromString(pd.uuid()));
+            } catch (IllegalArgumentException badUuid) {
+                continue;
+            }
+            if (pc != null && pc.lifetimeCategories().containsAll(CauseClassifier.CATEGORIES)) {
+                completers.add(pd.name());
+            }
+        }
+        DeathEntry longest = CensusStats.leaderboardSurvival(inRange, false).stream()
+                .findFirst().orElse(null);
+        String rarest = CensusStats.rarestCause(inRange, true).orElse("");
+        return new SeasonAwards(completers, longest, rarest);
+    }
+
+    /** Season section labels come from the Discord language, not the client language. */
+    private static SeasonLabels seasonLabels(String discordLanguage) {
+        return new SeasonLabels(
+                ServerLang.formatForLang(discordLanguage, "discord.deathcensus.season.header"),
+                ServerLang.formatForLang(discordLanguage, "discord.deathcensus.season.header_field"),
+                ServerLang.formatForLang(discordLanguage, "discord.deathcensus.season.last_words"),
+                ServerLang.formatForLang(discordLanguage, "discord.deathcensus.season.awards"),
+                ServerLang.formatForLang(discordLanguage, "discord.deathcensus.season.award.all_categories"),
+                ServerLang.formatForLang(discordLanguage, "discord.deathcensus.season.award.longest_survival"),
+                ServerLang.formatForLang(discordLanguage, "discord.deathcensus.season.award.rarest_cause"),
+                ServerLang.formatForLang(discordLanguage, "discord.deathcensus.season.none"));
+    }
+
+    /**
+     * Manual digest for an arbitrary period (§5). Read-only: it never calls
+     * {@code setLastDigestEpochMillis} or touches the periodic digest throttle,
+     * and it does not apply the realtime §3 notification filters.
+     */
+    private static int digestSeason(CommandContext<CommandSourceStack> ctx,
+                                    String from, String to, boolean withHtml) {
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        ZoneId zone = Config.displayTimeZone();
+        SeasonRange.ParseResult parsed = SeasonRange.parse(from, to, zone);
+        if (!parsed.valid()) {
+            fail(ctx, "command.deathcensus.digest.season.bad_range", parsed.failure().name());
+            return 0;
+        }
+        SeasonRange range = parsed.range();
+        CensusData data = CensusData.get(server);
+        List<PlayerDeaths> snapshot = data.snapshot();
+        List<PlayerDeaths> inRange = CensusStats.filterRange(
+                snapshot, range.fromMillisInclusive(), range.toMillisInclusive());
+        if (CensusStats.totalDeaths(inRange) == 0) {
+            send(ctx, "command.deathcensus.digest.season.empty");
+            return 0;
+        }
+
+        String lang = Config.discordLanguage();
+        DiscordLogic.DigestLabels digestLabels = DiscordLogic.labelsFor(lang);
+        SeasonLabels seasonLabels = seasonLabels(lang);
+        SeasonAwards awards = seasonAwards(data, snapshot, inRange);
+        List<SeasonSection> sections = DiscordLogic.seasonSections(
+                snapshot, range, zone, digestLabels, awards, seasonLabels);
+        String content = DiscordLogic.seasonContent(
+                snapshot, range, zone, digestLabels, awards, seasonLabels);
+
+        Path html = withHtml ? CensusExport.writeSeasonHtml(server, range) : null;
+        DiscordNotifier.MessageCallback onFailure = null;
+        if (withHtml && html != null) {
+            Path localReport = html;
+            onFailure = () -> {
+                MinecraftServer current = ctx.getSource().getServer();
+                if (current != null) {
+                    // Worker callback: hop back onto the tick thread before chatting.
+                    current.execute(() -> fail(ctx,
+                            "command.deathcensus.digest.season.attachment_failed", localReport.toString()));
+                }
+            };
+        }
+        DiscordNotifier.SeasonPostResult result =
+                DiscordNotifier.postSeason(WebhookChannel.DIGEST, content, sections, html, onFailure);
+        switch (result) {
+            case NO_CHANNEL -> {
+                fail(ctx, "command.deathcensus.discordtest.not_configured");
+                return 0;
+            }
+            case ATTACHED -> send(ctx, "command.deathcensus.digest.season.attached", html.toString());
+            case ATTACHMENT_TOO_LARGE -> {
+                if (withHtml && html == null) {
+                    // The file could not be written at all; there is no local path to report.
+                    send(ctx, "command.deathcensus.digest.season.attachment_failed", "-");
+                }
+            }
+            case CONTENT_ONLY -> {
+                if (withHtml && html == null) {
+                    send(ctx, "command.deathcensus.digest.season.attachment_failed", "-");
+                }
+            }
+            default -> {
+                // No other outcomes today.
+            }
+        }
+        send(ctx, "command.deathcensus.digest.season.done");
+        return 1;
+    }
+
     public static final int DELETE_OK = 1;
     public static final int DELETE_BACKUP_FAILED = 0;
     public static final int DELETE_NOT_FOUND = -1;
@@ -1012,6 +1148,7 @@ public final class CensusCommands {
                 + (realtimeDimensions.isEmpty() ? "all" : String.join(", ", realtimeDimensions)));
         sendLiteral(ctx, "Discord realtime PvP mode: " + Config.discordNotifyPvpMode().configId());
         sendLiteral(ctx, "Last digest: " + digestText);
+        sendLiteral(ctx, "Season digest: /dc digest season <from> <to> [html]");
         sendLiteral(ctx, "Backups: " + backups.size() + " (newest: " + newestBackup + ")");
         sendLiteral(ctx, "Languages: " + ServerLang.BUNDLED_LANGUAGES.size()
                 + ", en keys: " + ServerLang.fallbacks().size());

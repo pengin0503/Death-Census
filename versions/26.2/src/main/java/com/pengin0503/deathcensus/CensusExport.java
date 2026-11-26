@@ -84,6 +84,38 @@ public final class CensusExport {
         }
     }
 
+    /**
+     * Writes a standalone HTML report for an arbitrary inclusive season period
+     * (DESIGN 1.3.0 §5). DESIGN §8: opted-out players are excluded from this
+     * named, public-facing report regardless of {@code includeOptedOutInExports};
+     * their deaths still count anonymously in the Discord digest's totals.
+     */
+    @Nullable
+    public static Path writeSeasonHtml(MinecraftServer server, SeasonRange range) {
+        if (server == null || range == null) {
+            return null;
+        }
+        List<PlayerDeaths> players = new ArrayList<>();
+        for (PlayerDeaths player : CensusStats.filterRange(
+                CensusData.get(server).snapshot(),
+                range.fromMillisInclusive(), range.toMillisInclusive())) {
+            if (!player.optOutPublic()) {
+                players.add(player);
+            }
+        }
+        ZoneId zone = Config.displayTimeZone();
+        String content = ExportRenderers.toHtml(players, System.currentTimeMillis(), zone);
+        Path file = exportsDir(server).resolve("season-" + range.fileNameStamp(zone) + ".html");
+        try {
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, content, StandardCharsets.UTF_8);
+            return file;
+        } catch (IOException e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Could not write season report {}", file, e);
+            return null;
+        }
+    }
+
     /** Writes a JSON backup of all data (including opted-out players) and prunes old generations. */
     @Nullable
     public static Path writeBackup(MinecraftServer server) {

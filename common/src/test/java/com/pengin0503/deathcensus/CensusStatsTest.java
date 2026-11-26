@@ -225,4 +225,32 @@ class CensusStatsTest {
         assertEquals("Alice", copies.get(0).name());
         assertTrue(copies.get(0).optOutPublic());
     }
+
+    @Test
+    void filterRangeKeepsBothInclusiveBoundsAndMetadata() {
+        DeathEntry before = death("u1", "Alice", -1000L, 10, "fall");
+        DeathEntry from = death("u1", "Alice", 0L, 20, "lava");
+        DeathEntry inside = death("u1", "Alice", 500L, 30, "lava");
+        DeathEntry to = death("u1", "Alice", 1000L, 40, "fall");
+        DeathEntry after = death("u1", "Alice", 1001L, 50, "fall");
+        PlayerDeaths alice = new PlayerDeaths("u1", "Alice", true,
+                List.of(before, from, inside, to, after));
+        PlayerDeaths bob = new PlayerDeaths("u2", "Bob", false, List.of(
+                death("u2", "Bob", 500L, 60, "drown")));
+
+        List<PlayerDeaths> ranged = CensusStats.filterRange(List.of(alice, bob), 0L, 1000L);
+
+        assertEquals(2, ranged.size());
+        assertEquals("u1", ranged.get(0).uuid());
+        assertEquals("Alice", ranged.get(0).name());
+        assertTrue(ranged.get(0).optOutPublic());
+        // Both bounds are inclusive; epoch:0 is a real lower bound, not "no cutoff".
+        assertEquals(List.of(from, inside, to), ranged.get(0).deaths());
+        assertEquals(List.of(bob.deaths().get(0)), ranged.get(1).deaths());
+        assertEquals(4, CensusStats.totalDeaths(ranged));
+
+        assertTrue(CensusStats.filterRange(null, 0L, 1L).isEmpty());
+        assertTrue(CensusStats.filterRange(List.of(alice), 10L, 9L).isEmpty());
+        assertEquals(5, alice.deaths().size());
+    }
 }
