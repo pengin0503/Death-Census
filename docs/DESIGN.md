@@ -380,3 +380,64 @@ config schema, version bump or death-recording changes are part of it.
   hover text, is looked up per viewer via `ServerLang.tr(player, ...)`; new
   `command.deathcensus.ui.*` keys exist in both `en_us` and `ja_jp` with
   identical key sets, enforced by `CensusLangTest`.
+
+## 14. 1.3.0 additions
+
+Full specification: [DESIGN_1.3.0.md](DESIGN_1.3.0.md). This is an ops/Discord
+pack. Everything stays server-side; DESIGN §8 anonymous totals are invariant,
+redaction happens at render time, webhook URLs are never logged or shown in
+chat, and every mutating admin command writes a safety backup first. New
+logic lives in `common/`, with thin version-specific glue.
+
+- **Webhook retry** (§1): Discord sends retry transport failures, HTTP 429
+  (honoring a bounded `Retry-After`) and 5xx responses with exponential
+  backoff without jitter, up to four attempts by default
+  (`discordRetryMaxAttempts`, `discordRetryBaseDelayMillis`), on a bounded
+  daemon queue; other 4xx responses are permanent. A long retry deliberately
+  delays later posts.
+- **Batching** (§2): realtime deaths are buffered for
+  `discordBatchWindowMillis` (default 1500; 0 restores immediate delivery)
+  and flushed as one localized message with up to `discordBatchMaxDeaths`
+  (default 10) lines plus an "and N more" count; one death keeps the existing
+  single-line format. Opted-out or filtered deaths never enter the buffer;
+  digests, milestones and `/dc discordtest` bypass it.
+- **Notification filters and channels** (§3, §4): `discordNotifyDimensions`
+  (empty = all, exact stored dimension ids) and `discordNotifyPvpMode`
+  (`all|pvp_only|off`, PvP = cause category `player`) filter realtime posts
+  only. `discordDigestWebhookUrl` (default empty, falling back to the primary
+  URL; an invalid value disables the digest channel) lets digests use a
+  separate webhook; `/dc discordtest [digest]` tests either channel and
+  `/dc doctor` reports both statuses without URLs.
+- **Season digest** (§5): `/dc digest season <from> <to> [html]` (admin)
+  accepts `yyyy-MM-dd` or `epoch:<millis>` bounds in `displayTimeZone` and
+  posts a range summary — total, top 3 causes, top 3 public players, most
+  F-respected last words and data-derived awards — to the digest channel.
+  `html` attaches a standalone report (1 MB cap, content-only fallback with
+  a local path); opted-out deaths count only in anonymous totals, and season
+  posts do not touch the periodic digest clock or realtime filters.
+- **Anonymized exports** (§6): `/dc export html|json|csv [player]
+  [--anonymize]` renders a redacted copy with UUID-sorted `Player A/B/...`
+  pseudonyms, 64-block-rounded coordinates and names scrubbed from free
+  text; JSON gains `anonymized: true`, filenames gain `-anonymized` and
+  never contain a player name. Opt-out filtering still runs first, and
+  anonymized files are not backups.
+- **Granular privacy** (§7): `/dc privacy <coords|opponent|discord> <on|off>`
+  and the GUI privacy screen add the per-player `hideCoordinates`,
+  `hidePvpOpponent` and `discordOptOut` flags (old saves/backups decode as
+  false). Public views, exports and Discord posts redact at render time;
+  self and admins keep full detail, `optOutPublic` remains the master
+  switch, Discord suppression is `optOutPublic || discordOptOut` (realtime
+  only), and no anonymous total changes.
+- **Dev and import commands** (§8, §9): `/dc dev demo <count>` (1–500) needs
+  both `devMode` and `-Ddeathcensus.dev=true`, writes a backup first, uses
+  synthetic `Demo Player NN` names and logs loudly; `/dc import vanilla
+  [dry-run]` reads known players' vanilla `stats/*.json` deaths and
+  `killed_by` counts as an idempotent lifetime baseline (backup-first for a
+  real import, dry-run writes nothing). No synthetic death records are
+  created, so history, leaderboards and exports are unchanged; milestone
+  totals and diagnostics include the baseline separately labelled.
+- **Permission seam** (§10): `DeathCensusPermission` reserves future node
+  names and a per-version `PermissionBridge` routes every admin check
+  through it, but the bridge currently returns the vanilla OP-level-2
+  fallback unchanged — no node provider, config option or behavior change
+  ships in 1.3.0.

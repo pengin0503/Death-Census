@@ -59,6 +59,29 @@ Fabric/Quilt only. Death Census takes the opposite angle:
 - Operator tools (permission level 2): /dc delete <player> <#>,
   /dc reset player <name>, /dc reset all confirm and /dc doctor; delete and
   reset always write a safety backup first and abort if it fails
+- Discord delivery: webhook sends now retry temporary failures and HTTP 429
+  rate limits (honoring Retry-After) with exponential backoff and a bounded
+  queue, and bursts of deaths are combined into one message instead of one
+  post each
+- Discord channels and filters: the digest can use its own webhook URL
+  (/dc discordtest digest tests it), and realtime death posts can be limited
+  by dimension allow-list and PvP-only / non-PvP modes; digests still count
+  every death
+- /dc digest season <from> <to> [html] posts a summary of any date range to
+  the digest webhook, with an optional standalone HTML report attached
+- /dc export html|json|csv [player] [--anonymize] writes a shareable export
+  with Player A/B/... pseudonyms, rounded coordinates and player names
+  scrubbed from messages
+- Granular privacy: /dc privacy <coords|opponent|discord> <on|off> and the
+  in-game privacy screen let players hide coordinates, hide the PvP
+  opponent's name, or skip realtime Discord posts without hiding their
+  whole history; anonymous totals stay unchanged
+- /dc dev demo <count> generates up to 500 synthetic deaths for development
+  only when both devMode and -Ddeathcensus.dev=true are set, with a backup
+  first; /dc import vanilla [dry-run] adds pre-install vanilla death totals
+  as a lifetime baseline for milestones without inventing history records
+- Admin checks now use a permission-node bridge with names reserved for a
+  future provider, but still use vanilla OP level 2 exactly as before
 
 ## GUI (`/dc`)
 
