@@ -17,6 +17,11 @@ public final class Config {
             .comment("Also record deaths while a player is in creative or spectator mode.")
             .define("recordCreativeDeaths", true);
 
+    public static final ModConfigSpec.BooleanValue MILESTONE_ANNOUNCEMENTS = BUILDER
+            .comment("Announce milestone deaths in chat and Discord: the server's first death, every 100 deaths,",
+                    "a player's first death, and a player completing all 17 cause categories.")
+            .define("milestoneAnnouncements", true);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -106,6 +111,14 @@ public final class Config {
     public static boolean recordCreativeDeaths() {
         try {
             return RECORD_CREATIVE_DEATHS.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static boolean milestoneAnnouncements() {
+        try {
+            return MILESTONE_ANNOUNCEMENTS.get();
         } catch (IllegalStateException notLoaded) {
             return true;
         }
