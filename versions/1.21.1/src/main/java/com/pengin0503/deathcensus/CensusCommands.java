@@ -1,10 +1,16 @@
 package com.pengin0503.deathcensus;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.ArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.pengin0503.deathcensus.ui.ChatUi;
+import com.pengin0503.deathcensus.ui.UiActions;
+import com.pengin0503.deathcensus.ui.UiPrivacy;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
@@ -40,7 +46,7 @@ public final class CensusCommands {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
         dispatcher.register(root());
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("dc")
-                .executes(CensusCommands::help)
+                .executes(CensusCommands::entry)
                 .redirect(dispatcher.getRoot().getChild("deathcensus")));
     }
 
@@ -48,15 +54,115 @@ public final class CensusCommands {
         return LiteralArgumentBuilder.literal(name);
     }
 
-    private static LiteralArgumentBuilder<CommandSourceStack> root() {
+    private static <T> RequiredArgumentBuilder<CommandSourceStack, T> arg(String name, ArgumentType<T> type) {
+        return RequiredArgumentBuilder.argument(name, type);
+    }
+
+    /**
+     * Hidden {@code /dc ui ...} subtree: it is absent from our own help output,
+     * and every node just forwards its raw arguments to the common UiRequest
+     * parser. Permissions and records are re-checked by UiActions at execution.
+     */
+    static LiteralArgumentBuilder<CommandSourceStack> uiTree() {
+        LiteralArgumentBuilder<CommandSourceStack> ui = literal("ui");
+
+        ui.then(literal("home").executes(CensusCommands::runUi));
+
+        LiteralArgumentBuilder<CommandSourceStack> history = literal("history").executes(CensusCommands::runUi);
+        history.then(arg("page", IntegerArgumentType.integer(1)).executes(CensusCommands::runUi));
+        history.then(literal("filter")
+                .then(arg("period", StringArgumentType.word()).executes(CensusCommands::runUi)
+                        .then(arg("category", StringArgumentType.word()).executes(CensusCommands::runUi)
+                                .then(arg("query", StringArgumentType.greedyString())
+                                        .executes(CensusCommands::runUi)))));
+        ui.then(history);
+
+        for (String action : List.of("detail", "respect")) {
+            ui.then(literal(action).executes(CensusCommands::runUi)
+                    .then(arg("uuid", StringArgumentType.word()).executes(CensusCommands::runUi)
+                            .then(arg("epoch", LongArgumentType.longArg(0)).executes(CensusCommands::runUi)
+                                    .then(arg("token", StringArgumentType.word())
+                                            .executes(CensusCommands::runUi)))));
+        }
+        LiteralArgumentBuilder<CommandSourceStack> excuse = literal("excuse").executes(CensusCommands::runUi)
+                .then(arg("uuid", StringArgumentType.word()).executes(CensusCommands::runUi)
+                        .then(arg("epoch", LongArgumentType.longArg(0)).executes(CensusCommands::runUi)
+                                .then(arg("token", StringArgumentType.word()).executes(CensusCommands::runUi)
+                                        .then(literal("save")
+                                                .then(arg("text", StringArgumentType.greedyString())
+                                                        .executes(CensusCommands::runUi))))
+                                .then(literal("save")
+                                        .then(arg("text", StringArgumentType.greedyString())
+                                                .executes(CensusCommands::runUi)))));
+        ui.then(excuse);
+
+        ui.then(literal("delete").executes(CensusCommands::runUi)
+                .then(arg("uuid", StringArgumentType.word()).executes(CensusCommands::runUi)
+                        .then(arg("epoch", LongArgumentType.longArg(0)).executes(CensusCommands::runUi)
+                                .then(arg("token", StringArgumentType.word()).executes(CensusCommands::runUi))
+                                .then(literal("confirm").executes(CensusCommands::runUi)
+                                        .then(arg("token", StringArgumentType.word())
+                                                .executes(CensusCommands::runUi))))));
+
+        LiteralArgumentBuilder<CommandSourceStack> rankings = literal("rankings").executes(CensusCommands::runUi);
+        rankings.then(literal("page")
+                .then(arg("page", IntegerArgumentType.integer(1)).executes(CensusCommands::runUi)
+                        .then(arg("token", StringArgumentType.word()).executes(CensusCommands::runUi))));
+        rankings.then(arg("type", StringArgumentType.word()).executes(CensusCommands::runUi)
+                .then(arg("period", StringArgumentType.word()).executes(CensusCommands::runUi)
+                        .then(arg("page", IntegerArgumentType.integer(1)).executes(CensusCommands::runUi)
+                                .then(arg("token", StringArgumentType.word()).executes(CensusCommands::runUi)))));
+        ui.then(rankings);
+
+        LiteralArgumentBuilder<CommandSourceStack> privacy = literal("privacy").executes(CensusCommands::runUi);
+        for (String toggle : List.of("optout", "optin")) {
+            privacy.then(literal(toggle).executes(CensusCommands::runUi)
+                    .then(arg("token", StringArgumentType.word()).executes(CensusCommands::runUi)));
+        }
+        ui.then(privacy);
+
+        ui.then(literal("admin").executes(CensusCommands::runUi));
+        return ui;
+    }
+
+    /** Raw tokens handed to the common UiRequest parser by every ui-tree node. */
+    static List<String> uiArgs(String input) {
+        List<String> args = new ArrayList<>();
+        for (String part : input == null ? new String[0] : input.trim().split("\\s+")) {
+            if (!part.isEmpty()) {
+                args.add(part);
+            }
+        }
+        return args;
+    }
+
+    private static int runUi(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer self = ctx.getSource().getPlayer();
+        if (self == null) {
+            fail(ctx, "command.deathcensus.players_only");
+            return 0;
+        }
+        return ChatUi.dispatchArgs(self, uiArgs(ctx.getInput())) ? 1 : 0;
+    }
+
+    static LiteralArgumentBuilder<CommandSourceStack> root() {
         LiteralArgumentBuilder<CommandSourceStack> root = literal("deathcensus")
-                .executes(CensusCommands::help);
+                .executes(CensusCommands::entry);
 
         root.then(literal("help").executes(CensusCommands::help));
+        root.then(uiTree());
 
+        // Existing /dc excuse <text> keeps its latest-death semantics; the
+        // selected-death form is an additive branch for the UI excuse flow.
         root.then(literal("excuse")
-                .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
-                        .<CommandSourceStack, String>argument("text", StringArgumentType.greedyString())
+                .then(arg("uuid", StringArgumentType.word())
+                        .then(arg("epoch", LongArgumentType.longArg(0))
+                                .then(arg("text", StringArgumentType.greedyString())
+                                        .executes(ctx -> excuseSelected(ctx,
+                                                StringArgumentType.getString(ctx, "uuid"),
+                                                LongArgumentType.getLong(ctx, "epoch"),
+                                                StringArgumentType.getString(ctx, "text"))))))
+                .then(arg("text", StringArgumentType.greedyString())
                         .executes(CensusCommands::excuse)));
 
         root.then(literal("history")
@@ -383,6 +489,17 @@ public final class CensusCommands {
 
     // ------------------------------------------------------------ commands
 
+    /** No arguments: players get the interactive chat menu, console keeps help. */
+    private static int entry(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer self = ctx.getSource().getPlayer();
+        if (self == null) {
+            return help(ctx);
+        }
+        ChatUi.openHome(self);
+        ChatUi.sendHelpLines(self);
+        return 1;
+    }
+
     private static int help(CommandContext<CommandSourceStack> ctx) {
         send(ctx, "command.deathcensus.help.title");
         send(ctx, "command.deathcensus.help.excuse");
@@ -413,6 +530,23 @@ public final class CensusCommands {
             return 0;
         }
         send(ctx, "command.deathcensus.excuse.done");
+        return 1;
+    }
+
+    /** UI excuse flow: same 100-char bound and self-only rule, selected by (uuid, epoch). */
+    private static int excuseSelected(CommandContext<CommandSourceStack> ctx, String uuidText,
+                                      long epoch, String text) {
+        ServerPlayer self = ctx.getSource().getPlayer();
+        UUID uuid = UiActions.parseUuid(uuidText).orElse(null);
+        if (self == null || uuid == null || !UiPrivacy.canEditExcuse(self.getUUID(), uuid.toString())) {
+            fail(ctx, "command.deathcensus.ui.record_unavailable");
+            return 0;
+        }
+        if (text.length() > 100) {
+            fail(ctx, "command.deathcensus.excuse.too_long");
+            return 0;
+        }
+        ChatUi.saveExcuseFromChat(self, uuid, epoch, text);
         return 1;
     }
 
@@ -703,6 +837,41 @@ public final class CensusCommands {
         return 0;
     }
 
+    public static final int DELETE_OK = 1;
+    public static final int DELETE_BACKUP_FAILED = 0;
+    public static final int DELETE_NOT_FOUND = -1;
+
+    /**
+     * The single backup-first delete flow used by {@code /dc delete} and by the
+     * UI delete action. A negative {@code zeroBased} with an epoch resolves the
+     * record by {@code (uuid, epochMillis)} at execution time, never from a
+     * client-supplied index.
+     */
+    public static int deleteDeathAfterBackup(MinecraftServer server, UUID uuid,
+                                             int zeroBased, long epochMillis) {
+        if (server == null || uuid == null) {
+            return DELETE_NOT_FOUND;
+        }
+        if (CensusExport.writeBackup(server) == null) {
+            return DELETE_BACKUP_FAILED;
+        }
+        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        int index = zeroBased;
+        if (index < 0 && pc != null) {
+            index = -1;
+            for (int i = 0; i < pc.deaths.size(); i++) {
+                if (pc.deaths.get(i).epochMillis() == epochMillis) {
+                    index = i;
+                    break;
+                }
+            }
+        }
+        if (pc == null || index < 0 || index >= pc.deaths.size()) {
+            return DELETE_NOT_FOUND;
+        }
+        return CensusData.get(server).removeDeath(uuid, index) ? DELETE_OK : DELETE_NOT_FOUND;
+    }
+
     private static int delete(CommandContext<CommandSourceStack> ctx, String playerName, int index) {
         MinecraftServer server = server(ctx);
         if (server == null) {
@@ -713,16 +882,17 @@ public final class CensusCommands {
             fail(ctx, "command.deathcensus.player_not_found", playerName);
             return 0;
         }
-        if (CensusExport.writeBackup(server) == null) {
-            fail(ctx, "command.deathcensus.delete.backup_failed");
-            return 0;
-        }
         CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
         int zeroBased = index - 1;
         DeathEntry removed = pc != null && zeroBased >= 0 && zeroBased < pc.deaths.size()
                 ? pc.deaths.get(zeroBased)
                 : null;
-        if (!CensusData.get(server).removeDeath(uuid, zeroBased)) {
+        int status = deleteDeathAfterBackup(server, uuid, zeroBased, -1L);
+        if (status == DELETE_BACKUP_FAILED) {
+            fail(ctx, "command.deathcensus.delete.backup_failed");
+            return 0;
+        }
+        if (status != DELETE_OK || removed == null) {
             fail(ctx, "command.deathcensus.delete.not_found", playerName, index);
             return 0;
         }
