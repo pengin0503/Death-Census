@@ -57,7 +57,7 @@ document wins for implementation details; the README wins for positioning.
 | causeCategory | String | classifier output, see §4 |
 | causeId | String | raw damage-type ID, e.g. `minecraft:fall` |
 | deathMessage | String | the vanilla death message text at death time |
-| killerType | String | entity type ID of the direct killer, or "" |
+| killerType | String | entity type ID of the attacker (source entity) when present, otherwise the direct killer entity, or "" |
 | killerName | String | killer display name (player name / custom name), or "" |
 | gameMode | String | `survival` / `adventure` / `creative` / `spectator` |
 | experienceLevel | int | XP level at death |

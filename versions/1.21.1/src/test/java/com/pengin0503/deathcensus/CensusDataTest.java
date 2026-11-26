@@ -53,6 +53,56 @@ class CensusDataTest {
         assertEquals(123456789L, loaded.lastDigestEpochMillis());
     }
 
+    private static DeathEntry entryWithCategory(UUID uuid, String name, long epoch, String category) {
+        return new DeathEntry(uuid.toString(), name, epoch, 3L, 500, 400,
+                "minecraft:overworld", 10.0, 64.0, -20.0, category, "minecraft:" + category,
+                name + " died (" + category + ")", "", "", "survival", 5, "", "", 0);
+    }
+
+    @Test
+    void nbtPersistsLifetimeCounterAndCategories() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entryWithCategory(uuid, "Alex", 100L, "fall"), 1);
+        data.recordDeath(entryWithCategory(uuid, "Alex", 200L, "lava"), 1);
+
+        CensusData loaded = CensusData.load(data.save(new CompoundTag(), null), null);
+        assertEquals(2L, loaded.lifetimeDeaths());
+        assertEquals(2, loaded.playerOrNull(uuid).lifetimeCategories.size());
+        assertTrue(loaded.playerOrNull(uuid).lifetimeCategories.contains("fall"));
+        assertTrue(loaded.playerOrNull(uuid).lifetimeCategories.contains("lava"));
+    }
+
+    @Test
+    void loadingWithoutLifetimeFieldsInitializesThemFromRetainedDeaths() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entryWithCategory(uuid, "Alex", 100L, "fall"), 100);
+        data.recordDeath(entryWithCategory(uuid, "Alex", 200L, "lava"), 100);
+
+        CompoundTag saved = data.save(new CompoundTag(), null);
+        saved.remove("lifetimeDeaths");
+        saved.getCompound("players").getCompound(uuid.toString()).remove("lifetimeCategories");
+
+        CensusData loaded = CensusData.load(saved, null);
+        assertEquals(2L, loaded.lifetimeDeaths());
+        assertEquals(2, loaded.playerOrNull(uuid).lifetimeCategories.size());
+    }
+
+    @Test
+    void lifetimeTotalsAndCategoriesSurviveTrimming() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entryWithCategory(uuid, "Alex", 100L, "fall"), 1);
+        data.recordDeath(entryWithCategory(uuid, "Alex", 200L, "lava"), 1);
+        data.recordDeath(entryWithCategory(uuid, "Alex", 300L, "fall"), 1);
+
+        assertEquals(1, data.playerOrNull(uuid).deaths.size());
+        assertEquals("fall", data.playerOrNull(uuid).deaths.get(0).causeCategory());
+        assertEquals(3L, data.lifetimeDeaths());
+        assertTrue(data.playerOrNull(uuid).lifetimeCategories.contains("lava"));
+    }
+
     @Test
     void nbtDefaultsWhenStoryFieldsAbsent() {
         UUID uuid = UUID.randomUUID();

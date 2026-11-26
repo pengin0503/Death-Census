@@ -231,10 +231,21 @@ public final class CensusCommands {
         if (server == null) {
             return names;
         }
+        // DESIGN §8: opted-out names must not leak through tab completion for
+        // non-admins, while admins keep seeing everyone.
+        boolean admin = isAdmin(ctx);
+        Map<UUID, CensusData.PlayerCensus> stored = CensusData.get(server).allPlayers();
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {
+            CensusData.PlayerCensus pc = stored.get(p.getUUID());
+            if (!admin && pc != null && pc.optOutPublic) {
+                continue;
+            }
             names.add(p.getGameProfile().name());
         }
-        for (CensusData.PlayerCensus pc : CensusData.get(server).allPlayers().values()) {
+        for (CensusData.PlayerCensus pc : stored.values()) {
+            if (!admin && pc.optOutPublic) {
+                continue;
+            }
             if (!pc.lastKnownName.isEmpty() && !names.contains(pc.lastKnownName)) {
                 names.add(pc.lastKnownName);
             }
@@ -541,6 +552,9 @@ public final class CensusCommands {
                 for (CensusStats.PlayerSummary s : p.items()) {
                     sendLiteral(ctx, (++rank) + ". " + s.name() + " — " + s.deaths());
                 }
+                if (p.pageCount() > 1) {
+                    send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+                }
             }
             case "survival", "fastest" -> {
                 List<DeathEntry> entries = "survival".equals(type)
@@ -556,6 +570,9 @@ public final class CensusCommands {
                     sendLiteral(ctx, (++rank) + ". " + e.playerName() + " — "
                             + TimeFormat.formatDuration(e.survivalTicks())
                             + " (" + e.causeCategory() + ", Day " + (e.gameDay() + 1) + ")");
+                }
+                if (p.pageCount() > 1) {
+                    send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
                 }
             }
             case "rarest" -> {
@@ -632,6 +649,13 @@ public final class CensusCommands {
             only = resolvePlayer(server, playerName);
             if (only == null) {
                 fail(ctx, "command.deathcensus.player_not_found", playerName);
+                return 0;
+            }
+        }
+        if (only != null) {
+            CensusData.PlayerCensus target = CensusData.get(server).playerOrNull(only);
+            if (target != null && target.optOutPublic && !Config.includeOptedOutInExports()) {
+                fail(ctx, "command.deathcensus.export.opted_out");
                 return 0;
             }
         }

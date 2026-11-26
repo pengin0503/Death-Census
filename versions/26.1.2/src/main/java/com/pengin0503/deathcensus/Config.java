@@ -57,7 +57,7 @@ public final class Config {
             .define("includeOptedOutInExports", false);
 
     public static final ModConfigSpec.BooleanValue AUTO_BACKUP_ENABLED = BUILDER
-            .comment("Automatically back up the death data to <world>/deathcensus/backups/ on server stop.")
+            .comment("Automatically back up the death data to <world>/deathcensus/backups/ on server stop and on hourly world saves.")
             .define("autoBackupEnabled", true);
 
     public static final ModConfigSpec.IntValue AUTO_BACKUP_GENERATIONS = BUILDER
