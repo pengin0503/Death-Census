@@ -19,8 +19,8 @@ import java.util.function.Predicate;
  * {@code LOOKUP} — lookup/doctor and admin visibility of other players' data;
  * {@code EXPORT} — export; {@code BACKUP} — backup/restore; {@code RESET} —
  * reset/delete; {@code DIGEST} — discordtest/reload; {@code DEV} — the double-gated
- * {@code /dc dev demo} command (§8). {@code IMPORT} is reserved for PR-10;
- * {@code PRIVACY_OTHER} is used by {@code /dc privacy} (§7).
+ * {@code /dc dev demo} command (§8); {@code IMPORT} — {@code /dc import vanilla}
+ * (§9). {@code PRIVACY_OTHER} is used by {@code /dc privacy} (§7).
  */
 public final class PermissionBridge {
     private PermissionBridge() {

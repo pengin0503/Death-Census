@@ -11,6 +11,7 @@ import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonAwards;
@@ -281,6 +282,8 @@ public final class CensusCommands {
         // either gate is closed so the gated lang message remains reachable.
         root.then(devTree(Config.devMode(), System.getProperty(DemoGate.SYSTEM_PROPERTY), Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)));
 
+        // PR-10 (DESIGN 1.3.0 §9): admin-only vanilla statistics import.
+        root.then(importTree(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)));
         root.then(literal("doctor")
                 .requires(PermissionBridge.requires(DeathCensusPermission.LOOKUP,
                         Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)))
@@ -364,6 +367,57 @@ public final class CensusCommands {
                 count, ctx.getSource().getTextName());
         send(ctx, "command.deathcensus.dev.demo.done", count);
         return count;
+    }
+
+    // ------------------------------------------------------------ §9 vanilla import
+
+    /**
+     * PR-10: {@code /dc import vanilla [dry-run]}. The whole subtree is gated
+     * by the IMPORT node through the PR-1 bridge (vanilla OP level 2 fallback).
+     */
+    static LiteralArgumentBuilder<CommandSourceStack> importTree(
+            Predicate<CommandSourceStack> opLevelTwoFallback) {
+        LiteralArgumentBuilder<CommandSourceStack> importNode = literal("import")
+                .requires(PermissionBridge.requires(DeathCensusPermission.IMPORT, opLevelTwoFallback));
+        LiteralArgumentBuilder<CommandSourceStack> vanilla = literal("vanilla")
+                .executes(ctx -> importVanilla(ctx, false))
+                .then(literal("dry-run").executes(ctx -> importVanilla(ctx, true)));
+        importNode.then(vanilla);
+        return importNode;
+    }
+
+    /**
+     * Reads only {@code <world>/stats/<uuid>.json} for UUIDs already known to
+     * CensusData, then merges pre-install baselines with max semantics. No
+     * DeathEntry is fabricated and no milestone announcement is evaluated;
+     * dry run performs the same read/report without writing a backup or data.
+     */
+    private static int importVanilla(CommandContext<CommandSourceStack> ctx, boolean dryRun) {
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        if (!dryRun && CensusExport.writeBackup(server) == null) {
+            fail(ctx, "command.deathcensus.import.vanilla.failed");
+            return 0;
+        }
+        CensusData data = CensusData.get(server);
+        Path statsDir = server.getWorldPath(LevelResource.ROOT).resolve("stats");
+        Map<UUID, VanillaStats> stats = VanillaStatsSource.readFor(statsDir, data.allPlayers().keySet());
+        VanillaImportResult result = data.importVanillaBaselines(stats, dryRun);
+        for (VanillaImportResult.Row row : result.rows()) {
+            String label = row.name().isEmpty() ? row.uuid() : row.name() + " (" + row.uuid() + ")";
+            send(ctx, "command.deathcensus.import.vanilla.per_player",
+                    label, row.vanillaDeaths(), row.baselineDeaths(), row.topCause());
+        }
+        if (result.rows().isEmpty()) {
+            send(ctx, "command.deathcensus.import.vanilla.no_players", result.skippedPlayers());
+            return 0;
+        }
+        send(ctx, dryRun ? "command.deathcensus.import.vanilla.dry_run"
+                         : "command.deathcensus.import.vanilla.done",
+                result.rows().size(), result.skippedPlayers(), result.addedDeaths());
+        return 1;
     }
 
     // ------------------------------------------------------------ helpers
@@ -577,6 +631,7 @@ public final class CensusCommands {
         send(ctx, "command.deathcensus.help.discordfilters");
         if (isAdmin(ctx)) {
             send(ctx, "command.deathcensus.help.admin");
+            send(ctx, "command.deathcensus.import.vanilla.help");
             send(ctx, "command.deathcensus.digest.season.help");
         }
         return 1;
@@ -691,13 +746,16 @@ public final class CensusCommands {
         }
         // DESIGN §8: opted-out players are hidden from rankings, but their deaths
         // still count in the anonymous server totals.
-        List<PlayerDeaths> all = CensusStats.filterSince(CensusData.get(server).snapshot(), sinceMillis(period));
+        CensusData data = CensusData.get(server);
+        List<PlayerDeaths> all = CensusStats.filterSince(data.snapshot(), sinceMillis(period));
         int total = CensusStats.totalDeaths(all);
         send(ctx, "command.deathcensus.server_stats.header");
         if (!"all".equals(period)) {
             sendLiteral(ctx, "Period: " + period);
         }
         send(ctx, "command.deathcensus.stats.deaths", total);
+        // §9: baseline deaths are anonymous totals only; cause percentages below stay record-based.
+        sendLiteral(ctx, "Vanilla baseline: " + data.vanillaBaselineTotal() + " pre-install death(s)");
         for (Map.Entry<String, Integer> e : CensusStats.causeCounts(all, true)) {
             int pct = total > 0 ? (int) Math.round(100.0 * e.getValue() / total) : 0;
             sendLiteral(ctx, "· " + e.getKey() + ": " + e.getValue() + " (" + pct + "%)");
@@ -1253,6 +1311,7 @@ public final class CensusCommands {
         send(ctx, "command.deathcensus.doctor.header");
         sendLiteral(ctx, "Players: " + players + " (opted out: " + optedOut + ")");
         sendLiteral(ctx, "Total deaths: " + total);
+        sendLiteral(ctx, "Vanilla baseline: " + data.vanillaBaselineTotal() + " pre-install death(s)");
         sendLiteral(ctx, "Oldest death: " + oldestText);
         sendLiteral(ctx, "Newest death: " + newestText);
         sendLiteral(ctx, "Storage: deathcensus:deaths");

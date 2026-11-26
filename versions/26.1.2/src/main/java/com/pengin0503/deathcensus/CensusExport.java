@@ -15,7 +15,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -161,7 +163,7 @@ public final class CensusExport {
             if (Files.exists(file)) {
                 return file;
             }
-            Files.writeString(file, ExportRenderers.toJson(data.snapshot(), now), StandardCharsets.UTF_8);
+            Files.writeString(file, ExportRenderers.toBackupJson(data.snapshot(), now), StandardCharsets.UTF_8);
             // The just-written safety backup must not be pruned while protecting the source.
             pruneBackups(server, protectedSource, file);
             return file;
@@ -331,6 +333,9 @@ public final class CensusExport {
                 boolean hideCoordinates = bool(p, "hideCoordinates");
                 boolean hidePvpOpponent = bool(p, "hidePvpOpponent");
                 boolean discordOptOut = bool(p, "discordOptOut");
+                // §9: baseline metadata is backup-only; absent in old backups and public exports.
+                int vanillaBaseline = Math.max(0, integer(p, "vanillaDeathsBaseline"));
+                Map<String, Integer> baselineCauses = baselineCauses(p.get("vanillaBaselineCauses"));
                 List<DeathEntry> deaths = new ArrayList<>();
                 JsonArray deathsJson = p.getAsJsonArray("deaths");
                 if (deathsJson != null) {
@@ -371,7 +376,8 @@ public final class CensusExport {
                     }
                 }
                 players.add(new PlayerDeaths(uuid, name, optOut,
-                        hideCoordinates, hidePvpOpponent, discordOptOut, deaths));
+                        hideCoordinates, hidePvpOpponent, discordOptOut, deaths,
+                        vanillaBaseline, baselineCauses));
             } catch (RuntimeException e) {
                 skippedPlayers++;
             }
@@ -386,6 +392,23 @@ public final class CensusExport {
             DeathCensus.LOGGER.warn("[DeathCensus] Skipped {} corrupt backup player record(s)", skippedPlayers);
         }
         return players;
+    }
+
+    /** §9: optional category → count object; missing or wrong-typed values default to empty. */
+    private static Map<String, Integer> baselineCauses(JsonElement value) {
+        Map<String, Integer> out = new LinkedHashMap<>();
+        if (value != null && value.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> entry : value.getAsJsonObject().entrySet()) {
+                JsonElement count = entry.getValue();
+                if (count != null && count.isJsonPrimitive() && count.getAsJsonPrimitive().isNumber()) {
+                    int parsed = Math.max(0, count.getAsInt());
+                    if (parsed > 0) {
+                        out.put(entry.getKey(), parsed);
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     /** Absent or wrong-typed flags default to false; old backups omit all three. */

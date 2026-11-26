@@ -68,15 +68,26 @@ public final class ExportRenderers {
     }
 
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
-        return renderJson(players, generatedAtEpochMillis, false);
+        return renderJson(players, generatedAtEpochMillis, false, false);
     }
 
     /** As {@link #toJson(List, long)}, with anonymized metadata and a redacted copy when requested. */
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis, boolean anonymize) {
-        return renderJson(anonymize ? Anonymizer.apply(players) : players, generatedAtEpochMillis, anonymize);
+        return renderJson(anonymize ? Anonymizer.apply(players) : players,
+                generatedAtEpochMillis, anonymize, false);
     }
 
-    private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis, boolean anonymized) {
+    /**
+     * Backup-only JSON: identical to the public export plus the §9 vanilla
+     * baseline fields, so backup/restore preserves them without changing any
+     * HTML/JSON/CSV export format.
+     */
+    public static String toBackupJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
+        return renderJson(players, generatedAtEpochMillis, false, true);
+    }
+
+    private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                     boolean anonymized, boolean includeBaselines) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
         // per-death rows use the public redaction view.
@@ -102,6 +113,20 @@ public final class ExportRenderers {
                 sb.append("      \"hideCoordinates\": ").append(p.hideCoordinates()).append(",\n");
                 sb.append("      \"hidePvpOpponent\": ").append(p.hidePvpOpponent()).append(",\n");
                 sb.append("      \"discordOptOut\": ").append(p.discordOptOut()).append(",\n");
+                if (includeBaselines) {
+                    sb.append("      \"vanillaDeathsBaseline\": ").append(p.vanillaDeathsBaseline()).append(",\n");
+                    sb.append("      \"vanillaBaselineCauses\": {");
+                    boolean firstCause = true;
+                    for (Map.Entry<String, Integer> cause : p.vanillaBaselineCauses().entrySet()) {
+                        if (!firstCause) {
+                            sb.append(',');
+                        }
+                        firstCause = false;
+                        sb.append('"').append(TextEscaping.jsonString(cause.getKey()))
+                                .append("\": ").append(cause.getValue());
+                    }
+                    sb.append("},\n");
+                }
                 sb.append("      \"deaths\": [");
                 List<DeathEntry> deaths = renderPlayers.get(i).deaths();
                 if (!deaths.isEmpty()) {
