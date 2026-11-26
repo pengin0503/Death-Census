@@ -393,6 +393,29 @@ public class CensusData extends SavedData {
     }
 
     /**
+     * Sets the excuse on the death identified by {@code (uuid, epochMillis)}.
+     * The GUI excuse flow targets the selected record; {@link #setExcuse(UUID, String)}
+     * keeps defaulting to the most recent death for {@code /dc excuse}.
+     *
+     * @return true when the record was found and updated
+     */
+    public boolean setExcuse(UUID uuid, long epochMillis, String excuse) {
+        PlayerCensus pc = players.get(uuid);
+        if (pc == null) {
+            return false;
+        }
+        for (int i = pc.deaths.size() - 1; i >= 0; i--) {
+            DeathEntry e = pc.deaths.get(i);
+            if (e.epochMillis() == epochMillis) {
+                pc.deaths.set(i, copyWithStory(e, excuse, e.lastWords(), e.fCount()));
+                setDirty();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Sets the excuse on the player's most recent death, replacing any existing
      * excuse.
      *

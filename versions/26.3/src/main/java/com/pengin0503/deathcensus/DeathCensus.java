@@ -1,6 +1,7 @@
 package com.pengin0503.deathcensus;
 
 import com.mojang.logging.LogUtils;
+import com.pengin0503.deathcensus.ui.DialogClickHandler;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -30,6 +31,7 @@ public class DeathCensus {
 
         NeoForge.EVENT_BUS.register(DeathTracker.class);
         NeoForge.EVENT_BUS.register(CensusCommands.class);
+        NeoForge.EVENT_BUS.register(DialogClickHandler.class);
         NeoForge.EVENT_BUS.addListener(DeathCensus::onServerStarted);
         NeoForge.EVENT_BUS.addListener(DeathCensus::onServerTick);
         NeoForge.EVENT_BUS.addListener(DeathCensus::onServerStopping);
