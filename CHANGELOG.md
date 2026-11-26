@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+- In-game GUI: /dc with no arguments now opens a menu — native dialogs on
+  Minecraft 26.x (home, history with filters, death details, rankings,
+  privacy settings and admin shortcuts) and a clickable chat menu with
+  the same screens on 1.21.1; everything is still server-side only and
+  vanilla clients need nothing extra
+- Death-notification buttons: after each death, every viewer who may see
+  the record gets one extra chat line with [Details] [Excuse] [F]
+  buttons; for opted-out players the line goes only to the player
+  themselves and to admins, so hidden records never leak
+- The GUI delete flow confirms with the player's name, record number and
+  date on every version, and always writes a safety backup first
+
 ## 1.1.0
 
 - Last words and excuses: a death now records the player's most recent chat
