@@ -11,7 +11,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -188,10 +187,11 @@ public final class DiscordNotifier {
         if (now - last < interval) {
             return;
         }
-        List<PlayerDeaths> publicPlayers = data.snapshot().stream()
-                .filter(p -> !p.optOutPublic())
-                .toList();
-        String content = DiscordLogic.digestContent(publicPlayers, last);
+        String content = DiscordLogic.digestContent(
+                data.snapshot(),
+                last,
+                Config.displayTimeZone(),
+                DiscordLogic.labelsFor(Config.discordLanguage()));
         data.setLastDigestEpochMillis(now);
         if (!content.isEmpty()) {
             enqueue(uri, content);

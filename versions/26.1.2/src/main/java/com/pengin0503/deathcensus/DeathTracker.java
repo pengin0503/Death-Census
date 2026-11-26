@@ -16,7 +16,6 @@ import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -93,7 +92,7 @@ public final class DeathTracker {
     @SubscribeEvent
     public static void onServerChat(ServerChatEvent event) {
         ServerPlayer player = event.getPlayer();
-        if (player == null || player instanceof FakePlayer) {
+        if (player == null || player instanceof FakePlayer || !Config.enabled()) {
             return;
         }
         String message = event.getRawText();
@@ -122,9 +121,18 @@ public final class DeathTracker {
             return;
         }
         MinecraftServer server = player.level().getServer();
-        if (server != null && CensusData.get(server).addRespect(latest.victim, latest.epochMillis)) {
-            latest.respects.add(sender);
+        if (server == null) {
+            return;
         }
+        final RecentDeath target = latest;
+        // ServerChatEvent may fire off the server thread; SavedData must be touched on it.
+        // The ConcurrentHashMap captures stay safe, but marking the sender is moved here
+        // so the "mark only when addRespect succeeded" semantics remain atomic.
+        server.execute(() -> {
+            if (CensusData.get(server).addRespect(target.victim, target.epochMillis)) {
+                target.respects.add(sender);
+            }
+        });
     }
 
     // LOWEST so a death cancelled by another mod (revive/second-chance) is never
@@ -198,12 +206,12 @@ public final class DeathTracker {
                 lastWords,
                 0);
 
-        int totalDeathsBefore = 0;
-        for (CensusData.PlayerCensus other : data.allPlayers().values()) {
-            totalDeathsBefore += other.deaths.size();
-        }
+        // Lifetime counters/categories survive record trimming; retained lists do not.
+        // recordDeath increments the counter, so snapshot it first (same ordering as before).
+        int totalDeathsBefore = (int) Math.min(data.lifetimeDeaths(), (long) Integer.MAX_VALUE);
         int playerDeathsBefore = pc.deaths.size();
-        int playerDistinctCategoriesBefore = distinctCategoryCount(pc);
+        int playerDistinctCategoriesBefore = pc.lifetimeCategories.size();
+        boolean optedOut = pc.optOutPublic;
 
         data.recordDeath(entry, Config.maxRecordsPerPlayer());
         RECENT_DEATHS.removeIf(death -> deathEpochMillis - death.epochMillis > CAPTURE_WINDOW_MILLIS);
@@ -213,32 +221,37 @@ public final class DeathTracker {
             DiscordNotifier.notifyDeath(entry);
         }
         if (Config.milestoneAnnouncements()) {
-            int playerDistinctCategoriesAfter = distinctCategoryCount(pc);
+            int playerDistinctCategoriesAfter = pc.lifetimeCategories.size();
             for (Milestones.Milestone milestone : Milestones.evaluate(
                     totalDeathsBefore,
                     playerDeathsBefore,
                     playerDistinctCategoriesBefore,
                     playerDistinctCategoriesAfter,
                     entry)) {
-                announceMilestone(server, playerName, milestone);
+                announceMilestone(server, playerName, milestone, optedOut);
             }
         }
     }
 
-    private static int distinctCategoryCount(CensusData.PlayerCensus pc) {
-        Set<String> categories = new HashSet<>();
-        for (DeathEntry death : pc.deaths) {
-            categories.add(death.causeCategory());
+    private static void announceMilestone(MinecraftServer server, String playerName,
+                                          Milestones.Milestone milestone, boolean optedOut) {
+        Milestones.Kind kind = milestone.kind();
+        // CATEGORY_COMPLETE is derived from stored records (DESIGN §8): never disclose it
+        // for a player who opted out of public record-derived views.
+        if (optedOut && kind == Milestones.Kind.CATEGORY_COMPLETE) {
+            return;
         }
-        return categories.size();
-    }
-
-    private static void announceMilestone(MinecraftServer server, String playerName, Milestones.Milestone milestone) {
-        String key = milestone.kind().langKey();
-        Object arg = milestone.kind() == Milestones.Kind.TOTAL_COUNT
+        String key = kind.langKey();
+        Object arg = kind == Milestones.Kind.TOTAL_COUNT
                 ? Integer.valueOf(milestone.value())
                 : playerName;
+        // SERVER_FIRST/PERSONAL_FIRST only restate the vanilla death message everyone saw,
+        // but the opt-out message promises no Discord posts. TOTAL_COUNT names nobody and
+        // counts opted-out deaths in the anonymous total (DESIGN §8), so it posts normally.
         server.getPlayerList().broadcastSystemMessage(ServerLang.tr(key, arg), false);
+        if (optedOut && (kind == Milestones.Kind.SERVER_FIRST || kind == Milestones.Kind.PERSONAL_FIRST)) {
+            return;
+        }
         DiscordNotifier.notifyMilestone(ServerLang.formatForLang(Config.discordLanguage(), key, arg));
     }
 

@@ -3,6 +3,7 @@ package com.pengin0503.deathcensus;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -65,6 +66,78 @@ class DiscordLogicTest {
         assertEquals("Death Census digest: 3 death(s) since 2026-11-20", lines[0]);
         assertEquals("Top causes: lava x2, fall x1", lines[1]);
         assertEquals("Most deaths: Alice (2), Bob (1)", lines[2]);
+    }
+
+    @Test
+    void digestCountsOptedOutDeathsWithoutNamingThem() {
+        long since = Instant.parse("2026-11-20T00:00:00Z").toEpochMilli();
+        long after1 = Instant.parse("2026-11-21T00:00:00Z").toEpochMilli();
+        long after2 = Instant.parse("2026-11-22T00:00:00Z").toEpochMilli();
+
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u1", "Alice", false, List.of(
+                        entry("Alice", after1, 2L, 100, "lava", "m1")
+                )),
+                new PlayerDeaths("u2", "Eve", true, List.of(
+                        entry("Eve", after1, 2L, 100, "lava", "m2"),
+                        entry("Eve", after2, 3L, 100, "lava", "m3"),
+                        entry("Eve", after2, 3L, 100, "fall", "m4")
+                ))
+        );
+
+        String digest = DiscordLogic.digestContent(players, since);
+        String[] lines = digest.split("\n");
+        assertEquals(3, lines.length);
+        assertEquals("Death Census digest: 4 death(s) since 2026-11-20", lines[0]);
+        assertEquals("Top causes: lava x3, fall x1", lines[1]);
+        assertEquals("Most deaths: Alice (1)", lines[2]);
+        assertFalse(digest.contains("Eve"));
+    }
+
+    @Test
+    void digestOmitsMostDeathsLineWhenEveryoneOptedOut() {
+        long since = Instant.parse("2026-11-20T00:00:00Z").toEpochMilli();
+        long after1 = Instant.parse("2026-11-21T00:00:00Z").toEpochMilli();
+        long after2 = Instant.parse("2026-11-22T00:00:00Z").toEpochMilli();
+
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u1", "Eve", true, List.of(
+                        entry("Eve", after1, 2L, 100, "lava", "m1"),
+                        entry("Eve", after2, 3L, 100, "lava", "m2")
+                )),
+                new PlayerDeaths("u2", "Mallory", true, List.of(
+                        entry("Mallory", after1, 2L, 100, "fall", "m3")
+                ))
+        );
+
+        String digest = DiscordLogic.digestContent(players, since);
+        String[] lines = digest.split("\n");
+        assertEquals(2, lines.length);
+        assertEquals("Death Census digest: 3 death(s) since 2026-11-20", lines[0]);
+        assertEquals("Top causes: lava x2, fall x1", lines[1]);
+        assertFalse(digest.contains("Eve"));
+        assertFalse(digest.contains("Mallory"));
+    }
+
+    @Test
+    void digestHonorsJapaneseLabelsAndConfiguredZone() {
+        long since = Instant.parse("2026-11-20T20:00:00Z").toEpochMilli();
+        long after = Instant.parse("2026-11-20T21:00:00Z").toEpochMilli();
+
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u1", "Alice", false, List.of(
+                        entry("Alice", after, 2L, 100, "lava", "m1")
+                ))
+        );
+
+        assertEquals(DiscordLogic.labelsFor("ja-JP"), DiscordLogic.labelsFor("ja_jp"));
+        assertEquals(
+                "死亡センサス ダイジェスト: 1 件の死亡（以降） 2026-11-21\n"
+                        + "主な死因: lava x1\n"
+                        + "最多死亡: Alice (1)",
+                DiscordLogic.digestContent(
+                        players, since, ZoneId.of("Asia/Tokyo"), DiscordLogic.labelsFor("ja_jp"))
+        );
     }
 
     @Test

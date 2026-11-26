@@ -1,12 +1,21 @@
 package com.pengin0503.deathcensus;
 
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 public final class DiscordLogic {
+    /** Label strings used to render a digest in a given language. */
+    public record DigestLabels(String header, String count, String topCauses, String mostDeaths) {
+    }
+
+    private static final DigestLabels ENGLISH_LABELS =
+            new DigestLabels("Death Census digest", "death(s) since", "Top causes", "Most deaths");
+    private static final DigestLabels JAPANESE_LABELS =
+            new DigestLabels("死亡センサス ダイジェスト", "件の死亡（以降）", "主な死因", "最多死亡");
+
     private static final String PREFIX_DISCORD = "https://discord.com/api/webhooks/";
     private static final String PREFIX_DISCORDAPP = "https://discordapp.com/api/webhooks/";
     private static final String ENV_PREFIX = "env:";
@@ -27,11 +36,28 @@ public final class DiscordLogic {
                 + " · survived " + TimeFormat.formatDuration(e.survivalTicks());
     }
 
+    /** Returns the digest labels for {@code lang}; anything other than Japanese is English. */
+    public static DigestLabels labelsFor(String lang) {
+        if (lang != null && lang.replace('_', '-').equalsIgnoreCase("ja-jp")) {
+            return JAPANESE_LABELS;
+        }
+        return ENGLISH_LABELS;
+    }
+
     public static String digestContent(List<PlayerDeaths> players, long sinceEpochMillis) {
+        return digestContent(players, sinceEpochMillis, ZoneOffset.UTC, ENGLISH_LABELS);
+    }
+
+    public static String digestContent(
+            List<PlayerDeaths> players,
+            long sinceEpochMillis,
+            ZoneId zone,
+            DigestLabels labels
+    ) {
         if (players == null || players.isEmpty()) {
             return "";
         }
-        List<PlayerDeaths> filtered = new ArrayList<>();
+        List<PlayerDeaths> recentPlayers = new ArrayList<>();
         int recentCount = 0;
         for (PlayerDeaths player : players) {
             if (player == null) {
@@ -42,27 +68,33 @@ public final class DiscordLogic {
                     .toList();
             if (!recentDeaths.isEmpty()) {
                 recentCount += recentDeaths.size();
-                filtered.add(new PlayerDeaths(player.uuid(), player.name(), player.optOutPublic(), recentDeaths));
+                recentPlayers.add(new PlayerDeaths(player.uuid(), player.name(), player.optOutPublic(), recentDeaths));
             }
         }
         if (recentCount == 0) {
             return "";
         }
 
-        String header = "Death Census digest: " + recentCount + " death(s) since "
-                + TimeFormat.formatDate(sinceEpochMillis, ZoneOffset.UTC);
+        String header = labels.header() + ": " + recentCount + " " + labels.count() + " "
+                + TimeFormat.formatDate(sinceEpochMillis, zone);
 
-        String topCauses = CensusStats.causeCounts(filtered, true).stream()
+        String topCauses = CensusStats.causeCounts(recentPlayers, true).stream()
                 .limit(3)
                 .map(entry -> entry.getKey() + " x" + entry.getValue())
                 .collect(Collectors.joining(", "));
 
-        String mostDeaths = CensusStats.leaderboardDeaths(filtered, true).stream()
-                .limit(3)
-                .map(summary -> summary.name() + " (" + summary.deaths() + ")")
-                .collect(Collectors.joining(", "));
+        List<CensusStats.PlayerSummary> mostDeathsList = CensusStats.leaderboardDeaths(recentPlayers, false)
+                .stream().limit(3).toList();
 
-        return header + "\nTop causes: " + topCauses + "\nMost deaths: " + mostDeaths;
+        StringBuilder result = new StringBuilder(header)
+                .append('\n').append(labels.topCauses()).append(": ").append(topCauses);
+        if (!mostDeathsList.isEmpty()) {
+            String mostDeaths = mostDeathsList.stream()
+                    .map(summary -> summary.name() + " (" + summary.deaths() + ")")
+                    .collect(Collectors.joining(", "));
+            result.append('\n').append(labels.mostDeaths()).append(": ").append(mostDeaths);
+        }
+        return result.toString();
     }
 
     public static boolean isValidWebhookUrl(String url) {

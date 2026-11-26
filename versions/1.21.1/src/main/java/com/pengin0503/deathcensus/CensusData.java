@@ -3,6 +3,7 @@ package com.pengin0503.deathcensus;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
@@ -11,8 +12,10 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -31,19 +34,31 @@ public class CensusData extends SavedData {
     /** Per-player state. */
     public static final class PlayerCensus {
         public final List<DeathEntry> deaths = new ArrayList<>();
+        /** Cause categories this player has ever died to (known categories only), even after record trimming. */
+        public final Set<String> lifetimeCategories = new LinkedHashSet<>();
         public String lastKnownName = "";
         public boolean optOutPublic = false;
         /** PLAY_TIME when first seen in this world; -1 = not set yet. */
         public int baselinePlayTicks = -1;
         /** PLAY_TIME at the most recent recorded death; -1 = no death yet. */
         public int lastDeathPlayTicks = -1;
+
+        public Set<String> lifetimeCategories() {
+            return Collections.unmodifiableSet(lifetimeCategories);
+        }
     }
 
     private final Map<UUID, PlayerCensus> players = new LinkedHashMap<>();
     private long lastDigestEpochMillis = 0L;
+    /** Lifetime deaths across all players; survives trimming of retained records. */
+    private long lifetimeDeaths = 0L;
 
     public static CensusData get(MinecraftServer server) {
         return server.overworld().getDataStorage().computeIfAbsent(FACTORY, DATA_NAME);
+    }
+
+    public long lifetimeDeaths() {
+        return lifetimeDeaths;
     }
 
     public long lastDigestEpochMillis() {
@@ -93,6 +108,10 @@ public class CensusData extends SavedData {
         }
         PlayerCensus pc = player(uuid);
         pc.deaths.add(entry);
+        lifetimeDeaths++;
+        if (CauseClassifier.isKnownCategory(entry.causeCategory())) {
+            pc.lifetimeCategories.add(entry.causeCategory());
+        }
         pc.lastDeathPlayTicks = entry.playTicks();
         if (!entry.playerName().isEmpty()) {
             pc.lastKnownName = entry.playerName();
@@ -217,6 +236,7 @@ public class CensusData extends SavedData {
     /** Replaces all stored data with the given snapshot (used by admin restore). */
     public void replaceAll(List<PlayerDeaths> snapshot) {
         players.clear();
+        long restoredTotal = 0L;
         for (PlayerDeaths pd : snapshot) {
             UUID uuid;
             try {
@@ -228,6 +248,12 @@ public class CensusData extends SavedData {
             pc.lastKnownName = pd.name();
             pc.optOutPublic = pd.optOutPublic();
             pc.deaths.addAll(pd.deaths());
+            for (DeathEntry death : pd.deaths()) {
+                if (CauseClassifier.isKnownCategory(death.causeCategory())) {
+                    pc.lifetimeCategories.add(death.causeCategory());
+                }
+            }
+            restoredTotal += pd.deaths().size();
             // -1 = "no baseline yet": the login handler re-baselines on next login.
             // 0 would make a no-death player's next death count their entire
             // lifetime playtime as survival. Players with deaths are governed by
@@ -238,6 +264,9 @@ public class CensusData extends SavedData {
                     : pd.deaths().get(pd.deaths().size() - 1).playTicks();
             players.put(uuid, pc);
         }
+        // A restored backup carries no lifetime metadata: derive the counter from
+        // the restored records, just as loading old SavedData does.
+        lifetimeDeaths = restoredTotal;
         setDirty();
     }
 
@@ -338,12 +367,41 @@ public class CensusData extends SavedData {
                     }
                 }
             }
+            if (entry.contains("lifetimeCategories", Tag.TAG_LIST)) {
+                for (Tag raw : entry.getList("lifetimeCategories", Tag.TAG_STRING)) {
+                    if (raw instanceof StringTag categoryTag) {
+                        String category = categoryTag.getAsString();
+                        if (CauseClassifier.isKnownCategory(category)) {
+                            pc.lifetimeCategories.add(category);
+                        }
+                    }
+                }
+            } else {
+                // Old data has no lifetime set: derive it from the retained deaths.
+                for (DeathEntry death : pc.deaths) {
+                    if (CauseClassifier.isKnownCategory(death.causeCategory())) {
+                        pc.lifetimeCategories.add(death.causeCategory());
+                    }
+                }
+            }
             data.players.put(uuid, pc);
         }
         if (tag.contains("lastDigestEpoch", Tag.TAG_ANY_NUMERIC)) {
             long v = tag.getLong("lastDigestEpoch");
             if (v > 0L) {
                 data.lastDigestEpochMillis = v;
+            }
+        }
+        if (tag.contains("lifetimeDeaths", Tag.TAG_ANY_NUMERIC)) {
+            long v = tag.getLong("lifetimeDeaths");
+            if (v > 0L) {
+                data.lifetimeDeaths = v;
+            }
+        }
+        if (data.lifetimeDeaths <= 0L) {
+            // Old data has no counter: the retained deaths are the best available approximation.
+            for (PlayerCensus pc : data.players.values()) {
+                data.lifetimeDeaths += pc.deaths.size();
             }
         }
         return data;
@@ -372,11 +430,21 @@ public class CensusData extends SavedData {
                 deaths.add(entryToTag(d));
             }
             entry.put("deaths", deaths);
+            if (!pc.lifetimeCategories.isEmpty()) {
+                ListTag categories = new ListTag();
+                for (String category : pc.lifetimeCategories) {
+                    categories.add(StringTag.valueOf(category));
+                }
+                entry.put("lifetimeCategories", categories);
+            }
             all.put(e.getKey().toString(), entry);
         }
         tag.put("players", all);
         if (lastDigestEpochMillis > 0L) {
             tag.putLong("lastDigestEpoch", lastDigestEpochMillis);
+        }
+        if (lifetimeDeaths > 0L) {
+            tag.putLong("lifetimeDeaths", lifetimeDeaths);
         }
         return tag;
     }

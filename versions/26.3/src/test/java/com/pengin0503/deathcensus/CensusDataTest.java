@@ -2,7 +2,9 @@ package com.pengin0503.deathcensus;
 
 import com.mojang.serialization.DynamicOps;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -54,6 +56,104 @@ class CensusDataTest {
         assertTrue(pc.optOutPublic);
         assertEquals("Steve", pc.lastKnownName);
         assertEquals(123456789L, loaded.lastDigestEpochMillis());
+    }
+
+    private static DeathEntry entryWithCategory(UUID uuid, String name, long epoch, String category) {
+        return new DeathEntry(uuid.toString(), name, epoch, 3L, 500, 400,
+                "minecraft:overworld", 10.0, 64.0, -20.0, category, "minecraft:" + category,
+                name + " died (" + category + ")", "", "", "survival", 5, "", "", 0);
+    }
+
+    @Test
+    void codecSkipsCorruptDeathAndPlayerEntriesButKeepsValidOnes() {
+        UUID good = UUID.randomUUID();
+        UUID bad = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(good, "Alice", 1000L, 100, 100), 100);
+        data.recordDeath(entry(good, "Alice", 2000L, 200, 100), 100);
+        data.recordDeath(entry(bad, "Bob", 3000L, 300, 100), 100);
+
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CompoundTag root = (CompoundTag) CensusData.CODEC.encodeStart(ops, data).getOrThrow();
+        CompoundTag players = root.getCompoundOrEmpty("players");
+        ListTag deaths = players.getCompoundOrEmpty(good.toString()).getListOrEmpty("deaths");
+        deaths.set(0, StringTag.valueOf("not a death map"));
+        players.put(bad.toString(), StringTag.valueOf("not a player map"));
+
+        CensusData loaded = CensusData.CODEC.parse(ops, root).getOrThrow();
+        CensusData.PlayerCensus pc = loaded.playerOrNull(good);
+        assertTrue(pc != null);
+        assertEquals(1, pc.deaths.size());
+        assertEquals(2000L, pc.deaths.get(0).epochMillis());
+        assertTrue(loaded.playerOrNull(bad) == null);
+    }
+
+    @Test
+    void codecSkipsEpochlessEntriesAndFillsBlankUuidFromPlayerKey() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(uuid, "Alice", 0L, 100, 100), 100);
+        data.recordDeath(entry(uuid, "Alice", 2000L, 200, 100), 100);
+
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CompoundTag root = (CompoundTag) CensusData.CODEC.encodeStart(ops, data).getOrThrow();
+        CompoundTag player = root.getCompoundOrEmpty("players").getCompoundOrEmpty(uuid.toString());
+        ListTag deaths = player.getListOrEmpty("deaths");
+        deaths.getCompoundOrEmpty(0).putLong("epochMillis", 0L);
+        deaths.getCompoundOrEmpty(1).putString("playerUuid", "");
+
+        CensusData loaded = CensusData.CODEC.parse(ops, root).getOrThrow();
+        List<DeathEntry> restored = loaded.playerOrNull(uuid).deaths;
+        assertEquals(1, restored.size());
+        assertEquals(2000L, restored.get(0).epochMillis());
+        assertEquals(uuid.toString(), restored.get(0).playerUuid());
+    }
+
+    @Test
+    void codecPersistsLifetimeCounterAndCategories() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entryWithCategory(uuid, "Alex", 100L, "fall"), 1);
+        data.recordDeath(entryWithCategory(uuid, "Alex", 200L, "lava"), 1);
+
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CensusData loaded = CensusData.CODEC.parse(ops,
+                CensusData.CODEC.encodeStart(ops, data).getOrThrow()).getOrThrow();
+        assertEquals(2L, loaded.lifetimeDeaths());
+        assertEquals(2, loaded.playerOrNull(uuid).lifetimeCategories.size());
+        assertTrue(loaded.playerOrNull(uuid).lifetimeCategories.contains("fall"));
+        assertTrue(loaded.playerOrNull(uuid).lifetimeCategories.contains("lava"));
+    }
+
+    @Test
+    void loadingWithoutLifetimeFieldsInitializesThemFromRetainedDeaths() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entryWithCategory(uuid, "Alex", 100L, "fall"), 100);
+        data.recordDeath(entryWithCategory(uuid, "Alex", 200L, "lava"), 100);
+
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CompoundTag root = (CompoundTag) CensusData.CODEC.encodeStart(ops, data).getOrThrow();
+        root.remove("lifetimeDeaths");
+        root.getCompoundOrEmpty("players").getCompoundOrEmpty(uuid.toString()).remove("lifetimeCategories");
+
+        CensusData loaded = CensusData.CODEC.parse(ops, root).getOrThrow();
+        assertEquals(2L, loaded.lifetimeDeaths());
+        assertEquals(2, loaded.playerOrNull(uuid).lifetimeCategories.size());
+    }
+
+    @Test
+    void lifetimeTotalsAndCategoriesSurviveTrimming() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entryWithCategory(uuid, "Alex", 100L, "fall"), 1);
+        data.recordDeath(entryWithCategory(uuid, "Alex", 200L, "lava"), 1);
+        data.recordDeath(entryWithCategory(uuid, "Alex", 300L, "fall"), 1);
+
+        assertEquals(1, data.playerOrNull(uuid).deaths.size());
+        assertEquals("fall", data.playerOrNull(uuid).deaths.get(0).causeCategory());
+        assertEquals(3L, data.lifetimeDeaths());
+        assertTrue(data.playerOrNull(uuid).lifetimeCategories.contains("lava"));
     }
 
     @Test

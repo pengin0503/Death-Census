@@ -6,7 +6,6 @@ import com.mojang.serialization.DataResult;
 import com.mojang.serialization.DynamicOps;
 import com.mojang.serialization.MapLike;
 import com.mojang.serialization.RecordBuilder;
-import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
@@ -16,14 +15,22 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * Per-world storage: for each player, their death records in chronological
  * order, plus privacy and survival-baseline state. Stored via a
  * {@link SavedDataType} with ID "deathcensus:deaths" (26.x storage API).
+ *
+ * <p>Design §3.3: corrupt entries are skipped with a warning, never fail the
+ * whole load. The top-level codec therefore decodes each player and each death
+ * entry independently instead of using {@code unboundedMap}/{@code listOf}
+ * decoding, where one bad element would discard all sibling data.
  */
 public class CensusData extends SavedData {
     private static final Identifier DATA_ID = Identifier.fromNamespaceAndPath(DeathCensus.MOD_ID, "deaths");
@@ -31,12 +38,18 @@ public class CensusData extends SavedData {
     /** Per-player state. */
     public static final class PlayerCensus {
         public final List<DeathEntry> deaths = new ArrayList<>();
+        /** Cause categories this player has ever died to (known categories only), even after record trimming. */
+        public final Set<String> lifetimeCategories = new LinkedHashSet<>();
         public String lastKnownName = "";
         public boolean optOutPublic = false;
         /** PLAY_TIME when first seen in this world; -1 = not set yet. */
         public int baselinePlayTicks = -1;
         /** PLAY_TIME at the most recent recorded death; -1 = no death yet. */
         public int lastDeathPlayTicks = -1;
+
+        public Set<String> lifetimeCategories() {
+            return Collections.unmodifiableSet(lifetimeCategories);
+        }
     }
 
     // DeathEntry has 20 components, more than RecordCodecBuilder's 16-field
@@ -109,54 +122,163 @@ public class CensusData extends SavedData {
         }
     };
 
-    private static PlayerCensus playerFromCodec(String name, boolean optOut, int baseline, int lastDeath,
-                                                     List<DeathEntry> deaths) {
+    private static <T> String stringValue(DynamicOps<T> ops, MapLike<T> map, String key) {
+        T v = map.get(key);
+        return v == null ? "" : ops.getStringValue(v).result().orElse("");
+    }
+
+    private static <T> long longValue(DynamicOps<T> ops, MapLike<T> map, String key) {
+        T v = map.get(key);
+        return v == null ? 0L : ops.getNumberValue(v).result().map(Number::longValue).orElse(0L);
+    }
+
+    private static <T> int intValue(DynamicOps<T> ops, MapLike<T> map, String key) {
+        return (int) longValue(ops, map, key);
+    }
+
+    private static <T> boolean booleanValue(DynamicOps<T> ops, MapLike<T> map, String key) {
+        T v = map.get(key);
+        return v != null && ops.getBooleanValue(v).result().orElse(false);
+    }
+
+    private static DeathEntry withPlayerUuid(DeathEntry e, String uuid) {
+        return new DeathEntry(
+                uuid, e.playerName(), e.epochMillis(), e.gameDay(), e.playTicks(), e.survivalTicks(),
+                e.dimension(), e.x(), e.y(), e.z(), e.causeCategory(), e.causeId(), e.deathMessage(),
+                e.killerType(), e.killerName(), e.gameMode(), e.experienceLevel(), e.excuse(),
+                e.lastWords(), e.fCount());
+    }
+
+    private static void initializeCategoriesFromDeaths(PlayerCensus pc) {
+        for (DeathEntry death : pc.deaths) {
+            if (CauseClassifier.isKnownCategory(death.causeCategory())) {
+                pc.lifetimeCategories.add(death.causeCategory());
+            }
+        }
+    }
+
+    private static <T> T encodePlayer(DynamicOps<T> ops, PlayerCensus pc) {
+        RecordBuilder<T> b = ops.mapBuilder();
+        b.add("lastKnownName", ops.createString(pc.lastKnownName));
+        b.add("optOutPublic", ops.createBoolean(pc.optOutPublic));
+        b.add("baselinePlayTicks", ops.createInt(pc.baselinePlayTicks));
+        b.add("lastDeathPlayTicks", ops.createInt(pc.lastDeathPlayTicks));
+        b.add("deaths", ENTRY_CODEC.listOf().encodeStart(ops, pc.deaths));
+        b.add("lifetimeCategories", Codec.STRING.listOf().encodeStart(ops, new ArrayList<>(pc.lifetimeCategories)));
+        return b.build(ops.empty()).result().orElse(ops.empty());
+    }
+
+    /** @return null when the player value itself cannot be decoded as a map. */
+    @Nullable
+    private static <T> PlayerCensus decodePlayer(DynamicOps<T> ops, T input, String uuidKey) {
+        DataResult<MapLike<T>> result = ops.getMap(input);
+        if (result.result().isEmpty()) {
+            return null;
+        }
+        MapLike<T> map = result.result().get();
         PlayerCensus pc = new PlayerCensus();
-        pc.lastKnownName = name != null ? name : "";
-        pc.optOutPublic = optOut;
-        pc.baselinePlayTicks = baseline;
-        pc.lastDeathPlayTicks = lastDeath;
-        if (deaths != null) {
-            pc.deaths.addAll(deaths);
+        pc.lastKnownName = stringValue(ops, map, "lastKnownName");
+        pc.optOutPublic = booleanValue(ops, map, "optOutPublic");
+        pc.baselinePlayTicks = intValue(ops, map, "baselinePlayTicks");
+        pc.lastDeathPlayTicks = intValue(ops, map, "lastDeathPlayTicks");
+
+        T deathsValue = map.get("deaths");
+        if (deathsValue != null) {
+            DataResult<Consumer<Consumer<T>>> listResult = ops.getList(deathsValue);
+            if (listResult.result().isPresent()) {
+                listResult.result().get().accept(element -> {
+                    DataResult<DeathEntry> parsed = ENTRY_CODEC.parse(ops, element);
+                    if (parsed.result().isEmpty()) {
+                        DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt death entry for '{}' in SavedData", uuidKey);
+                        return;
+                    }
+                    DeathEntry death = parsed.result().get();
+                    if (death.epochMillis() <= 0L) {
+                        DeathCensus.LOGGER.warn("[DeathCensus] Skipping death entry without a valid epoch for '{}' in SavedData", uuidKey);
+                        return;
+                    }
+                    if (death.playerUuid().isBlank()) {
+                        death = withPlayerUuid(death, uuidKey);
+                    }
+                    pc.deaths.add(death);
+                });
+            } else {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed death list for '{}' in SavedData", uuidKey);
+            }
+        }
+
+        T categoriesValue = map.get("lifetimeCategories");
+        if (categoriesValue == null) {
+            initializeCategoriesFromDeaths(pc);
+        } else {
+            DataResult<Consumer<Consumer<T>>> categoriesResult = ops.getList(categoriesValue);
+            if (categoriesResult.result().isPresent()) {
+                categoriesResult.result().get().accept(element -> {
+                    String category = ops.getStringValue(element).result().orElse("");
+                    if (CauseClassifier.isKnownCategory(category)) {
+                        pc.lifetimeCategories.add(category);
+                    }
+                });
+            } else {
+                initializeCategoriesFromDeaths(pc);
+            }
         }
         return pc;
     }
 
-    private static final Codec<PlayerCensus> PLAYER_CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            Codec.STRING.lenientOptionalFieldOf("lastKnownName", "").forGetter(pc -> pc.lastKnownName),
-            Codec.BOOL.lenientOptionalFieldOf("optOutPublic", false).forGetter(pc -> pc.optOutPublic),
-            Codec.INT.lenientOptionalFieldOf("baselinePlayTicks", -1).forGetter(pc -> pc.baselinePlayTicks),
-            Codec.INT.lenientOptionalFieldOf("lastDeathPlayTicks", -1).forGetter(pc -> pc.lastDeathPlayTicks),
-            ENTRY_CODEC.listOf().lenientOptionalFieldOf("deaths", List.of()).forGetter(pc -> pc.deaths)
-    ).apply(instance, CensusData::playerFromCodec));
-
-    private static CensusData fromCodec(Map<String, PlayerCensus> playersByUuid, long lastDigestEpoch) {
-        CensusData data = new CensusData();
-        for (Map.Entry<String, PlayerCensus> e : playersByUuid.entrySet()) {
-            try {
-                data.players.put(UUID.fromString(e.getKey()), e.getValue());
-            } catch (IllegalArgumentException ignored) {
-                DeathCensus.LOGGER.warn("[DeathCensus] Skipping player entry with invalid UUID '{}' in SavedData", e.getKey());
+    public static final Codec<CensusData> CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<T> encode(CensusData data, DynamicOps<T> ops, T prefix) {
+            RecordBuilder<T> b = ops.mapBuilder();
+            RecordBuilder<T> playersBuilder = ops.mapBuilder();
+            for (Map.Entry<UUID, PlayerCensus> e : data.players.entrySet()) {
+                playersBuilder.add(e.getKey().toString(), encodePlayer(ops, e.getValue()));
             }
+            b.add("players", playersBuilder.build(ops.empty()));
+            b.add("lastDigestEpoch", ops.createLong(data.lastDigestEpochMillis));
+            b.add("lifetimeDeaths", ops.createLong(data.lifetimeDeaths));
+            return b.build(prefix);
         }
-        data.lastDigestEpochMillis = Math.max(0L, lastDigestEpoch);
-        return data;
-    }
 
-    private Map<String, PlayerCensus> playersByStringKey() {
-        Map<String, PlayerCensus> out = new LinkedHashMap<>();
-        for (Map.Entry<UUID, PlayerCensus> e : players.entrySet()) {
-            out.put(e.getKey().toString(), e.getValue());
+        @Override
+        public <T> DataResult<Pair<CensusData, T>> decode(DynamicOps<T> ops, T input) {
+            return ops.getMap(input).map(map -> {
+                CensusData data = new CensusData();
+                T playersValue = map.get("players");
+                if (playersValue != null) {
+                    DataResult<MapLike<T>> playersResult = ops.getMap(playersValue);
+                    if (playersResult.result().isPresent()) {
+                        playersResult.result().get().entries().forEach(entry -> {
+                            String key = ops.getStringValue(entry.getFirst()).result().orElse("");
+                            try {
+                                UUID uuid = UUID.fromString(key);
+                                PlayerCensus pc = decodePlayer(ops, entry.getSecond(), key);
+                                if (pc != null) {
+                                    data.players.put(uuid, pc);
+                                } else {
+                                    DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt player entry with key '{}' in SavedData", key);
+                                }
+                            } catch (IllegalArgumentException e) {
+                                DeathCensus.LOGGER.warn("[DeathCensus] Skipping player entry with invalid UUID '{}' in SavedData", key);
+                            }
+                        });
+                    } else {
+                        DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed players map in SavedData");
+                    }
+                }
+                data.lastDigestEpochMillis = Math.max(0L, longValue(ops, map, "lastDigestEpoch"));
+                long storedLifetime = longValue(ops, map, "lifetimeDeaths");
+                if (storedLifetime <= 0L) {
+                    // Old data has no counter: the retained deaths are the best available approximation.
+                    for (PlayerCensus pc : data.players.values()) {
+                        storedLifetime += pc.deaths.size();
+                    }
+                }
+                data.lifetimeDeaths = storedLifetime;
+                return Pair.of(data, input);
+            });
         }
-        return out;
-    }
-
-    public static final Codec<CensusData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            Codec.unboundedMap(Codec.STRING, PLAYER_CODEC).optionalFieldOf("players", Map.of())
-                    .forGetter(CensusData::playersByStringKey),
-            Codec.LONG.lenientOptionalFieldOf("lastDigestEpoch", 0L)
-                    .forGetter(d -> d.lastDigestEpochMillis)
-    ).apply(instance, CensusData::fromCodec));
+    };
 
     static final SavedDataType<CensusData> TYPE = new SavedDataType<>(
             DATA_ID,
@@ -165,6 +287,8 @@ public class CensusData extends SavedData {
 
     private final Map<UUID, PlayerCensus> players = new LinkedHashMap<>();
     private long lastDigestEpochMillis = 0L;
+    /** Lifetime deaths across all players; survives trimming of retained records. */
+    private long lifetimeDeaths = 0L;
 
     public static CensusData get(MinecraftServer server) {
         var storage = server.getDataStorage();
@@ -174,6 +298,10 @@ public class CensusData extends SavedData {
             storage.set(TYPE, data);
         }
         return data;
+    }
+
+    public long lifetimeDeaths() {
+        return lifetimeDeaths;
     }
 
     public long lastDigestEpochMillis() {
@@ -209,8 +337,9 @@ public class CensusData extends SavedData {
     }
 
     /**
-     * Appends a death record, updates survival bookkeeping, trims the oldest
-     * records beyond {@code maxPerPlayer} and marks the data dirty.
+     * Appends a death record, updates survival bookkeeping and lifetime
+     * milestones, trims the oldest records beyond {@code maxPerPlayer} and
+     * marks the data dirty.
      *
      * @return how many old records were dropped by trimming
      */
@@ -223,6 +352,10 @@ public class CensusData extends SavedData {
         }
         PlayerCensus pc = player(uuid);
         pc.deaths.add(entry);
+        lifetimeDeaths++;
+        if (CauseClassifier.isKnownCategory(entry.causeCategory())) {
+            pc.lifetimeCategories.add(entry.causeCategory());
+        }
         pc.lastDeathPlayTicks = entry.playTicks();
         if (!entry.playerName().isEmpty()) {
             pc.lastKnownName = entry.playerName();
@@ -347,6 +480,7 @@ public class CensusData extends SavedData {
     /** Replaces all stored data with the given snapshot (used by admin restore). */
     public void replaceAll(List<PlayerDeaths> snapshot) {
         players.clear();
+        long restoredTotal = 0L;
         for (PlayerDeaths pd : snapshot) {
             UUID uuid;
             try {
@@ -358,6 +492,12 @@ public class CensusData extends SavedData {
             pc.lastKnownName = pd.name();
             pc.optOutPublic = pd.optOutPublic();
             pc.deaths.addAll(pd.deaths());
+            for (DeathEntry death : pd.deaths()) {
+                if (CauseClassifier.isKnownCategory(death.causeCategory())) {
+                    pc.lifetimeCategories.add(death.causeCategory());
+                }
+            }
+            restoredTotal += pd.deaths().size();
             // -1 = "no baseline yet": the login handler re-baselines on next login.
             // 0 would make a no-death player's next death count their entire
             // lifetime playtime as survival. Players with deaths are governed by
@@ -368,6 +508,9 @@ public class CensusData extends SavedData {
                     : pd.deaths().get(pd.deaths().size() - 1).playTicks();
             players.put(uuid, pc);
         }
+        // A restored backup carries no lifetime metadata: derive the counter from
+        // the restored records, just as loading old SavedData does.
+        lifetimeDeaths = restoredTotal;
         setDirty();
     }
 
