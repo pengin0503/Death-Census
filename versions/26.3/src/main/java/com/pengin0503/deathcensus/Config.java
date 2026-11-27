@@ -155,6 +155,38 @@ public final class Config {
             .comment("Opt-in seam for a future distribution Discord section (default false; PR-8 adds no posts).")
             .define("distributionsInDigest", false);
 
+    // 1.4.0 PR-9 (§8): loops are derived from retained records plus a bounded transient ring.
+    public static final ModConfigSpec.BooleanValue DEATH_LOOP_ENABLED = BUILDER
+            .comment("Enable death-loop detection: /dc loops, the Loops ranking page and victim notices.",
+                    "Detection uses retained records plus a 16-death transient ring; no longest-loop record is persisted.",
+                    "Hidden-coordinate and opted-out deaths never enter the ring or public loop rows.")
+            .define("deathLoopEnabled", true);
+
+    public static final ModConfigSpec.IntValue DEATH_LOOP_MIN_DEATHS = BUILDER
+            .comment("Minimum consecutive nearby deaths before a loop is reported (1-100; default 3).")
+            .defineInRange("deathLoopMinDeaths", 3, 1, 100);
+
+    public static final ModConfigSpec.IntValue DEATH_LOOP_WINDOW_MINUTES = BUILDER
+            .comment("Maximum gap in minutes between consecutive deaths in a loop (1-60; default 10).")
+            .defineInRange("deathLoopWindowMinutes", 10, 1, 60);
+
+    public static final ModConfigSpec.IntValue DEATH_LOOP_RADIUS_BLOCKS = BUILDER
+            .comment("Maximum distance in blocks from the first death of a loop (8-256; default 48).")
+            .defineInRange("deathLoopRadiusBlocks", 48, 8, 256);
+
+    public static final ModConfigSpec.BooleanValue DEATH_LOOP_NOTIFY_VICTIM = BUILDER
+            .comment("Send one chat notice to the victim when a loop key is first detected (default true).",
+                    "Disabling notices does not disable the /dc loops query command.")
+            .define("deathLoopNotifyVictim", true);
+
+    public static final ModConfigSpec.BooleanValue LOOPS_IN_EXPORT = BUILDER
+            .comment("Include the anonymous death-loop section in JSON/CSV/HTML exports (default false).")
+            .define("loopsInExport", false);
+
+    public static final ModConfigSpec.BooleanValue LOOPS_IN_DISCORD = BUILDER
+            .comment("Opt-in seam for a future loop Discord section (default false; PR-9 adds no posts).")
+            .define("loopsInDiscord", false);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -557,6 +589,68 @@ public final class Config {
     public static boolean distributionsInDigest() {
         try {
             return DISTRIBUTIONS_IN_DIGEST.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    public static boolean deathLoopEnabled() {
+        try {
+            return DEATH_LOOP_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static int deathLoopMinDeaths() {
+        try {
+            return Math.max(1, Math.min(100, DEATH_LOOP_MIN_DEATHS.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 3;
+        }
+    }
+
+    public static int deathLoopWindowMinutes() {
+        try {
+            return Math.max(1, Math.min(60, DEATH_LOOP_WINDOW_MINUTES.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 10;
+        }
+    }
+
+    /** Millisecond form of the configured window, shared with the transient tracker. */
+    public static long deathLoopWindowMillis() {
+        return deathLoopWindowMinutes() * 60_000L;
+    }
+
+    public static int deathLoopRadiusBlocks() {
+        try {
+            return Math.max(8, Math.min(256, DEATH_LOOP_RADIUS_BLOCKS.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 48;
+        }
+    }
+
+    public static boolean deathLoopNotifyVictim() {
+        try {
+            return DEATH_LOOP_NOTIFY_VICTIM.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static boolean loopsInExport() {
+        try {
+            return LOOPS_IN_EXPORT.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /** No new Discord posts in PR-9; this accessor is the opt-in seam. */
+    public static boolean loopsInDiscord() {
+        try {
+            return LOOPS_IN_DISCORD.get();
         } catch (IllegalStateException notLoaded) {
             return false;
         }

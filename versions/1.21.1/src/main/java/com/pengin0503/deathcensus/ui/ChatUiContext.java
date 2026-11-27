@@ -159,6 +159,26 @@ public final class ChatUiContext implements UiContext {
     }
 
     @Override
+    public boolean loopsEnabled() {
+        return Config.deathLoopEnabled();
+    }
+
+    @Override
+    public int deathLoopMinDeaths() {
+        return Config.deathLoopMinDeaths();
+    }
+
+    @Override
+    public int deathLoopWindowMinutes() {
+        return Config.deathLoopWindowMinutes();
+    }
+
+    @Override
+    public int deathLoopRadiusBlocks() {
+        return Config.deathLoopRadiusBlocks();
+    }
+
+    @Override
     public List<ChronicleEvent> chronicleEvents() {
         MinecraftServer server = server();
         return server == null ? List.of() : CensusData.get(server).chronicleEvents();

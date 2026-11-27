@@ -115,8 +115,8 @@ class DistributionWiringTest {
             assertFalse(ja.get(key).getAsString().isBlank(), "blank ja_jp entry for " + key);
         }
         assertEquals(9, keys.size());
-        assertEquals(276, en.size());
-        assertEquals(276, ja.size());
+        assertEquals(283, en.size());
+        assertEquals(283, ja.size());
         assertTrue(en.get("command.deathcensus.ui.chat.ranking_hint").getAsString().contains("distribution_time"));
         assertTrue(ja.get("command.deathcensus.ui.chat.ranking_hint_no_awards").getAsString().contains("distribution_y"));
     }

@@ -311,6 +311,7 @@ public final class DialogUi {
                     "command.deathcensus.ui.ranking.distribution.time");
             case "distribution_y" -> ServerLang.formatForLang(language,
                     "command.deathcensus.ui.ranking.distribution.y");
+            case "loops" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.loops");
             default -> view.type();
         };
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
@@ -350,6 +351,9 @@ public final class DialogUi {
         if (Config.distributionsEnabled()) {
             types.add("distribution_time");
             types.add("distribution_y");
+        }
+        if (Config.deathLoopEnabled()) {
+            types.add("loops");
         }
         List<Input> inputs = List.of(
                 choiceInput(player, "in_type", "command.deathcensus.ui.input.type",

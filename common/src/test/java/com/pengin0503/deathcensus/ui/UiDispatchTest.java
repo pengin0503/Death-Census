@@ -535,4 +535,33 @@ class UiDispatchTest {
         assertFalse(detail.killerName().toLowerCase().contains("ghost"));
         assertEquals("Bob was slain by GHOST", bobDeath.deathMessage(), "stored record untouched");
     }
+
+    @Test
+    void loopsRankingShowsOnlyPublicLocationDeaths() {
+        long epoch = ZonedDateTime.of(2024, 1, 1, 22, 30, 0, 0, ZoneOffset.UTC)
+                .toInstant().toEpochMilli();
+        DeathEntry publicDeath = new DeathEntry(TestData.ALICE.toString(), "Alice", epoch, 1L, 10, 10,
+                "minecraft:overworld", 0.0, 64.0, 0.0, "fall", "minecraft:fall", "died",
+                "", "", "survival", 0, "", "", 0);
+        DeathEntry hiddenDeath = new DeathEntry(TestData.BOB.toString(), "Bob", epoch, 1L, 10, 10,
+                "minecraft:overworld", 200.0, 64.0, 200.0, "fall", "minecraft:fall", "died",
+                "", "", "survival", 0, "", "", 0);
+        List<PlayerDeaths> players = List.of(
+                TestData.player(TestData.ALICE, "Alice", false,
+                        publicDeath, publicDeath, publicDeath),
+                TestData.player(TestData.BOB, "Bob", false, hiddenDeath),
+                TestData.player(TestData.CAROL, "Carol", true, publicDeath));
+        FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, players));
+        ctx.admin = true;
+        UiRequest request = new UiRequest(TestData.ALICE, "rankings", ctx.token(), 1, "", -1L,
+                Map.of("in_type", "loops", "in_period", "all"));
+        RankingView view = assertInstanceOf(RankingView.class, open(UiActions.handle(request, ctx)));
+        assertEquals("loops", view.type());
+        assertEquals(1, view.rows().size(), view.rows().toString());
+        assertTrue(view.rows().get(0).contains("Alice: 3 deaths in minecraft:overworld"),
+                view.rows().toString());
+        assertTrue(view.rows().get(0).contains("X=0, Z=0"), view.rows().toString());
+        assertFalse(view.rows().get(0).contains("Bob"), view.rows().toString());
+        assertFalse(view.rows().get(0).contains("Carol"), view.rows().toString());
+    }
 }

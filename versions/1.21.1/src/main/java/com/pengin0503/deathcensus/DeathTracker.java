@@ -52,6 +52,8 @@ public final class DeathTracker {
     /** Transient: dedupe keys for UI/chat respects, shared with the UI adapter. */
     private static final Set<String> RESPECTED = ConcurrentHashMap.newKeySet();
     private static final int MAX_RESPECTED_KEYS = 10_000;
+    /** PR-9 (§8): bounded per-player rings and one-notice-per-key dedupe; never persisted. */
+    private static final DeathLoopTracker LOOP_TRACKER = new DeathLoopTracker();
 
     private DeathTracker() {
     }
@@ -61,6 +63,7 @@ public final class DeathTracker {
         LAST_CHATS.clear();
         RECENT_DEATHS.clear();
         RESPECTED.clear();
+        LOOP_TRACKER.clear();
     }
 
     static int currentPlayTicks(ServerPlayer player) {
@@ -284,6 +287,22 @@ public final class DeathTracker {
                     new ChronicleRules.Counters(totalDeathsBefore, netherSeen,
                             playerDistinctCategoriesBefore, pc.lifetimeCategories.size()));
             data.addChronicleEvents(additions);
+        }
+        // PR-9 (§8): feed only public-location deaths into the bounded ring. The
+        // tracker is O(16) per death and the notice goes to the victim alone.
+        if (Config.deathLoopEnabled() && !pc.optOutPublic && !pc.hideCoordinates) {
+            DeathLoopSample mark = new DeathLoopSample(player.getUUID().toString(), playerName,
+                    deathEpochMillis, player.getX(), player.getY(), player.getZ(),
+                    entry.dimension(), entry.causeCategory());
+            for (DeathLoop loop : LOOP_TRACKER.observe(mark, Config.deathLoopRadiusBlocks(),
+                    Config.deathLoopWindowMillis(), Config.deathLoopMinDeaths())) {
+                if (Config.deathLoopNotifyVictim()) {
+                    player.sendSystemMessage(ServerLang.tr(player,
+                            "command.deathcensus.loops.detected", loop.count(),
+                            loop.dimension(), Config.deathLoopWindowMinutes(),
+                            loop.positionLabel()));
+                }
+            }
         }
     }
 

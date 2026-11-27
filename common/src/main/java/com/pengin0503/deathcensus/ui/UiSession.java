@@ -16,7 +16,7 @@ public record UiSession(
     public record RankingSelection(String type, String period) {
         public static final java.util.Set<String> TYPES = java.util.Set.of(
                 "deaths", "survival", "fastest", "rarest", "awards", "chronicle", "nemesis", "hotspots",
-                "distribution_time", "distribution_y");
+                "distribution_time", "distribution_y", "loops");
 
         public RankingSelection {
             String normalizedType = type == null ? "" : type.trim().toLowerCase(java.util.Locale.ROOT);
