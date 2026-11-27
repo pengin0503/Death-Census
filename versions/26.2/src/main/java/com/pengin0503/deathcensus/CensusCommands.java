@@ -401,10 +401,15 @@ public final class CensusCommands {
             fail(ctx, "command.deathcensus.import.vanilla.failed");
             return 0;
         }
-        CensusData data = CensusData.get(server);
+        // M15: a dry run must be strictly read-only. A non-creating lookup
+        // avoids persisting an empty SavedData file on a fresh world.
+        CensusData data = dryRun ? CensusData.getIfExists(server) : CensusData.get(server);
         Path statsDir = server.getWorldPath(LevelResource.ROOT).resolve("stats");
-        Map<UUID, VanillaStats> stats = VanillaStatsSource.readFor(statsDir, data.allPlayers().keySet());
-        VanillaImportResult result = data.importVanillaBaselines(stats, dryRun);
+        Map<UUID, VanillaStats> stats = VanillaStatsSource.readFor(statsDir,
+                data == null ? java.util.Set.of() : data.allPlayers().keySet());
+        VanillaImportResult result = data == null
+                ? new VanillaImportResult(java.util.List.of(), 0, 0L)
+                : data.importVanillaBaselines(stats, dryRun);
         for (VanillaImportResult.Row row : result.rows()) {
             String label = row.name().isEmpty() ? row.uuid() : row.name() + " (" + row.uuid() + ")";
             send(ctx, "command.deathcensus.import.vanilla.per_player",
@@ -543,8 +548,9 @@ public final class CensusCommands {
         return suggestions;
     }
 
-    private static String formatEntryLine(DeathEntry raw, PlayerPrivacy privacy, boolean privileged, int index) {
-        DeathEntry e = DeathRedactor.apply(raw, privacy, privileged);
+    private static String formatEntryLine(DeathEntry raw, PlayerPrivacy privacy, boolean privileged, int index,
+                                          HiddenIdentities hidden) {
+        DeathEntry e = DeathRedactor.apply(raw, privacy, privileged, hidden);
         String coords = DeathRedactor.isCoordinateHidden(e)
                 ? DeathRedactor.COORDINATE_MARKER + ", " + DeathRedactor.COORDINATE_MARKER
                         + ", " + DeathRedactor.COORDINATE_MARKER
@@ -598,9 +604,11 @@ public final class CensusCommands {
                 pc.hidePvpOpponent, pc.discordOptOut);
         ServerPlayer self = ctx.getSource().getPlayer();
         boolean privileged = isAdmin(ctx) || (self != null && self.getUUID().equals(uuid));
+        HiddenIdentities hidden = HiddenIdentities.of(CensusData.get(server).snapshot());
         int base = (p.page() - 1) * PAGE_SIZE;
         for (int i = 0; i < p.items().size(); i++) {
-            sendLiteral(ctx, formatEntryLine(p.items().get(i), privacy, privileged, p.total() - (base + i)));
+            sendLiteral(ctx, formatEntryLine(p.items().get(i), privacy, privileged,
+                    p.total() - (base + i), hidden));
         }
         if (p.pageCount() > 1) {
             send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
@@ -1127,12 +1135,25 @@ public final class CensusCommands {
         DiscordNotifier.MessageCallback onFailure = null;
         if (withHtml && html != null) {
             Path localReport = html;
-            onFailure = () -> {
-                MinecraftServer current = ctx.getSource().getServer();
-                if (current != null) {
-                    // Worker callback: hop back onto the tick thread before chatting.
-                    current.execute(() -> fail(ctx,
-                            "command.deathcensus.digest.season.attachment_failed", localReport.toString()));
+            onFailure = new DiscordNotifier.MessageCallback() {
+                @Override
+                public void onAttachmentFailure() {
+                    MinecraftServer current = ctx.getSource().getServer();
+                    if (current != null) {
+                        // Worker callback: hop back onto the tick thread before chatting.
+                        current.execute(() -> fail(ctx,
+                                "command.deathcensus.digest.season.attachment_failed", localReport.toString()));
+                    }
+                }
+
+                @Override
+                public void onAttachmentSuccess() {
+                    MinecraftServer current = ctx.getSource().getServer();
+                    if (current != null) {
+                        // M11: only now is the attachment confirmed delivered.
+                        current.execute(() -> send(ctx,
+                                "command.deathcensus.digest.season.attached", localReport.toString()));
+                    }
                 }
             };
         }
@@ -1143,7 +1164,11 @@ public final class CensusCommands {
                 fail(ctx, "command.deathcensus.discordtest.not_configured");
                 return 0;
             }
-            case ATTACHED -> send(ctx, "command.deathcensus.digest.season.attached", html.toString());
+            case QUEUED -> {
+                // M11: queued, not attached. The worker callback reports the
+                // final attached/content-only outcome; digest.season.done below
+                // is the command-time "queued" message.
+            }
             case ATTACHMENT_TOO_LARGE -> {
                 if (withHtml && html == null) {
                     // The file could not be written at all; there is no local path to report.
@@ -1316,7 +1341,8 @@ public final class CensusCommands {
         sendLiteral(ctx, "Newest death: " + newestText);
         sendLiteral(ctx, "Storage: deathcensus:deaths");
         sendLiteral(ctx, "Discord webhook: " + webhookStatus);
-        sendLiteral(ctx, "Discord digest webhook: " + digestWebhookStatus);
+        sendLiteral(ctx, "Discord digest webhook: " + digestWebhookStatus
+                + (DiscordNotifier.digestWarningSilenced() ? " (invalid config reported once)" : ""));
         sendLiteral(ctx, "Discord retry: " + Config.discordRetryMaxAttempts() + " attempts / "
                 + Config.discordRetryBaseDelayMillis() + " ms base");
         List<String> realtimeDimensions = Config.discordNotifyDimensions();
@@ -1337,6 +1363,8 @@ public final class CensusCommands {
     private static int reload(CommandContext<CommandSourceStack> ctx) {
         MinecraftServer server = server(ctx);
         if (server != null) {
+            // M10: config reload is a new report cycle for an invalid digest URL.
+            DiscordNotifier.resetDigestUrlWarning();
             DiscordNotifier.checkAndSendDigest(server);
         }
         send(ctx, "command.deathcensus.reload.done");

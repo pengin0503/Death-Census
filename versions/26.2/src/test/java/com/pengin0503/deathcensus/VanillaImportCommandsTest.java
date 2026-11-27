@@ -55,7 +55,7 @@ class VanillaImportCommandsTest {
         assertTrue(src.contains("static LiteralArgumentBuilder<CommandSourceStack> importTree("));
         assertTrue(src.contains("literal(\"dry-run\")"));
         assertTrue(src.contains("root.then(importTree(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)));"), "import subtree must be registered with this tree's OP-level-2 fallback");
-        assertTrue(src.contains("VanillaStatsSource.readFor(statsDir, data.allPlayers().keySet())"));
+        assertTrue(src.contains("data.allPlayers().keySet()"));
         assertTrue(src.contains("LevelResource.ROOT).resolve(\"stats\")"));
     }
 
@@ -68,7 +68,7 @@ class VanillaImportCommandsTest {
         assertTrue(body.contains("if (!dryRun && CensusExport.writeBackup(server) == null)"),
                 "dry run must not write a backup");
         assertTrue(body.contains("fail(ctx, \"command.deathcensus.import.vanilla.failed\")"));
-        assertTrue(body.contains("VanillaImportResult result = data.importVanillaBaselines(stats, dryRun)"));
+        assertTrue(body.contains("data.importVanillaBaselines(stats, dryRun)"));
         for (String forbidden : List.of("recordDeath", "new DeathEntry", "Milestones", "DiscordNotifier",
                 "notifyDeath", "setLastDigestEpochMillis", "setDirty()")) {
             assertFalse(body.contains(forbidden), "import path must not touch " + forbidden);
@@ -106,6 +106,16 @@ class VanillaImportCommandsTest {
             assertEquals(204, table.size());
             assertTrue(table.get("command.deathcensus.help.admin").getAsString().contains("import vanilla"));
         }
+    }
+
+    @Test
+    void dryRunDoesNotCreateOrDirtySavedData() throws IOException {
+        String body = importBody();
+        assertTrue(body.contains("CensusData data = dryRun ? CensusData.getIfExists(server) : CensusData.get(server)"),
+                "dry run must use a non-creating data lookup");
+        assertTrue(body.contains("data == null ? java.util.Set.of()"));
+        assertTrue(body.contains("new VanillaImportResult(java.util.List.of(), 0, 0L)"));
+        assertFalse(body.contains("setDirty"));
     }
 
     private static String importBody() throws IOException {

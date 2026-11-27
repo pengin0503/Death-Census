@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.3.1
+
+This is a maintenance patch for 1.3.0: it hardens saved data, closes privacy
+gaps and fixes Discord and UI issues. There are no new features and no config
+or language-key changes; existing worlds and settings keep working as before.
+
+- Saved-data safety: a malformed or wrong-typed `players` container keeps the
+  original data and pauses saving until an operator has taken a backup, instead
+  of silently erasing the census; corrupt player entries and death records are
+  skipped with a warning while valid neighbours are kept (all four versions)
+- Vanilla death import: lifetime baselines no longer double-count deaths that
+  were trimmed or deleted, and a dry run writes nothing at all on a fresh world
+- Backups and restores: safety backups keep hidden coordinates and PvP
+  opponents exactly as stored, so a restore no longer destroys private data;
+  safety backup file names are unique even when several actions happen in the
+  same second
+- Privacy: opted-out players are now scrubbed from every public view, including
+  other players' history, the GUI, Discord posts, exports and season reports;
+  anonymized exports build their name dictionary from the whole save, so names
+  and old aliases cannot leak in single-player or opted-out-killer exports, and
+  name scrubbing is case-insensitive
+- Discord delivery: a full worker queue can no longer strand batched death
+  messages; a failed or dropped digest keeps its whole time window and is
+  retried instead of losing an interval; workers and timers never restart after
+  shutdown, the batch header reports its real time window, invalid digest URLs
+  warn only once (and show in /dc doctor), multipart boundaries cannot be forged
+  by player text, and a shutdown interrupt stops retrying immediately
+- Season posts: the admin is told the report is queued until the upload result
+  is known, instead of being told it was attached too early
+- UI: the 1.21.1 history "prev"/"next" buttons now work, dialog pagination
+  accepts whitespace-padded payloads, and delete confirmations report the
+  correct death number
+
 ## 1.3.0
 
 - Discord delivery: webhook sends are now retried on rate limits (HTTP 429,

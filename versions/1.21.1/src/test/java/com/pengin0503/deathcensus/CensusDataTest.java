@@ -4,11 +4,16 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CensusDataTest {
@@ -23,6 +28,21 @@ class CensusDataTest {
                 "minecraft:overworld", 10.0, 64.0, -20.0, "fall", "minecraft:fall",
                 name + " fell from a high place", "", "", "survival", 5,
                 "It wasn't my fault", "See you on the other side", 4);
+    }
+
+    @Test
+    void getIfExistsIsReadOnly() throws IOException {
+        String dir = System.getProperty("deathcensus.mainSourceDir");
+        assertNotNull(dir);
+        String src = Files.readString(Path.of(dir, "com", "pengin0503", "deathcensus", "CensusData.java"));
+        int start = src.indexOf("public static CensusData getIfExists(");
+        assertTrue(start > 0);
+        int end = src.indexOf("\n    }\n", start);
+        assertTrue(end > start);
+        String body = src.substring(start, end);
+        assertTrue(body.contains(".get("));
+        assertFalse(body.contains("computeIfAbsent"));
+        assertFalse(body.contains(".set("));
     }
 
     @Test

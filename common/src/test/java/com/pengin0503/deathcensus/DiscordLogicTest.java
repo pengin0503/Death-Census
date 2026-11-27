@@ -160,6 +160,25 @@ class DiscordLogicTest {
     }
 
     @Test
+    void realtimeContentScrubsSnapshotWideHiddenNames() {
+        // Review S3: Discord is always a public viewer.
+        String ghostUuid = "00000000-0000-0000-0000-000000000001";
+        PlayerDeaths ghost = new PlayerDeaths(ghostUuid, "Ghost", true, List.of());
+        HiddenIdentities hidden = HiddenIdentities.of(List.of(ghost));
+        DeathEntry death = new DeathEntry("u-bob", "Bob", 1000L, 3L, 400, 400,
+                "minecraft:overworld", 1, 2, 3, "player", "minecraft:player",
+                "BOB was slain by gHoSt", "minecraft:player", "Ghost",
+                "survival", 1, "", "", 0);
+
+        String content = DiscordLogic.deathContent(death, hidden);
+        assertFalse(content.toLowerCase().contains("ghost"), content);
+        assertFalse(content.contains(ghostUuid), content);
+        assertTrue(content.contains("Day 4"));
+        assertEquals("BOB was slain by gHoSt — Day 4 · minecraft:overworld · survived 20s",
+                DiscordLogic.deathContent(death));
+    }
+
+    @Test
     void digestContentEmptyAndNonEmpty() {
         long since = Instant.parse("2026-11-20T00:00:00Z").toEpochMilli();
         long before = Instant.parse("2026-11-19T12:00:00Z").toEpochMilli();

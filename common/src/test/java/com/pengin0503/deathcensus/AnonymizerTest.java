@@ -177,4 +177,89 @@ class AnonymizerTest {
         assertNoLeaks(anonJson, uuid, "Hidden");
         assertEquals("Hidden", optedOut.name());
     }
+
+    @Test
+    void dictionaryUsesFullSnapshotNotTheFilteredExport() {
+        // Review S4: Ghost opted out and is excluded from the export, and Bobby
+        // is only a recorded alias. Neither may survive in Alice's public text.
+        String alice = "00000000-0000-0000-0000-000000000001";
+        String bob = "00000000-0000-0000-0000-000000000002";
+        String ghost = "00000000-0000-0000-0000-000000000003";
+        DeathEntry aliceDeath = death(alice, "Alice", 0, 0, 0,
+                "Alice was slain by GHOST and bobby and BOB near " + ghost,
+                "gHoSt", "BOBBY did it", "Bye aLiCe");
+        PlayerDeaths ghostPlayer = new PlayerDeaths(ghost, "Ghost", true,
+                List.of(death(ghost, "Bobby", 0, 0, 0, "Bobby fell", "", "", "")));
+        List<PlayerDeaths> all = List.of(
+                new PlayerDeaths(alice, "Alice", false, List.of(aliceDeath)),
+                new PlayerDeaths(bob, "Bob", false, List.of()),
+                ghostPlayer);
+        List<PlayerDeaths> exported = List.of(all.get(0), all.get(1));
+
+        List<PlayerDeaths> redacted = Anonymizer.apply(exported, all);
+        assertEquals(2, redacted.size());
+        assertEquals("Player A", redacted.get(0).name());
+        assertEquals("Player B", redacted.get(1).name());
+        DeathEntry clean = redacted.get(0).deaths().get(0);
+        assertNoLeaks(clean.deathMessage(), "Ghost", "Bobby", "Bob", ghost);
+        assertNoLeaks(clean.killerName(), "Ghost");
+        assertNoLeaks(clean.excuse(), "Bobby");
+        assertEquals("Bye Player A", clean.lastWords(), "review M5: case-insensitive scrubbing");
+
+        for (String rendered : List.of(
+                ExportRenderers.toCsv(exported, true, all),
+                ExportRenderers.toJson(exported, T, true, all),
+                ExportRenderers.toHtml(exported, T, ZoneOffset.UTC, true, all))) {
+            assertNoLeaks(rendered, "Ghost", "Bobby", "Bob", ghost);
+            assertTrue(rendered.contains("Player A"));
+        }
+        assertEquals("Player C", Anonymizer.apply(all).get(2).name(),
+                "the full snapshot keeps deterministic pseudonym numbering");
+    }
+
+    @Test
+    void singlePlayerExportStillUsesTheFullSnapshotDictionary() {
+        // Review S4: /dc export json Alice --anonymize only knows Alice, but the
+        // killer's identity is in the full snapshot and must still be scrubbed.
+        String alice = "00000000-0000-0000-0000-000000000011";
+        String carol = "00000000-0000-0000-0000-000000000012";
+        DeathEntry aliceDeath = death(alice, "Alice", 0, 0, 0,
+                "Alice was slain by Carol", "Carol", "gg carol", "bye " + carol);
+        List<PlayerDeaths> all = List.of(
+                new PlayerDeaths(alice, "Alice", false, List.of(aliceDeath)),
+                new PlayerDeaths(carol, "Carol", true, List.of()));
+        List<PlayerDeaths> onlyAlice = List.of(all.get(0));
+
+        DeathEntry clean = Anonymizer.apply(onlyAlice, all).get(0).deaths().get(0);
+        assertNoLeaks(clean.deathMessage(), "Alice", "Carol");
+        assertEquals("Player B", clean.killerName());
+        assertEquals("gg Player B", clean.excuse());
+        assertNoLeaks(clean.lastWords(), carol);
+
+        for (String rendered : List.of(
+                ExportRenderers.toCsv(onlyAlice, true, all),
+                ExportRenderers.toJson(onlyAlice, T, true, all),
+                ExportRenderers.toHtml(onlyAlice, T, ZoneOffset.UTC, true, all))) {
+            assertNoLeaks(rendered, "Carol", carol);
+            assertTrue(rendered.contains("Player A"));
+        }
+    }
+
+    @Test
+    void scrubbingIsCaseInsensitiveForNamesAndUuids() {
+        // Review M5: lower-cased spellings of a player name must not survive.
+        String alice = "00000000-0000-0000-0000-000000000021";
+        String steve = "00000000-0000-0000-0000-000000000022";
+        DeathEntry d = death(alice, "Alice", 0, 0, 0,
+                "alice was slain by steve", "sTeVe", "gg alice", "bye STEVE");
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths(alice, "Alice", false, List.of(d)),
+                new PlayerDeaths(steve, "Steve", false, List.of()));
+
+        DeathEntry clean = Anonymizer.apply(players).get(0).deaths().get(0);
+        assertEquals("Player A was slain by Player B", clean.deathMessage());
+        assertEquals("Player B", clean.killerName());
+        assertEquals("gg Player A", clean.excuse());
+        assertEquals("bye Player B", clean.lastWords());
+    }
 }

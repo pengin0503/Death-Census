@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -61,9 +62,20 @@ public final class DiscordNotifier {
         return t;
     };
 
-    // Rejection only logs; it never runs the task on the submitting (tick) thread.
-    private static final RejectedExecutionHandler DROP_HANDLER = (runnable, executor) ->
+    // Rejection runs on the submitting (tick) thread; it never runs the task
+    // there. Recoverable tasks opt in so a full queue cannot strand them: the
+    // handler is the single rejection path (catch blocks alone are not enough).
+    private interface RejectedAware extends Runnable {
+        void onRejected();
+    }
+
+    private static final RejectedExecutionHandler DROP_HANDLER = (runnable, executor) -> {
+        if (runnable instanceof RejectedAware aware) {
+            aware.onRejected();
+        } else {
             DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a message");
+        }
+    };
 
     // The only real HTTP transport; the pure retry engine owns attempt policy.
     private static final WebhookSender HTTP_SENDER = (uri, json) -> {
@@ -80,6 +92,12 @@ public final class DiscordNotifier {
     private static ExecutorService executor;
     private static HttpClient httpClient;
     private static int tickCounter;
+    /** A stop is final: no enqueue or schedule path may resurrect a worker (M7). */
+    private static volatile boolean stopped;
+    /** One warning per config load/change for a configured-but-invalid digest URL (M10). */
+    private static volatile boolean digestUrlWarningIssued;
+    /** While a digest is in flight the persisted period start must remain intact (S9). */
+    private static volatile boolean digestDeliveryPending;
 
     // Realtime batch buffer: rendered lines in chronological order. Both the
     // deque and the scheduling flag are guarded by the class monitor.
@@ -91,6 +109,9 @@ public final class DiscordNotifier {
     }
 
     private static synchronized ExecutorService executor() {
+        if (stopped) {
+            throw new RejectedExecutionException("Discord notifier is stopped");
+        }
         if (executor == null || executor.isShutdown()) {
             executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
                     new ArrayBlockingQueue<>(QUEUE_CAPACITY), DAEMON_FACTORY, DROP_HANDLER);
@@ -100,6 +121,9 @@ public final class DiscordNotifier {
 
     /** A single daemon timer thread; at most one flush is pending at a time. */
     private static synchronized ScheduledExecutorService batchScheduler() {
+        if (stopped) {
+            throw new RejectedExecutionException("Discord notifier is stopped");
+        }
         if (batchScheduler == null || batchScheduler.isShutdown()) {
             batchScheduler = Executors.newSingleThreadScheduledExecutor(DAEMON_FACTORY);
         }
@@ -114,6 +138,7 @@ public final class DiscordNotifier {
     }
 
     public static synchronized void shutdown() {
+        stopped = true;
         // Wait on no timer, send nothing: drop any buffer still inside its
         // window and log the count (§12 Q6, matching shutdownNow for sends).
         if (batchScheduler != null) {
@@ -131,10 +156,27 @@ public final class DiscordNotifier {
             executor = null;
         }
         tickCounter = 0;
+        // A digest dropped at shutdown must be retried with its full period
+        // intact after a restart: its timestamp was deliberately not advanced.
+        digestDeliveryPending = false;
     }
 
     public static void resetDigestThrottler() {
         tickCounter = 0;
+    }
+
+    /** Called on config load/change so an invalid digest URL is reported once (M10). */
+    public static void resetDigestUrlWarning() {
+        digestUrlWarningIssued = false;
+    }
+
+    /** Diagnostic state for /dc doctor; never a URL or a secret. */
+    static boolean digestWarningSilenced() {
+        return digestUrlWarningIssued;
+    }
+
+    static boolean isStopped() {
+        return stopped;
     }
 
     @Nullable
@@ -151,8 +193,13 @@ public final class DiscordNotifier {
                     && !DiscordLogic.resolveWebhookUrl(digestConfigured).isEmpty()) {
                 // §4 / §12 Q9: a configured but invalid digest URL disables the
                 // digest channel; log only this fact, never the value itself.
-                DeathCensus.LOGGER.warn("[DeathCensus] Discord digest destination is configured but invalid; "
-                        + "digest sending is disabled");
+                if (!digestUrlWarningIssued) {
+                    digestUrlWarningIssued = true;
+                    DeathCensus.LOGGER.warn("[DeathCensus] Discord digest destination is configured but invalid; "
+                            + "digest sending is disabled");
+                } else {
+                    DeathCensus.LOGGER.debug("[DeathCensus] Discord digest destination remains invalid; disabled");
+                }
             }
             return null;
         }
@@ -215,26 +262,71 @@ public final class DiscordNotifier {
     }
 
     private static void enqueue(URI uri, String content) {
-        enqueueJson(uri, payloadJson(content));
+        enqueueJson(uri, payloadJson(content), null);
     }
 
     private static void enqueueJson(URI uri, String json) {
+        enqueueJson(uri, json, null);
+    }
+
+    /** Terminal delivery callback; invoked for a confirmed 2xx or a drop/failure. */
+    @FunctionalInterface
+    interface DeliveryCallback {
+        void onDelivery(boolean delivered);
+    }
+
+    private static void enqueueJson(URI uri, String json, @Nullable DeliveryCallback callback) {
+        if (stopped) {
+            reportDelivery(callback, false);
+            return;
+        }
+        RejectedAware task = new RejectedAware() {
+            @Override
+            public void run() {
+                sendWithRetry(HTTP_SENDER, uri, json, callback);
+            }
+
+            @Override
+            public void onRejected() {
+                DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a message");
+                reportDelivery(callback, false);
+            }
+        };
         try {
-            executor().execute(() -> sendWithRetry(HTTP_SENDER, uri, json));
+            executor().execute(task);
         } catch (RejectedExecutionException e) {
-            // Defensive: DROP_HANDLER normally discards without throwing.
-            DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a message");
+            // Defensive when a custom executor throws instead of using the handler.
+            task.onRejected();
+        }
+    }
+
+    private static void reportDelivery(@Nullable DeliveryCallback callback, boolean delivered) {
+        if (callback == null) {
+            return;
+        }
+        try {
+            callback.onDelivery(delivered);
+        } catch (Exception e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord delivery callback failed ({})",
+                    e.getClass().getSimpleName());
         }
     }
 
     /** Runs on the daemon Discord worker only; sleeps and logs never touch a tick thread. */
     private static void sendWithRetry(WebhookSender sender, URI uri, String json) {
+        sendWithRetry(sender, uri, json, null);
+    }
+
+    private static void sendWithRetry(WebhookSender sender, URI uri, String json,
+                                      @Nullable DeliveryCallback callback) {
+        boolean delivered = false;
         try {
             WebhookRetry.RetryConfig config = new WebhookRetry.RetryConfig(
                     Config.discordRetryMaxAttempts(), Config.discordRetryBaseDelayMillis());
             WebhookRetry.WebhookSendResult result = WebhookRetry.sendWithRetry(
                     sender, uri, json, config, Thread::sleep, System::currentTimeMillis);
-            if (!result.delivered()) {
+            delivered = result.delivered();
+            if (!delivered) {
                 Exception failure = result.exception();
                 String detail = failure != null ? failure.getClass().getSimpleName() : "HTTP status";
                 DeathCensus.LOGGER.warn(
@@ -246,20 +338,24 @@ public final class DiscordNotifier {
             DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook send failed ({}); dropping message",
                     e.getClass().getSimpleName());
         }
+        reportDelivery(callback, delivered);
     }
 
     /** Outcome reported to the invoking admin; the actual send is asynchronous. */
     public enum SeasonPostResult {
         NO_CHANNEL,
         CONTENT_ONLY,
-        ATTACHED,
+        /** The multipart task is queued; the real outcome arrives via MessageCallback. */
+        QUEUED,
         ATTACHMENT_TOO_LARGE
     }
 
-    /** Callback used to tell the invoking admin that the attachment was not delivered. */
-    @FunctionalInterface
+    /** Callback used to tell the invoking admin the terminal attachment outcome. */
     public interface MessageCallback {
         void onAttachmentFailure();
+
+        default void onAttachmentSuccess() {
+        }
     }
 
     @FunctionalInterface
@@ -319,20 +415,37 @@ public final class DiscordNotifier {
         DiscordMultipart.Body body = DiscordMultipart.compose(
                 json, html.getFileName().toString(), fileContent);
         MultipartSender multipartSender = DiscordNotifier::sendMultipart;
+        RejectedAware task = new RejectedAware() {
+            @Override
+            public void run() {
+                sendMultipartWithRetry(uri, json, body, multipartSender, onFailure);
+            }
+
+            @Override
+            public void onRejected() {
+                enqueueContentOnlyFallback(uri, json, onFailure);
+            }
+        };
         try {
-            executor().execute(() -> sendMultipartWithRetry(uri, json, body, multipartSender, onFailure));
+            executor().execute(task);
         } catch (RejectedExecutionException e) {
-            DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a season attachment");
-            notifyFailure(onFailure);
-            enqueueJson(uri, json);
+            task.onRejected();
             return SeasonPostResult.CONTENT_ONLY;
         }
-        return SeasonPostResult.ATTACHED;
+        // M11: the upload has only been queued. The final attached/fallback
+        // outcome is delivered by the worker callback, never promised here.
+        return SeasonPostResult.QUEUED;
     }
 
     private static void notifyFailure(@Nullable MessageCallback onFailure) {
         if (onFailure != null) {
             onFailure.onAttachmentFailure();
+        }
+    }
+
+    private static void notifySuccess(@Nullable MessageCallback onFailure) {
+        if (onFailure != null) {
+            onFailure.onAttachmentSuccess();
         }
     }
 
@@ -370,7 +483,11 @@ public final class DiscordNotifier {
                     Config.discordRetryMaxAttempts(), Config.discordRetryBaseDelayMillis());
             WebhookRetry.WebhookSendResult result = retryMultipart(
                     sender, uri, json, body, config, Thread::sleep, System::currentTimeMillis);
-            if (!result.delivered()) {
+            if (result.delivered()) {
+                notifySuccess(onFailure);
+                return;
+            }
+            {
                 Exception failure = result.exception();
                 String detail = failure != null ? failure.getClass().getSimpleName() : "HTTP status";
                 DeathCensus.LOGGER.warn(
@@ -389,14 +506,15 @@ public final class DiscordNotifier {
     }
 
     /** Renders one death line in the configured language before it is buffered (§2). */
-    private static String renderDeath(DeathEntry entry) {
-        return ServerLang.formatForLang(Config.discordLanguage(), "discord.deathcensus.death",
+    private static String renderDeath(DeathEntry entry, HiddenIdentities hidden) {
+        HiddenIdentities secrets = hidden == null ? HiddenIdentities.empty() : hidden;
+        return secrets.scrub(ServerLang.formatForLang(Config.discordLanguage(), "discord.deathcensus.death",
                 entry.deathMessage().isEmpty()
                         ? entry.playerName() + " died (" + entry.causeCategory() + ")"
                         : entry.deathMessage(),
                 entry.gameDay() + 1,
                 entry.dimension(),
-                TimeFormat.formatDuration(entry.survivalTicks()));
+                TimeFormat.formatDuration(entry.survivalTicks())));
     }
 
     /**
@@ -415,13 +533,22 @@ public final class DiscordNotifier {
      * suppressed here, and coordinates/opponent names are redacted in the post.
      */
     public static void notifyDeath(DeathEntry entry, PlayerPrivacy privacy) {
+        notifyDeath(entry, privacy, HiddenIdentities.empty());
+    }
+
+    /**
+     * As above, with the snapshot-wide hidden-identity dictionary (S3). Realtime
+     * Discord is a public viewer even when the death belongs to a different
+     * player, so every hidden name must be scrubbed before the line is queued.
+     */
+    public static void notifyDeath(DeathEntry entry, PlayerPrivacy privacy, HiddenIdentities hidden) {
         if (privacy != null && privacy.suppressesRealtimeDiscord()) {
             return;
         }
         if (!Config.discordNotifyDeaths()) {
             return;
         }
-        DeathEntry rendered = DeathRedactor.apply(entry, privacy, false);
+        DeathEntry rendered = DeathRedactor.apply(entry, privacy, false, hidden);
         if (!DiscordLogic.shouldNotify(rendered, Config.discordNotifyDimensions(),
                 Config.discordNotifyPvpMode())) {
             return;
@@ -431,12 +558,12 @@ public final class DiscordNotifier {
             // Escape hatch (§12 Q4): exactly today's one POST per death.
             URI uri = webhookUri(WebhookChannel.REALTIME);
             if (uri != null) {
-                enqueue(uri, renderDeath(rendered));
+                enqueue(uri, renderDeath(rendered, hidden));
             }
             return;
         }
 
-        String line = renderDeath(rendered);
+        String line = renderDeath(rendered, hidden);
         boolean schedule;
         synchronized (DiscordNotifier.class) {
             if (BATCH_BUFFER.size() >= BATCH_BUFFER_CAPACITY) {
@@ -460,38 +587,112 @@ public final class DiscordNotifier {
     }
 
     private static void scheduleFlush(int windowMillis) {
+        scheduleFlush(windowMillis, false);
+    }
+
+    private static void scheduleFlush(int windowMillis, boolean backoff) {
+        if (stopped) {
+            return;
+        }
+        long delay = backoff
+                ? Math.min(60_000L, Math.max(100L, Math.max(0, windowMillis) * 2L))
+                : Math.max(0L, windowMillis);
+        RejectedAware task = new RejectedAware() {
+            @Override
+            public void run() {
+                onFlushTimer();
+            }
+
+            @Override
+            public void onRejected() {
+                handleFlushRejection();
+            }
+        };
         try {
-            ScheduledExecutorService scheduler = batchScheduler();
-            scheduler.schedule(() -> {
-                // A stop clears the scheduler and the buffer; ignore a task that
-                // was already due so it cannot recreate a worker after shutdown.
-                ScheduledExecutorService current = batchScheduler;
-                if (current == null || current.isShutdown()) {
-                    return;
-                }
-                try {
-                    executor().execute(DiscordNotifier::flushBuffer);
-                } catch (RejectedExecutionException e) {
-                    clearBatchFlushFlag();
-                    DeathCensus.LOGGER.warn(
-                            "[DeathCensus] Discord worker queue is full; dropping a batched death message");
-                }
-            }, windowMillis, TimeUnit.MILLISECONDS);
+            batchScheduler().schedule(task, delay, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException e) {
-            clearBatchFlushFlag();
             DeathCensus.LOGGER.warn("[DeathCensus] Discord batch scheduler is stopped; dropping a batched death message");
+            task.onRejected();
         }
     }
 
-    private static void clearBatchFlushFlag() {
+    private static void onFlushTimer() {
+        // A stop clears the scheduler and the buffer; ignore a task that was
+        // already due so it cannot recreate a worker after shutdown.
+        ScheduledExecutorService current = batchScheduler;
+        if (stopped || current == null || current.isShutdown()) {
+            return;
+        }
+        RejectedAware task = new RejectedAware() {
+            @Override
+            public void run() {
+                flushBuffer();
+            }
+
+            @Override
+            public void onRejected() {
+                handleFlushRejection();
+            }
+        };
+        try {
+            executor().execute(task);
+        } catch (RejectedExecutionException e) {
+            task.onRejected();
+        }
+    }
+
+    private static void enqueueContentOnlyFallback(URI uri, String json,
+                                                   @Nullable MessageCallback onFailure) {
+        DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a season attachment");
+        notifyFailure(onFailure);
+        enqueueJson(uri, json);
+    }
+
+    /**
+     * A saturated worker queue must never strand the batch buffer (S8). Clear
+     * the one-flush flag and re-arm with backoff; a death arriving in between
+     * may arm its own flush, in which case this re-arm is a no-op.
+     */
+    static void handleFlushRejection() {
+        boolean wasArmed;
         synchronized (DiscordNotifier.class) {
+            if (stopped || BATCH_BUFFER.isEmpty()) {
+                return;
+            }
+            wasArmed = batchFlushScheduled;
             batchFlushScheduled = false;
+        }
+        DeathCensus.LOGGER.warn(
+                "[DeathCensus] Discord worker queue is full; re-arming a batched death message");
+        if (!wasArmed) {
+            return;
+        }
+        synchronized (DiscordNotifier.class) {
+            if (stopped || BATCH_BUFFER.isEmpty() || batchFlushScheduled) {
+                return;
+            }
+            batchFlushScheduled = true;
+        }
+        scheduleFlush(Math.max(0, Config.discordBatchWindowMillis()), true);
+    }
+
+    /** Test/invariant accessor: a non-empty buffer must always have a pending flush. */
+    static boolean flushPending() {
+        synchronized (DiscordNotifier.class) {
+            return !BATCH_BUFFER.isEmpty() && batchFlushScheduled;
+        }
+    }
+
+    static int bufferedDeathCount() {
+        synchronized (DiscordNotifier.class) {
+            return BATCH_BUFFER.size();
         }
     }
 
     /** Runs on the Discord worker: drain the whole buffer into exactly one send. */
     private static void flushBuffer() {
         List<String> lines;
+        boolean rearm;
         synchronized (DiscordNotifier.class) {
             if (BATCH_BUFFER.isEmpty()) {
                 batchFlushScheduled = false;
@@ -500,6 +701,14 @@ public final class DiscordNotifier {
             lines = new ArrayList<>(BATCH_BUFFER);
             BATCH_BUFFER.clear();
             batchFlushScheduled = false;
+            // A death that arrived while draining must not be stranded.
+            rearm = !BATCH_BUFFER.isEmpty();
+            if (rearm) {
+                batchFlushScheduled = true;
+            }
+        }
+        if (rearm) {
+            scheduleFlush(Math.max(0, Config.discordBatchWindowMillis()), false);
         }
 
         int total = lines.size();
@@ -507,7 +716,7 @@ public final class DiscordNotifier {
         List<String> shown = lines.size() > cap ? lines.subList(0, cap) : lines;
         String lang = Config.discordLanguage();
         String header = ServerLang.formatForLang(lang, "discord.deathcensus.batch.header",
-                total, Math.max(0, Config.discordBatchWindowMillis()) / 1000L);
+                total, batchWindowLabel(Config.discordBatchWindowMillis()));
         int extra = total - shown.size();
         String more = extra > 0
                 ? ServerLang.formatForLang(lang, "discord.deathcensus.batch.more", extra)
@@ -520,6 +729,16 @@ public final class DiscordNotifier {
         if (uri != null) {
             enqueue(uri, content);
         }
+    }
+
+    /** Truthful window duration, shared by both languages (M9): 1500 ms -> "1.5". */
+    static String batchWindowLabel(long windowMillis) {
+        return String.format(Locale.ROOT, "%.1f", Math.max(0L, windowMillis) / 1000.0);
+    }
+
+    /** The persisted timestamp never moves backwards when delivery fails (S9). */
+    static long digestTimestampAfterDelivery(long previous, long periodEnd, boolean delivered) {
+        return delivered ? periodEnd : previous;
     }
 
     /** Posts a milestone announcement to the configured webhook, if any. */
@@ -551,6 +770,7 @@ public final class DiscordNotifier {
 
     public static void checkDigestOnServerStart(@Nullable MinecraftServer server) {
         tickCounter = 0;
+        resetDigestUrlWarning();
         checkAndSendDigest(server);
     }
 
@@ -588,9 +808,23 @@ public final class DiscordNotifier {
                 last,
                 Config.displayTimeZone(),
                 DiscordLogic.labelsFor(Config.discordLanguage()));
-        data.setLastDigestEpochMillis(now);
-        if (!content.isEmpty()) {
-            enqueue(uri, content);
+        if (content.isEmpty()) {
+            // DESIGN §7.1: zero-death periods advance immediately; no send to confirm.
+            data.setLastDigestEpochMillis(now);
+            return;
         }
+        if (digestDeliveryPending) {
+            // A previous digest has not been confirmed yet. Keep the full period
+            // intact: the delivery callback or its failure path clears this flag.
+            return;
+        }
+        digestDeliveryPending = true;
+        long periodEnd = now;
+        enqueueJson(uri, payloadJson(content), delivered -> {
+            if (delivered && !stopped) {
+                data.setLastDigestEpochMillis(digestTimestampAfterDelivery(last, periodEnd, delivered));
+            }
+            digestDeliveryPending = false;
+        });
     }
 }

@@ -2,6 +2,7 @@ package com.pengin0503.deathcensus;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Collection;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,11 +26,28 @@ public final class DeathRedactor {
      * record is immutable and is never modified; self/admin viewers get it back.
      */
     public static DeathEntry apply(DeathEntry entry, PlayerPrivacy privacy, boolean viewerIsSelfOrAdmin) {
+        return apply(entry, privacy, viewerIsSelfOrAdmin, HiddenIdentities.empty());
+    }
+
+    /**
+     * As {@link #apply(DeathEntry, PlayerPrivacy, boolean)}, additionally
+     * scrubbing every snapshot-wide hidden identity from the four personal text
+     * fields (review S3). Self/admin viewers are never scrubbed.
+     */
+    public static DeathEntry apply(DeathEntry entry, PlayerPrivacy privacy, boolean viewerIsSelfOrAdmin,
+                                   HiddenIdentities hidden) {
         if (entry == null) {
             return null;
         }
         PlayerPrivacy effective = privacy == null ? PlayerPrivacy.none() : privacy;
-        if (viewerIsSelfOrAdmin || (!effective.hideCoordinates() && !effective.hidePvpOpponent())) {
+        if (viewerIsSelfOrAdmin) {
+            return entry;
+        }
+        HiddenIdentities secrets = hidden == null ? HiddenIdentities.empty() : hidden;
+        if (!secrets.isEmpty()) {
+            entry = secrets.scrub(entry);
+        }
+        if (!effective.hideCoordinates() && !effective.hidePvpOpponent()) {
             return entry;
         }
         String killerName = effective.hidePvpOpponent() ? "" : entry.killerName();
@@ -66,13 +84,22 @@ public final class DeathRedactor {
 
     /** Redacted player copy for an ordinary public viewer (exports/history). */
     public static PlayerDeaths publicView(PlayerDeaths player) {
+        return publicView(player, HiddenIdentities.empty());
+    }
+
+    /**
+     * As above, with the snapshot-wide hidden-identity dictionary (S3). The
+     * dictionary is always built from the FULL snapshot; {@code player} may be a
+     * filtered subset of it.
+     */
+    public static PlayerDeaths publicView(PlayerDeaths player, HiddenIdentities hidden) {
         if (player == null) {
             return null;
         }
         PlayerPrivacy privacy = PlayerPrivacy.of(player);
         List<DeathEntry> redacted = new ArrayList<>(player.deaths().size());
         for (DeathEntry death : player.deaths()) {
-            redacted.add(apply(death, privacy, false));
+            redacted.add(apply(death, privacy, false, hidden));
         }
         return new PlayerDeaths(
                 player.uuid(),
@@ -86,13 +113,25 @@ public final class DeathRedactor {
 
     /** Redacted copies of a whole snapshot; the input list and records are untouched. */
     public static List<PlayerDeaths> publicView(List<PlayerDeaths> players) {
+        return publicView(players, null);
+    }
+
+    /**
+     * Redacted copies of {@code players} using hidden identities derived from
+     * {@code fullSnapshot} (S3). Callers rendering a public projection pass the
+     * full live snapshot so an opted-out player cannot be named in another
+     * player's record. Anonymous totals are never computed from these copies.
+     */
+    public static List<PlayerDeaths> publicView(List<PlayerDeaths> players,
+                                                Collection<PlayerDeaths> fullSnapshot) {
         if (players == null || players.isEmpty()) {
             return List.of();
         }
+        HiddenIdentities hidden = HiddenIdentities.of(fullSnapshot == null ? players : fullSnapshot);
         List<PlayerDeaths> result = new ArrayList<>(players.size());
         for (PlayerDeaths player : players) {
             if (player != null) {
-                result.add(publicView(player));
+                result.add(publicView(player, hidden));
             }
         }
         return result;
@@ -108,7 +147,7 @@ public final class DeathRedactor {
             return text == null ? "" : text;
         }
         Pattern pattern = Pattern.compile("(?<![\\p{L}\\p{N}_])" + Pattern.quote(opponent)
-                + "(?![\\p{L}\\p{N}_])");
+                + "(?![\\p{L}\\p{N}_])", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
         Matcher matcher = pattern.matcher(text);
         StringBuilder sb = new StringBuilder(text.length() + 16);
         while (matcher.find()) {

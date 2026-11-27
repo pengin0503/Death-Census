@@ -335,4 +335,32 @@ class UiDispatchTest {
             assertTrue(full.deathMessage().contains("Steve"));
         }
     }
+
+    @Test
+    void historyAndDetailScrubOptedOutNamesFromTheFullSnapshot() {
+        // Review S3: Ghost is absent from the visible player list but named in
+        // Bob's record; the GUI dictionary comes from the full snapshot.
+        UUID ghostUuid = UUID.fromString("00000000-0000-0000-0000-000000000004");
+        PlayerDeaths ghost = TestData.player(ghostUuid, "Ghost", true,
+                TestData.death(ghostUuid, "Ghost", 900L, "fall"));
+        DeathEntry bobDeath = new DeathEntry(TestData.BOB.toString(), "Bob", 1_000L, 1L, 100, 100,
+                "minecraft:overworld", 12.0, 64.0, -8.0, "player", "minecraft:player",
+                "Bob was slain by GHOST", "minecraft:player", "gHoSt",
+                "survival", 5, "GHOST did it", "bye Ghost", 1);
+        PlayerDeaths bob = new PlayerDeaths(TestData.BOB.toString(), "Bob", false, List.of(bobDeath));
+        FakeUiContext viewer = new FakeUiContext(TestData.ALICE, List.of(ghost, bob));
+        viewer.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        HistoryView rows = assertInstanceOf(HistoryView.class, open(UiActions.handle(
+                new UiRequest(TestData.ALICE, "deathcensus:ui/history", viewer.token(),
+                        1, "", -1L, Map.of()), viewer)));
+        assertFalse(rows.rows().get(0).displayLine().toLowerCase().contains("ghost"));
+
+        viewer.newSession(HistoryFilter.DEFAULT, UiSession.DEFAULT_RANKING);
+        DeathDetailView detail = assertInstanceOf(DeathDetailView.class, open(UiActions.handle(
+                new UiRequest(TestData.ALICE, "deathcensus:ui/detail", viewer.token(), 1,
+                        TestData.BOB.toString(), 1_000L, Map.of()), viewer)));
+        assertFalse(detail.deathMessage().toLowerCase().contains("ghost"));
+        assertFalse(detail.killerName().toLowerCase().contains("ghost"));
+        assertEquals("Bob was slain by GHOST", bobDeath.deathMessage(), "stored record untouched");
+    }
 }

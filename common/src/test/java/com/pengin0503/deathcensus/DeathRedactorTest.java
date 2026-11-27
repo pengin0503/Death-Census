@@ -63,6 +63,29 @@ class DeathRedactorTest {
     }
 
     @Test
+    void opponentScrubIsCaseInsensitiveAndUnicodeSafe() {
+        // Review M5: the vanilla death message can change capitalization
+        // ("STEVE" after a name-format mod), and Unicode names must fold too.
+        DeathEntry original = new DeathEntry("u-Alex", "Alex", 1_000L, 3L, 900, 800,
+                "minecraft:overworld", 1.0, 2.0, 3.0, "player", "minecraft:player",
+                "Alex was slain by STEVE and Steve and Steveville", "minecraft:player", "Steve",
+                "survival", 7, "", "", 2);
+        DeathEntry redacted = DeathRedactor.apply(original,
+                new PlayerPrivacy(false, false, true, false), false);
+        assertEquals("Alex was slain by  and  and Steveville", redacted.deathMessage());
+        assertEquals("", redacted.killerName());
+
+        DeathEntry unicode = new DeathEntry("u-Alex", "Alex", 1_000L, 3L, 900, 800,
+                "minecraft:overworld", 1.0, 2.0, 3.0, "player", "minecraft:player",
+                "Alex was slain by éLODIE", "minecraft:player", "Élodie",
+                "survival", 7, "", "", 2);
+        DeathEntry clean = DeathRedactor.apply(unicode,
+                new PlayerPrivacy(false, false, true, false), false);
+        assertEquals("Alex was slain by ", clean.deathMessage());
+        assertEquals("Alex was slain by STEVE and Steve and Steveville", original.deathMessage());
+    }
+
+    @Test
     void combinedFlagsRedactBoth() {
         DeathEntry redacted = DeathRedactor.apply(entry(),
                 new PlayerPrivacy(false, true, true, false), false);

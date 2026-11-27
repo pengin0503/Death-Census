@@ -69,8 +69,11 @@ public final class CensusExport {
     public static Path writeExport(MinecraftServer server, String format, @Nullable UUID onlyPlayer,
                                    boolean anonymize) {
         CensusData data = CensusData.get(server);
+        // Keep the full snapshot for the privacy dictionaries: filtering below
+        // only decides which records are exported (reviews S3/S4).
+        List<PlayerDeaths> allPlayers = data.snapshot();
         List<PlayerDeaths> players = new ArrayList<>();
-        for (PlayerDeaths pd : data.snapshot()) {
+        for (PlayerDeaths pd : allPlayers) {
             if (onlyPlayer != null) {
                 if (pd.uuid().equals(onlyPlayer.toString())) {
                     // DESIGN §8: opted-out players appear in exports only with the config flag.
@@ -88,9 +91,9 @@ public final class CensusExport {
         long now = System.currentTimeMillis();
         ZoneId zone = Config.displayTimeZone();
         String content = switch (format) {
-            case "json" -> ExportRenderers.toJson(players, now, anonymize);
-            case "csv" -> ExportRenderers.toCsv(players, anonymize);
-            default -> ExportRenderers.toHtml(players, now, zone, anonymize);
+            case "json" -> ExportRenderers.toJson(players, now, anonymize, allPlayers);
+            case "csv" -> ExportRenderers.toCsv(players, anonymize, allPlayers);
+            default -> ExportRenderers.toHtml(players, now, zone, anonymize, allPlayers);
         };
         String playerName = onlyPlayer != null && !players.isEmpty() ? players.get(0).name() : null;
         Path file = exportsDir(server).resolve(exportFileName(format, playerName, anonymize, zone));
@@ -115,16 +118,18 @@ public final class CensusExport {
         if (server == null || range == null) {
             return null;
         }
+        // The full snapshot is the privacy dictionary source; the date range and
+        // opt-out gate below only filter which records are rendered (S3).
+        List<PlayerDeaths> allPlayers = CensusData.get(server).snapshot();
         List<PlayerDeaths> players = new ArrayList<>();
         for (PlayerDeaths player : CensusStats.filterRange(
-                CensusData.get(server).snapshot(),
-                range.fromMillisInclusive(), range.toMillisInclusive())) {
+                allPlayers, range.fromMillisInclusive(), range.toMillisInclusive())) {
             if (!player.optOutPublic()) {
                 players.add(player);
             }
         }
         ZoneId zone = Config.displayTimeZone();
-        String content = ExportRenderers.toHtml(players, System.currentTimeMillis(), zone);
+        String content = ExportRenderers.toHtml(players, System.currentTimeMillis(), zone, false, allPlayers);
         Path file = exportsDir(server).resolve("season-" + range.fileNameStamp(zone) + ".html");
         try {
             Files.createDirectories(file.getParent());
@@ -150,18 +155,20 @@ public final class CensusExport {
     private static Path writeBackup(MinecraftServer server, @Nullable Path protectedSource) {
         CensusData data = CensusData.get(server);
         long now = System.currentTimeMillis();
-        String name = BackupLogic.backupFileName(now, Config.displayTimeZone());
-        // Backup names have second granularity: a safety backup made in the same
-        // second as the restore source would otherwise target the source itself.
+        // Millisecond + UUID uniqueness (M4): a freshly requested safety backup
+        // must never reuse a file written by an earlier backup in the same second.
+        String name = BackupLogic.uniqueBackupFileName(now, Config.displayTimeZone());
         if (protectedSource != null && protectedSource.getFileName().toString().equals(name)) {
             name = name.substring(0, name.length() - ".json".length()) + "-pre-restore.json";
         }
         Path file = backupsDir(server).resolve(name);
         try {
             Files.createDirectories(file.getParent());
-            // Two auto-backups can fire in the same second (server stop + final world save).
+            // Even a random collision must be refused: reporting an existing
+            // file as a new safety backup would hide a stale pre-mutation copy.
             if (Files.exists(file)) {
-                return file;
+                DeathCensus.LOGGER.error("[DeathCensus] Backup name collision, refusing to overwrite '{}'", file);
+                return null;
             }
             Files.writeString(file, ExportRenderers.toBackupJson(data.snapshot(), now), StandardCharsets.UTF_8);
             // The just-written safety backup must not be pruned while protecting the source.

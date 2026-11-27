@@ -139,13 +139,23 @@ public final class DiscordLogic {
     }
 
     public static String deathContent(DeathEntry e) {
+        return deathContent(e, HiddenIdentities.empty());
+    }
+
+    /**
+     * As above, scrubbing snapshot-wide hidden identities (review S3). Realtime
+     * Discord is always a public viewer, so a hidden opponent must not survive
+     * in a victim's free text or attacker field.
+     */
+    public static String deathContent(DeathEntry e, HiddenIdentities hidden) {
         if (e == null) {
             return "";
         }
         String base = !e.deathMessage().isBlank()
                 ? e.deathMessage()
                 : e.playerName() + " died (" + e.causeCategory() + ")";
-        return base
+        HiddenIdentities secrets = hidden == null ? HiddenIdentities.empty() : hidden;
+        return secrets.scrub(base)
                 + " — Day " + (e.gameDay() + 1)
                 + " · " + e.dimension()
                 + " · survived " + TimeFormat.formatDuration(e.survivalTicks());

@@ -3,6 +3,7 @@ package com.pengin0503.deathcensus;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -18,9 +19,15 @@ public final class ExportRenderers {
     }
 
     public static String toCsv(List<PlayerDeaths> players) {
+        return renderCsv(players, null);
+    }
+
+    private static String renderCsv(List<PlayerDeaths> players, Collection<PlayerDeaths> allPlayers) {
         List<DeathEntry> rows = new ArrayList<>();
         // Aggregates are never built from these copies; only the rendered rows are.
-        for (PlayerDeaths player : DeathRedactor.publicView(players)) {
+        List<PlayerDeaths> safe = safePlayerList(players);
+        List<PlayerDeaths> all = allPlayers == null ? safe : safePlayerList(allPlayers);
+        for (PlayerDeaths player : DeathRedactor.publicView(safe, all)) {
             rows.addAll(player.deaths());
         }
         rows.sort(Comparator.comparingLong(DeathEntry::epochMillis));
@@ -64,34 +71,61 @@ public final class ExportRenderers {
 
     /** As {@link #toCsv(List)}, but rendered from a redacted copy when requested. */
     public static String toCsv(List<PlayerDeaths> players, boolean anonymize) {
-        return toCsv(anonymize ? Anonymizer.apply(players) : players);
+        return toCsv(players, anonymize, null);
+    }
+
+    /**
+     * As above, with the full snapshot used to build the hidden-identity and
+     * anonymization dictionaries while {@code players} stays the record filter
+     * (reviews S3/S4).
+     */
+    public static String toCsv(List<PlayerDeaths> players, boolean anonymize,
+                               Collection<PlayerDeaths> fullSnapshot) {
+        return renderCsv(anonymize ? Anonymizer.apply(players, fullSnapshot) : players, fullSnapshot);
     }
 
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
-        return renderJson(players, generatedAtEpochMillis, false, false);
+        return renderJson(players, generatedAtEpochMillis, false, false, null);
     }
 
     /** As {@link #toJson(List, long)}, with anonymized metadata and a redacted copy when requested. */
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis, boolean anonymize) {
-        return renderJson(anonymize ? Anonymizer.apply(players) : players,
-                generatedAtEpochMillis, anonymize, false);
+        return toJson(players, generatedAtEpochMillis, anonymize, null);
+    }
+
+    /**
+     * As above, with the full snapshot used to build the hidden-identity and
+     * anonymization dictionaries while {@code players} stays the record filter
+     * (reviews S3/S4).
+     */
+    public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                boolean anonymize, Collection<PlayerDeaths> fullSnapshot) {
+        return renderJson(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                generatedAtEpochMillis, anonymize, false, fullSnapshot);
     }
 
     /**
      * Backup-only JSON: identical to the public export plus the §9 vanilla
      * baseline fields, so backup/restore preserves them without changing any
-     * HTML/JSON/CSV export format.
+     * HTML/JSON/CSV export format. Backups keep their deliberate redaction path
+     * (S2 is out of scope for this fix wave).
      */
     public static String toBackupJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
-        return renderJson(players, generatedAtEpochMillis, false, true);
+        return renderJson(players, generatedAtEpochMillis, false, true, null);
     }
 
     private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
-                                     boolean anonymized, boolean includeBaselines) {
+                                     boolean anonymized, boolean includeBaselines,
+                                     Collection<PlayerDeaths> allPlayers) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
+        List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
-        // per-death rows use the public redaction view.
-        List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers);
+        // per-death rows use the public redaction view. Backups keep their
+        // deliberate redaction (S2, out of scope for this fix wave); public
+        // exports additionally scrub every hidden identity in the full snapshot.
+        List<PlayerDeaths> renderPlayers = includeBaselines
+                ? DeathRedactor.publicView(safePlayers)
+                : DeathRedactor.publicView(safePlayers, all);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
 
         StringBuilder sb = new StringBuilder(256 + totalDeaths * 256);
@@ -181,10 +215,35 @@ public final class ExportRenderers {
     }
 
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone) {
+        return renderHtml(players, generatedAtEpochMillis, zone, null);
+    }
+
+    /** As {@link #toHtml(List, long, ZoneId)}, but rendered from a redacted copy when requested. */
+    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                boolean anonymize) {
+        return toHtml(players, generatedAtEpochMillis, zone, anonymize, null);
+    }
+
+    /**
+     * As above, with the full snapshot used to build the hidden-identity and
+     * anonymization dictionaries while {@code players} stays the record filter
+     * (reviews S3/S4).
+     */
+    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                boolean anonymize, Collection<PlayerDeaths> fullSnapshot) {
+        List<PlayerDeaths> safePlayers = anonymize
+                ? Anonymizer.apply(players, fullSnapshot)
+                : safePlayerList(players);
+        return renderHtml(safePlayers, generatedAtEpochMillis, zone, fullSnapshot);
+    }
+
+    private static String renderHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                     Collection<PlayerDeaths> allPlayers) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
+        List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Summaries and rankings stay unredacted (DESIGN §8); timelines render
         // the public redaction view of the same records.
-        List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers);
+        List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers, all);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
         List<Map.Entry<String, Integer>> causes = CensusStats.causeCounts(safePlayers, true);
         List<CensusStats.PlayerSummary> leaderboard = CensusStats.leaderboardDeaths(safePlayers, true);
@@ -311,13 +370,7 @@ public final class ExportRenderers {
         return sb.toString();
     }
 
-    /** As {@link #toHtml(List, long, ZoneId)}, but rendered from a redacted copy when requested. */
-    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
-                                boolean anonymize) {
-        return toHtml(anonymize ? Anonymizer.apply(players) : players, generatedAtEpochMillis, zone);
-    }
-
-    private static List<PlayerDeaths> safePlayerList(List<PlayerDeaths> players) {
+    private static List<PlayerDeaths> safePlayerList(Collection<PlayerDeaths> players) {
         if (players == null) {
             return List.of();
         }

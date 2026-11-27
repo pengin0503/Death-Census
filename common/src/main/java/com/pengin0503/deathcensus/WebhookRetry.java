@@ -18,7 +18,10 @@ import java.util.function.LongSupplier;
  *
  * <p>This class performs no I/O, logging or sleeping of its own: the version
  * code supplies a {@link WebhookSender} and only runs this engine on its
- * daemon Discord worker, so backoff never blocks a server tick.
+ * daemon Discord worker, so backoff never blocks a server tick. A transport
+ * interruption (an {@link InterruptedException}, or an already-interrupted
+ * worker thread) is terminal: the flag is restored and no further POST or
+ * sleep is attempted.
  */
 public final class WebhookRetry {
     public static final int DEFAULT_MAX_ATTEMPTS = 4;
@@ -73,6 +76,12 @@ public final class WebhookRetry {
                 response = sender.send(uri, json);
             } catch (Exception e) {
                 failure = e;
+                if (e instanceof InterruptedException || Thread.currentThread().isInterrupted()) {
+                    // Cancellation during shutdown is terminal: restore the flag,
+                    // report the observed status, and never retry or sleep.
+                    Thread.currentThread().interrupt();
+                    return new WebhookSendResult(attempt, status, e, false);
+                }
             }
             if (response != null) {
                 status = response.statusCode();
@@ -115,7 +124,10 @@ public final class WebhookRetry {
         return new WebhookRetryDecision(true, delay);
     }
 
-    /** Transport failures are always retried (until the attempt budget is spent). */
+    /**
+     * Ordinary transport failures are retried until the attempt budget is
+     * spent. {@link #sendWithRetry} short-circuits this for interruptions.
+     */
     public static WebhookRetryDecision decideOnException(int attempt, RetryConfig config) {
         return new WebhookRetryDecision(true, backoffMillis(attempt, config));
     }

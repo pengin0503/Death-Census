@@ -48,6 +48,8 @@ public class CensusData extends SavedData {
         public int lastDeathPlayTicks = -1;
         /** Vanilla pre-install death baseline (DESIGN 1.3.0 §9); never includes deaths recorded by this mod. */
         public int vanillaDeathsBaseline = 0;
+        /** Lifetime deaths recorded by this mod for this player; survives trimming/deletion. */
+        public long lifetimeRecorded = 0L;
         /** Mapped vanilla killed_by categories; diagnostic only, never merged into live cause percentages. */
         public Map<String, Integer> vanillaBaselineCauses = new LinkedHashMap<>();
 
@@ -60,9 +62,21 @@ public class CensusData extends SavedData {
     private long lastDigestEpochMillis = 0L;
     /** Lifetime deaths across all players; survives trimming of retained records. */
     private long lifetimeDeaths = 0L;
+    /** Raw values dropped during load, written back verbatim so operators can back them up (§3.3). */
+    private final Map<String, Tag> preservedPlayerValues = new LinkedHashMap<>();
+    /** A malformed top-level players container must never be silently overwritten on save (B1). */
+    private boolean doNotSave = false;
+    @Nullable
+    private CompoundTag preservedRawTag = null;
 
     public static CensusData get(MinecraftServer server) {
         return server.overworld().getDataStorage().computeIfAbsent(FACTORY, DATA_NAME);
+    }
+
+    /** Non-creating lookup for read-only commands; does not mark SavedData dirty. */
+    @Nullable
+    public static CensusData getIfExists(MinecraftServer server) {
+        return server.overworld().getDataStorage().get(FACTORY, DATA_NAME);
     }
 
     /** Raw stored counter without vanilla baselines; used by the importer to avoid double counting. */
@@ -110,7 +124,7 @@ public class CensusData extends SavedData {
                     skipped++;
                     continue;
                 }
-                long preinstall = Math.max(0L, (long) vanillaDeaths - pc.deaths.size());
+                long preinstall = Math.max(0L, (long) vanillaDeaths - pc.lifetimeRecorded);
                 int candidate = (int) Math.min(Integer.MAX_VALUE, preinstall);
                 int baseline = Math.max(pc.vanillaDeathsBaseline, candidate);
                 if (baseline <= 0) {
@@ -183,6 +197,7 @@ public class CensusData extends SavedData {
         }
         PlayerCensus pc = player(uuid);
         pc.deaths.add(entry);
+        pc.lifetimeRecorded++;
         lifetimeDeaths++;
         if (CauseClassifier.isKnownCategory(entry.causeCategory())) {
             pc.lifetimeCategories.add(entry.causeCategory());
@@ -354,6 +369,7 @@ public class CensusData extends SavedData {
             pc.vanillaDeathsBaseline = Math.max(0, pd.vanillaDeathsBaseline());
             pc.vanillaBaselineCauses.putAll(pd.vanillaBaselineCauses());
             pc.deaths.addAll(pd.deaths());
+            pc.lifetimeRecorded = pd.deaths().size();
             for (DeathEntry death : pd.deaths()) {
                 if (CauseClassifier.isKnownCategory(death.causeCategory())) {
                     pc.lifetimeCategories.add(death.causeCategory());
@@ -444,18 +460,45 @@ public class CensusData extends SavedData {
                 t.contains("fcount", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("fcount")) : 0);
     }
 
+    private static void initializeCategoriesFromDeaths(PlayerCensus pc) {
+        for (DeathEntry death : pc.deaths) {
+            if (CauseClassifier.isKnownCategory(death.causeCategory())) {
+                pc.lifetimeCategories.add(death.causeCategory());
+            }
+        }
+    }
+
     public static CensusData load(CompoundTag tag, HolderLookup.Provider provider) {
         CensusData data = new CensusData();
+        // A present-but-wrong-typed container is corruption, not an old save:
+        // never replace it with players:{} on the next autosave (B1).
+        if (tag.contains("players") && !tag.contains("players", Tag.TAG_COMPOUND)) {
+            DeathCensus.LOGGER.error("[DeathCensus] Malformed 'players' container in SavedData: "
+                    + "preserving the original tag and disabling saves until an operator backs it up");
+            data.doNotSave = true;
+            data.preservedRawTag = tag.copy();
+            return data;
+        }
         CompoundTag all = tag.getCompound("players");
         for (String uuidKey : all.getAllKeys()) {
+            Tag rawValue = all.get(uuidKey);
             UUID uuid;
             try {
                 uuid = UUID.fromString(uuidKey);
             } catch (IllegalArgumentException ignored) {
                 DeathCensus.LOGGER.warn("[DeathCensus] Skipping player entry with invalid UUID '{}' in SavedData", uuidKey);
+                if (rawValue != null) {
+                    data.preservedPlayerValues.put(uuidKey, rawValue.copy());
+                }
                 continue;
             }
-            CompoundTag entry = all.getCompound(uuidKey);
+            if (!(rawValue instanceof CompoundTag entry)) {
+                DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt player entry with key '{}' in SavedData", uuidKey);
+                if (rawValue != null) {
+                    data.preservedPlayerValues.put(uuidKey, rawValue.copy());
+                }
+                continue;
+            }
             PlayerCensus pc = new PlayerCensus();
             pc.lastKnownName = entry.getString("lastKnownName");
             pc.optOutPublic = entry.contains("optOut") && entry.getBoolean("optOut");
@@ -481,33 +524,48 @@ public class CensusData extends SavedData {
                 }
             }
             if (entry.contains("deaths", Tag.TAG_LIST)) {
-                for (Tag raw : entry.getList("deaths", Tag.TAG_COMPOUND)) {
-                    if (raw instanceof CompoundTag deathTag) {
-                        DeathEntry e = entryFromTag(uuidKey, deathTag);
-                        if (e != null) {
-                            pc.deaths.add(e);
+                // Iterate the raw list: a typed getList would silently drop every
+                // sibling when the stored element type is wrong (S6).
+                if (entry.get("deaths") instanceof ListTag deaths) {
+                    for (Tag raw : deaths) {
+                        if (raw instanceof CompoundTag deathTag) {
+                            DeathEntry e = entryFromTag(uuidKey, deathTag);
+                            if (e != null) {
+                                pc.deaths.add(e);
+                            } else {
+                                DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed death entry for '{}' in SavedData", uuidKey);
+                            }
                         } else {
                             DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed death entry for '{}' in SavedData", uuidKey);
                         }
                     }
+                } else {
+                    DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed death list for '{}' in SavedData", uuidKey);
                 }
             }
-            if (entry.contains("lifetimeCategories", Tag.TAG_LIST)) {
-                for (Tag raw : entry.getList("lifetimeCategories", Tag.TAG_STRING)) {
+            if (entry.contains("lifetimeRecorded", Tag.TAG_ANY_NUMERIC)) {
+                pc.lifetimeRecorded = Math.max(0L, entry.getLong("lifetimeRecorded"));
+            } else {
+                // Old saves carry no per-player counter: retained deaths are the
+                // best available approximation (DESIGN §3.3).
+                pc.lifetimeRecorded = pc.deaths.size();
+            }
+            boolean usableCategory = false;
+            if (entry.contains("lifetimeCategories", Tag.TAG_LIST)
+                    && entry.get("lifetimeCategories") instanceof ListTag categoryList) {
+                for (Tag raw : categoryList) {
                     if (raw instanceof StringTag categoryTag) {
                         String category = categoryTag.getAsString();
                         if (CauseClassifier.isKnownCategory(category)) {
                             pc.lifetimeCategories.add(category);
+                            usableCategory = true;
                         }
                     }
                 }
-            } else {
-                // Old data has no lifetime set: derive it from the retained deaths.
-                for (DeathEntry death : pc.deaths) {
-                    if (CauseClassifier.isKnownCategory(death.causeCategory())) {
-                        pc.lifetimeCategories.add(death.causeCategory());
-                    }
-                }
+            }
+            if (!usableCategory) {
+                // Missing or unusable list: derive it from the retained deaths.
+                initializeCategoriesFromDeaths(pc);
             }
             data.players.put(uuid, pc);
         }
@@ -534,6 +592,9 @@ public class CensusData extends SavedData {
 
     @Override
     public CompoundTag save(CompoundTag tag, HolderLookup.Provider provider) {
+        if (doNotSave && preservedRawTag != null) {
+            return preservedRawTag.copy();
+        }
         CompoundTag all = new CompoundTag();
         for (Map.Entry<UUID, PlayerCensus> e : players.entrySet()) {
             PlayerCensus pc = e.getValue();
@@ -562,6 +623,9 @@ public class CensusData extends SavedData {
             if (pc.vanillaDeathsBaseline > 0) {
                 entry.putInt("vanillaBaseline", pc.vanillaDeathsBaseline);
             }
+            if (pc.lifetimeRecorded > 0L) {
+                entry.putLong("lifetimeRecorded", pc.lifetimeRecorded);
+            }
             if (!pc.vanillaBaselineCauses.isEmpty()) {
                 CompoundTag causes = new CompoundTag();
                 for (Map.Entry<String, Integer> cause : pc.vanillaBaselineCauses.entrySet()) {
@@ -582,6 +646,13 @@ public class CensusData extends SavedData {
                 entry.put("lifetimeCategories", categories);
             }
             all.put(e.getKey().toString(), entry);
+        }
+        // Skipped corrupt values are written back verbatim for operator backup;
+        // live data wins if an operator recreated one of those keys in memory.
+        for (Map.Entry<String, Tag> e : preservedPlayerValues.entrySet()) {
+            if (!all.contains(e.getKey())) {
+                all.put(e.getKey(), e.getValue().copy());
+            }
         }
         tag.put("players", all);
         if (lastDigestEpochMillis > 0L) {
