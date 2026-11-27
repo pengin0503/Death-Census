@@ -379,6 +379,33 @@ public final class CensusCommands {
             root.then(hotspots);
         }
 
+        // 1.4.0 PR-8: /dc distribution time|y [today|7d|30d|all] [page] (§7), public.
+        if (Config.distributionsEnabled()) {
+            LiteralArgumentBuilder<CommandSourceStack> distribution = literal("distribution")
+                    .executes(ctx -> {
+                        fail(ctx, "command.deathcensus.distribution.bad_argument");
+                        return 0;
+                    });
+            for (String mode : List.of("time", "y")) {
+                LiteralArgumentBuilder<CommandSourceStack> modeNode = literal(mode)
+                        .executes(ctx -> distribution(ctx, mode, "all", 1))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> distribution(ctx, mode, "all",
+                                        IntegerArgumentType.getInteger(ctx, "page"))));
+                for (String period : PERIODS) {
+                    modeNode.then(literal(period)
+                            .executes(ctx -> distribution(ctx, mode, period, 1))
+                            .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                    .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                    .executes(ctx -> distribution(ctx, mode, period,
+                                            IntegerArgumentType.getInteger(ctx, "page")))));
+                }
+                distribution.then(modeNode);
+            }
+            root.then(distribution);
+        }
+
         LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
                 .executes(CensusCommands::serverStats);
         for (String period : PERIODS) {
@@ -1042,6 +1069,9 @@ public final class CensusCommands {
         if (Config.hotspotsEnabled()) {
             send(ctx, "command.deathcensus.hotspots.help");
         }
+        if (Config.distributionsEnabled()) {
+            send(ctx, "command.deathcensus.distribution.help");
+        }
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
@@ -1611,6 +1641,74 @@ public final class CensusCommands {
                     hotspot.topCause(), TimeFormat.formatDate(
                             hotspot.lastEpoch(), Config.displayTimeZone())));
         }
+        return lines;
+    }
+
+    // --------------------------------------------------------------- awards (§2)
+    // ------------------------------------------------------- distributions (§7)
+
+    /** Anonymous bins only: no names are attached, so no per-viewer privacy gate is needed. */
+    private static int distribution(CommandContext<CommandSourceStack> ctx, String mode,
+                                    String period, int page) {
+        MinecraftServer server = server(ctx);
+        if (server == null || !Config.distributionsEnabled()) {
+            return 0;
+        }
+        if (!"time".equals(mode) && !"y".equals(mode)) {
+            fail(ctx, "command.deathcensus.distribution.bad_argument");
+            return 0;
+        }
+        List<PlayerDeaths> snapshot = CensusStats.filterSince(
+                CensusData.get(server).snapshot(), sinceMillis(period));
+        List<String> lines = distributionLines(snapshot, mode, languageOf(ctx));
+        Pagination.Page<String> p = Pagination.of(lines, page, PAGE_SIZE);
+        String headerKey = "time".equals(mode)
+                ? "command.deathcensus.distribution.header.time"
+                : "command.deathcensus.distribution.header.y";
+        send(ctx, headerKey, mode, period, lines.size(), p.page(), p.pageCount());
+        if (p.items().isEmpty()) {
+            send(ctx, "command.deathcensus.distribution.empty");
+        }
+        for (String line : p.items()) {
+            sendLiteral(ctx, line);
+        }
+        if (p.pageCount() > 1) {
+            send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+        }
+        return 1;
+    }
+
+    /** Both chat and exports use the same anonymous, localized row projection. */
+    static List<String> distributionLines(List<PlayerDeaths> snapshot, String mode, String language) {
+        List<String> lines = new ArrayList<>();
+        if ("time".equals(mode)) {
+            for (TimeBin bin : DistributionAnalysis.timeOfDay(snapshot,
+                    Config.distributionTimeBinHours(), Config.displayTimeZone())) {
+                lines.add(ServerLang.formatForLang(language, "command.deathcensus.distribution.row",
+                        String.format(java.util.Locale.ROOT, "%02d:00", bin.hourStart()),
+                        bin.count(), bin.topCause()));
+            }
+        } else {
+            for (YBand band : DistributionAnalysis.yBands(snapshot, Config.distributionYBandBlocks())) {
+                lines.add(ServerLang.formatForLang(language, "command.deathcensus.distribution.row",
+                        "y " + band.minY() + ".." + band.maxY(), band.count(), band.topCause()));
+            }
+        }
+        return lines;
+    }
+
+    /** Export projection: both tables with localized tab labels, no page limit. */
+    static List<String> publicDistributionLines(List<PlayerDeaths> snapshot) {
+        if (!Config.distributionsEnabled()) {
+            return List.of();
+        }
+        List<String> lines = new ArrayList<>();
+        lines.add(ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                "command.deathcensus.ui.ranking.distribution.time"));
+        lines.addAll(distributionLines(snapshot, "time", ServerLang.DEFAULT_LANG));
+        lines.add(ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                "command.deathcensus.ui.ranking.distribution.y"));
+        lines.addAll(distributionLines(snapshot, "y", ServerLang.DEFAULT_LANG));
         return lines;
     }
 

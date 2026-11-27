@@ -81,6 +81,14 @@ public final class CensusExport {
         return CensusCommands.publicHotspotLines(allPlayers);
     }
 
+    /** §7: projected, anonymous distribution rows for public exports (config-gated). */
+    private static List<String> distributionLines(List<PlayerDeaths> allPlayers) {
+        if (!Config.distributionsEnabled()) {
+            return List.of();
+        }
+        return CensusCommands.publicDistributionLines(allPlayers);
+    }
+
     /** Writes an export file and returns its path. Format is html, json or csv. */
     @Nullable
     public static Path writeExport(MinecraftServer server, String format, @Nullable UUID onlyPlayer) {
@@ -137,16 +145,24 @@ public final class CensusExport {
         List<String> hotspotLines = hotspotLines(allPlayers);
         String hotspotHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
                 "command.deathcensus.export.hotspots");
+        // §7: bins carry no names; Y bands are built from the full snapshot so
+        // hidden-coordinate deaths are excluded even from anonymized exports.
+        List<String> distributionLines = distributionLines(allPlayers);
+        String distributionHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                "command.deathcensus.export.distribution");
         String content = switch (format) {
             case "json" -> ExportRenderers.toJsonWithChronicle(players, now, anonymize, includeContext,
                     allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader,
-                    nemesisLines, nemesisHeader, hotspotLines, hotspotHeader);
+                    nemesisLines, nemesisHeader, hotspotLines, hotspotHeader,
+                    distributionLines, distributionHeader);
             case "csv" -> ExportRenderers.toCsvWithChronicle(players, anonymize, includeContext,
                     allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader,
-                    nemesisLines, nemesisHeader, hotspotLines, hotspotHeader);
+                    nemesisLines, nemesisHeader, hotspotLines, hotspotHeader,
+                    distributionLines, distributionHeader);
             default -> ExportRenderers.toHtmlWithChronicle(players, now, zone, anonymize, includeContext,
                     contextHeader, allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader,
-                    nemesisLines, nemesisHeader, hotspotLines, hotspotHeader);
+                    nemesisLines, nemesisHeader, hotspotLines, hotspotHeader,
+                    distributionLines, distributionHeader);
         };
         String playerName = onlyPlayer != null && !players.isEmpty() ? players.get(0).name() : null;
         Path file = exportsDir(server).resolve(exportFileName(format, playerName, anonymize, zone));
@@ -195,7 +211,11 @@ public final class CensusExport {
                 hotspotLines(CensusStats.filterRange(allPlayers,
                         range.fromMillisInclusive(), range.toMillisInclusive())),
                 ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
-                        "command.deathcensus.export.hotspots"));
+                        "command.deathcensus.export.hotspots"),
+                distributionLines(CensusStats.filterRange(allPlayers,
+                        range.fromMillisInclusive(), range.toMillisInclusive())),
+                ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                        "command.deathcensus.export.distribution"));
         Path file = exportsDir(server).resolve("season-" + range.fileNameStamp(zone) + ".html");
         try {
             Files.createDirectories(file.getParent());

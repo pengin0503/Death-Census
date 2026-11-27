@@ -7,6 +7,8 @@ import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import org.junit.jupiter.api.Test;
 
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -220,6 +222,55 @@ class UiDispatchTest {
         assertTrue(view.rows().get(0).contains("chunk 0,0"), view.rows().toString());
         assertFalse(view.rows().get(0).contains("6,6"), view.rows().toString());
         assertTrue(view.anonymousTotalsLine().contains("total=5"));
+    }
+
+    @Test
+    void distributionTimeTabCountsOptedOutDeathsWithoutNamingThem() {
+        long epoch = ZonedDateTime.of(2024, 1, 1, 22, 30, 0, 0, ZoneOffset.UTC)
+                .toInstant().toEpochMilli();
+        List<PlayerDeaths> players = List.of(
+                TestData.player(TestData.ALICE, "Alice", false,
+                        distributionDeath(TestData.ALICE, epoch, 64.0),
+                        distributionDeath(TestData.ALICE, epoch, 64.0)),
+                TestData.player(TestData.CAROL, "Carol", true,
+                        distributionDeath(TestData.CAROL, epoch, 64.0)));
+        FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, players));
+        UiRequest request = new UiRequest(TestData.ALICE, "rankings", ctx.token(), 1, "", -1L,
+                Map.of("in_type", "distribution_time", "in_period", "all"));
+        RankingView view = assertInstanceOf(RankingView.class, open(UiActions.handle(request, ctx)));
+        assertEquals("distribution_time", view.type());
+        assertEquals(1, view.rows().size());
+        assertTrue(view.rows().get(0).contains("22:00 — 3 death(s)"), view.rows().toString());
+        assertFalse(view.rows().get(0).contains("Carol"), view.rows().toString());
+    }
+
+    @Test
+    void distributionYTabExcludesHiddenCoordinatesEvenForAdmins() {
+        long epoch = ZonedDateTime.of(2024, 1, 1, 22, 30, 0, 0, ZoneOffset.UTC)
+                .toInstant().toEpochMilli();
+        DeathEntry publicDeath = distributionDeath(TestData.ALICE, epoch, 64.0);
+        DeathEntry hiddenDeath = distributionDeath(TestData.BOB, epoch, 100.0);
+        List<PlayerDeaths> players = List.of(
+                TestData.player(TestData.ALICE, "Alice", false, publicDeath, publicDeath),
+                new PlayerDeaths(TestData.BOB.toString(), "Bob", false, true, false, false,
+                        List.of(hiddenDeath)),
+                TestData.player(TestData.CAROL, "Carol", true,
+                        distributionDeath(TestData.CAROL, epoch, 64.0)));
+        FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, players));
+        ctx.admin = true;
+        UiRequest request = new UiRequest(TestData.ALICE, "rankings", ctx.token(), 1, "", -1L,
+                Map.of("in_type", "distribution_y", "in_period", "all"));
+        RankingView view = assertInstanceOf(RankingView.class, open(UiActions.handle(request, ctx)));
+        assertEquals("distribution_y", view.type());
+        assertEquals(1, view.rows().size());
+        assertTrue(view.rows().get(0).contains("y 64..79 — 3 death(s)"), view.rows().toString());
+        assertFalse(view.rows().toString().contains("96..111"), view.rows().toString());
+    }
+
+    private static DeathEntry distributionDeath(UUID uuid, long epoch, double y) {
+        return new DeathEntry(uuid.toString(), "Player", epoch, 1L, 10, 10,
+                "minecraft:overworld", 1.0, y, 1.0, "fall", "minecraft:fall", "died",
+                "", "", "survival", 0, "", "", 0);
     }
 
     private static DeathEntry hotspotDeath(double x, double z, long epoch) {
