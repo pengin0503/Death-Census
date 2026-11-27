@@ -127,11 +127,12 @@ class StorageSeamTest {
         assertTrue(backup.contains("\"reconstructed\": false"));
 
         String publicJson = ExportRenderers.toJson(List.of(pd), 2000L);
-        // PR-2 adds public witness names; PR-3 adds public context. Near-death
-        // and chronicle aggregates stay backup-only.
+        // PR-2 adds public witness names; PR-3 adds public context. PR-11 adds
+        // a separate near-death aggregate; chronicle rows stay backup-only.
         assertTrue(publicJson.contains("\"witnesses\": [\"Alex\"]"));
         assertTrue(publicJson.contains("\"mainHand\": \"minecraft:sword\""));
-        assertFalse(publicJson.contains("nearDeaths"));
+        assertTrue(publicJson.contains("\"nearDeaths\""));
+        assertTrue(publicJson.contains("\"total\": 1"));
         assertFalse(publicJson.contains("chronicleEvents"));
         assertEquals(publicJson, ExportRenderers.toJson(List.of(pd), 2000L, false));
     }
@@ -153,13 +154,15 @@ class StorageSeamTest {
         assertTrue(Double.isNaN(redacted.x()));
         assertEquals(death.x(), death.x()); // original untouched
 
-        // Player-level near-death history is carried by the unredacted snapshot
-        // (used by backups), so the public render copy keeps the 1.3.0 shape.
+        // §10: the public render copy keeps near-death history with the same
+        // redaction rules as deaths (hideCoordinates => NaN sentinel).
         NearDeathEvent near = new NearDeathEvent("u", "Steve", 2L, "dim", 1, 2, 3,
                 "cat", "id", NearDeathEvent.Kind.TOTEM);
-        PlayerDeaths withNear = new PlayerDeaths("u", "Steve", false, false, false, false,
+        PlayerDeaths withNear = new PlayerDeaths("u", "Steve", false, true, false, false,
                 List.of(death), 0, Map.of(), List.of(near));
         assertEquals(List.of(near), withNear.nearDeaths());
-        assertTrue(DeathRedactor.publicView(withNear).nearDeaths().isEmpty());
+        NearDeathEvent redactedNear = DeathRedactor.publicView(withNear).nearDeaths().get(0);
+        assertTrue(DeathRedactor.isNearDeathCoordinateHidden(redactedNear));
+        assertEquals(near.kind(), redactedNear.kind());
     }
 }

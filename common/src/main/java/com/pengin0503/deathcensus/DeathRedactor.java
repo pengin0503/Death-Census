@@ -97,6 +97,50 @@ public final class DeathRedactor {
         return context.withBiome(COORDINATE_MARKER);
     }
 
+    /**
+     * §10: near-death records follow the death rules. A public viewer with
+     * {@code hideCoordinates} gets the NaN sentinel; hidden identities and any
+     * opponent name are scrubbed from the free-text fields. Self/admin viewers
+     * and records without flags are returned unchanged.
+     */
+    public static NearDeathEvent apply(NearDeathEvent event, PlayerPrivacy privacy,
+                                       boolean viewerIsSelfOrAdmin) {
+        return apply(event, privacy, viewerIsSelfOrAdmin, HiddenIdentities.empty());
+    }
+
+    public static NearDeathEvent apply(NearDeathEvent event, PlayerPrivacy privacy,
+                                       boolean viewerIsSelfOrAdmin, HiddenIdentities hidden) {
+        if (event == null) {
+            return null;
+        }
+        if (viewerIsSelfOrAdmin) {
+            return event;
+        }
+        PlayerPrivacy effective = privacy == null ? PlayerPrivacy.none() : privacy;
+        HiddenIdentities secrets = hidden == null ? HiddenIdentities.empty() : hidden;
+        NearDeathEvent view = secrets.isEmpty() ? event : secrets.scrub(event);
+        if (!effective.hideCoordinates()) {
+            return view;
+        }
+        return new NearDeathEvent(
+                view.uuid(),
+                view.name(),
+                view.epochMillis(),
+                view.dimension(),
+                Double.NaN, Double.NaN, Double.NaN,
+                view.causeCategory(),
+                view.causeId(),
+                view.kind());
+    }
+
+    /** True when the event carries the NaN coordinate sentinel written by {@link #apply}. */
+    public static boolean isNearDeathCoordinateHidden(NearDeathEvent event) {
+        return event != null
+                && Double.isNaN(event.x())
+                && Double.isNaN(event.y())
+                && Double.isNaN(event.z());
+    }
+
     /** True when the entry carries the NaN coordinate sentinel written by {@link #apply}. */
     public static boolean isCoordinateHidden(DeathEntry entry) {
         return entry != null
@@ -124,6 +168,10 @@ public final class DeathRedactor {
         for (DeathEntry death : player.deaths()) {
             redacted.add(apply(death, privacy, false, hidden));
         }
+        List<NearDeathEvent> redactedNear = new ArrayList<>(player.nearDeaths().size());
+        for (NearDeathEvent event : player.nearDeaths()) {
+            redactedNear.add(apply(event, privacy, false, hidden));
+        }
         return new PlayerDeaths(
                 player.uuid(),
                 player.name(),
@@ -131,7 +179,10 @@ public final class DeathRedactor {
                 player.hideCoordinates(),
                 player.hidePvpOpponent(),
                 player.discordOptOut(),
-                redacted);
+                redacted,
+                player.vanillaDeathsBaseline(),
+                player.vanillaBaselineCauses(),
+                redactedNear);
     }
 
     /** Redacted copies of a whole snapshot; the input list and records are untouched. */

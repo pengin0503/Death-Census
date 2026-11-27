@@ -153,8 +153,28 @@ public final class Anonymizer {
                                 pseudoByName, secretPattern, secretReplacements),
                         anonymizeContext(d.context(), secretPattern, secretReplacements)));
             }
+            // Near-death saves get the same pseudonyms and coordinate blur as
+            // deaths (§10 privacy); they never join any death aggregate.
+            List<NearDeathEvent> redactedNear = new ArrayList<>(player.nearDeaths().size());
+            for (NearDeathEvent event : player.nearDeaths()) {
+                if (event == null || event.isEmpty()) {
+                    continue;
+                }
+                String nearUuid = anonUuidByUuid.getOrDefault(event.uuid(), anonUuid);
+                String nearName = pseudoByUuid.getOrDefault(event.uuid(), pseudo);
+                redactedNear.add(new NearDeathEvent(
+                        nearUuid,
+                        scrub(nearName, secretPattern, secretReplacements),
+                        event.epochMillis(),
+                        scrub(event.dimension(), secretPattern, secretReplacements),
+                        roundToGrid(event.x()), roundToGrid(event.y()), roundToGrid(event.z()),
+                        scrub(event.causeCategory(), secretPattern, secretReplacements),
+                        scrub(event.causeId(), secretPattern, secretReplacements),
+                        event.kind()));
+            }
             // Privacy flags are meaningless for pseudonyms and are normalized (§6).
-            result.add(new PlayerDeaths(anonUuid, pseudo, false, false, false, false, redactedDeaths));
+            result.add(new PlayerDeaths(anonUuid, pseudo, false, false, false, false,
+                    redactedDeaths, 0, Map.of(), redactedNear));
         }
         return result;
     }

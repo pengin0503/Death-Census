@@ -145,6 +145,7 @@ public final class ExportRenderers {
         appendHotspotsCsv(sb, hotspotLines, hotspotLabel);
         appendDistributionsCsv(sb, distributionLines, distributionLabel);
         appendLoopsCsv(sb, loopLines, loopLabel);
+        appendNearDeathsCsv(sb, NearDeathAnalysis.exportLines(safe, all));
         return sb.toString();
     }
 
@@ -201,6 +202,48 @@ public final class ExportRenderers {
             if (line != null && !line.isBlank()) {
                 sb.append(TextEscaping.csvField(label)).append(',')
                         .append(TextEscaping.csvField(line)).append('\n');
+            }
+        }
+    }
+
+    /** 1.4.0 §10: near-death rows are a separate section, never death rows. */
+    /** 1.4.0 §10: separate aggregate; never folded into totalDeaths or causes. */
+    private static void appendNearDeathsJson(StringBuilder sb, List<String> nearDeathLines,
+                                              List<PlayerDeaths> players) {
+        NearDeathAnalysis.Split split = NearDeathAnalysis.split(players);
+        sb.append("  \"nearDeaths\": {\n");
+        sb.append("    \"section\": \"Near-death saves\",\n");
+        sb.append("    \"total\": ").append(split.total()).append(",\n");
+        sb.append("    \"totem\": ").append(split.totem()).append(",\n");
+        sb.append("    \"cancelled\": ").append(split.cancelled()).append(",\n");
+        sb.append("    \"lines\": [");
+        boolean first = true;
+        if (nearDeathLines != null) {
+            for (String line : nearDeathLines) {
+                if (line == null || line.isBlank()) {
+                    continue;
+                }
+                if (!first) {
+                    sb.append(',');
+                }
+                first = false;
+                sb.append("\n      \"").append(TextEscaping.jsonString(line)).append('"');
+            }
+        }
+        if (!first) {
+            sb.append('\n');
+        }
+        sb.append("    ]\n  },\n");
+    }
+
+    private static void appendNearDeathsCsv(StringBuilder sb, List<String> nearDeathLines) {
+        if (nearDeathLines == null || nearDeathLines.isEmpty()) {
+            return;
+        }
+        sb.append("\nnear_death_section,near_death_line\n");
+        for (String line : nearDeathLines) {
+            if (line != null && !line.isBlank()) {
+                sb.append("Near-death saves,").append(TextEscaping.csvField(line)).append('\n');
             }
         }
     }
@@ -660,6 +703,7 @@ public final class ExportRenderers {
         appendHotspotsJson(sb, hotspotLines, hotspotLabel);
         appendDistributionsJson(sb, distributionLines, distributionLabel);
         appendLoopsJson(sb, loopLines, loopLabel);
+        appendNearDeathsJson(sb, NearDeathAnalysis.exportLines(safePlayers, all), safePlayers);
         sb.append("  \"players\": [");
         if (!safePlayers.isEmpty()) {
             sb.append('\n');
@@ -1046,6 +1090,8 @@ public final class ExportRenderers {
         sb.append("<section class=\"summary\">\n");
         sb.append("<div class=\"card\"><strong>Total Deaths:</strong> ").append(totalDeaths).append("</div>\n");
         sb.append("<div class=\"card\"><strong>Players:</strong> ").append(safePlayers.size()).append("</div>\n");
+        sb.append("<div class=\"card\"><strong>Near-death saves:</strong> ")
+                .append(NearDeathAnalysis.count(safePlayers)).append("</div>\n");
         sb.append("</section>\n");
 
         if (awardLines != null && !awardLines.isEmpty()) {
@@ -1154,6 +1200,21 @@ public final class ExportRenderers {
                 if (line != null && !line.isBlank()) {
                     sb.append("<tr><td>").append(TextEscaping.html(line)).append("</td></tr>\n");
                 }
+            }
+            sb.append("</tbody>\n");
+            sb.append("</table>\n");
+            sb.append("</section>\n");
+        }
+
+        List<String> nearDeathLines = NearDeathAnalysis.exportLines(safePlayers, all);
+        if (!nearDeathLines.isEmpty()) {
+            sb.append("<section>\n");
+            sb.append("<h2>Near-death saves</h2>\n");
+            sb.append("<table>\n");
+            sb.append("<thead><tr><th>Near-death saves</th></tr></thead>\n");
+            sb.append("<tbody>\n");
+            for (String line : nearDeathLines) {
+                sb.append("<tr><td>").append(TextEscaping.html(line)).append("</td></tr>\n");
             }
             sb.append("</tbody>\n");
             sb.append("</table>\n");

@@ -16,6 +16,8 @@ import com.pengin0503.deathcensus.Hotspot;
 import com.pengin0503.deathcensus.HotspotAnalysis;
 import com.pengin0503.deathcensus.NemesisAnalysis;
 import com.pengin0503.deathcensus.NemesisRow;
+import com.pengin0503.deathcensus.NearDeathAnalysis;
+import com.pengin0503.deathcensus.NearDeathEvent;
 import com.pengin0503.deathcensus.Pagination;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.PlayerPrivacy;
@@ -338,7 +340,8 @@ public final class UiActions {
                 ctx.currentSurvivalTicks(viewer),
                 UiPrivacy.anonymousServerTotal(ctx.snapshot()),
                 lastLine,
-                ctx.isAdmin()
+                ctx.isAdmin(),
+                ctx.nearDeathEnabled() && !own.isEmpty() ? NearDeathAnalysis.countFor(own.get(0)) : 0
         );
     }
 
@@ -461,6 +464,7 @@ public final class UiActions {
             case "distribution_time" -> distributionTimeRows(ctx, filtered);
             case "distribution_y" -> distributionYRows(ctx, filtered);
             case "loops" -> loopRows(ctx, filtered);
+            case "neardeath" -> nearDeathRows(ctx, filtered);
             case "survival" -> {
                 List<String> rows = new ArrayList<>();
                 for (DeathEntry death : CensusStats.leaderboardSurvival(filtered, false)) {
@@ -677,6 +681,32 @@ public final class UiActions {
                             + " near " + loop.positionLabel() + " · top: " + loop.topCause());
         }
         return rows;
+    }
+
+    /**
+     * 1.4.0 §10: read-only near-death ranking. Names come from the full snapshot
+     * but opted-out players stay anonymous to an ordinary viewer; no value is
+     * ever added to the death leaderboard or anonymous death totals.
+     */
+    private static List<String> nearDeathRows(UiContext ctx, List<PlayerDeaths> filtered) {
+        if (!ctx.nearDeathEnabled()) {
+            return List.of();
+        }
+        // The command's history row carries six fields; the compact ranking row
+        // reuses the four-field header template (name, total, totem, cancelled).
+        String template = ctx.label("command.deathcensus.neardeath.header");
+        List<NearDeathAnalysis.Row> rows = NearDeathAnalysis.rank(filtered, 0L,
+                WitnessRedactor.namesById(ctx.snapshot()),
+                WitnessRedactor.privacyById(ctx.snapshot()), false);
+        List<String> lines = new ArrayList<>(rows.size());
+        for (NearDeathAnalysis.Row row : rows) {
+            lines.add(template != null && template.contains("%")
+                    ? String.format(Locale.ROOT, template, row.name(), row.total(),
+                            row.totem(), row.cancelled())
+                    : row.name() + " — " + row.total() + " saves (totem " + row.totem()
+                            + ", cancelled " + row.cancelled() + ")");
+        }
+        return lines;
     }
 
     private static String distributionLine(String template, String label, int count, String cause) {

@@ -125,6 +125,11 @@ public interface UiContext {
         return 48;
     }
 
+    /** 1.4.0 §10: the read-only near-death ranking page hides when disabled. */
+    default boolean nearDeathEnabled() {
+        return true;
+    }
+
     /** Resolves a bundled lang key for a language-neutral view row. */
     default String label(String key) {
         return key;

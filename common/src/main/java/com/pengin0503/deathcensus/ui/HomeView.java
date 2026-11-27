@@ -6,8 +6,15 @@ public record HomeView(
         int currentSurvivalTicks,
         int serverTotalDeaths,
         String lastDeathLine,
-        boolean admin
+        boolean admin,
+        int nearDeathSaves
 ) {
+    /** 1.3.0 shape; near-death saves are an additive, separate counter (§10). */
+    public HomeView(int totalDeaths, int currentSurvivalTicks, int serverTotalDeaths,
+                    String lastDeathLine, boolean admin) {
+        this(totalDeaths, currentSurvivalTicks, serverTotalDeaths, lastDeathLine, admin, 0);
+    }
+
     public HomeView {
         lastDeathLine = lastDeathLine == null ? "" : lastDeathLine;
     }
