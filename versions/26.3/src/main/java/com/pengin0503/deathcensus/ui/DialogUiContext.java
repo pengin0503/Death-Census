@@ -131,6 +131,21 @@ public final class DialogUiContext implements UiContext {
     }
 
     @Override
+    public boolean hotspotsEnabled() {
+        return Config.hotspotsEnabled();
+    }
+
+    @Override
+    public int hotspotMinDeaths() {
+        return Config.hotspotMinDeaths();
+    }
+
+    @Override
+    public int hotspotChunkSize() {
+        return Config.hotspotChunkSize();
+    }
+
+    @Override
     public List<ChronicleEvent> chronicleEvents() {
         MinecraftServer server = server();
         return server == null ? List.of() : CensusData.get(server).chronicleEvents();

@@ -306,6 +306,7 @@ public final class DialogUi {
             case "awards" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.awards");
             case "chronicle" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.chronicle");
             case "nemesis" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.nemesis");
+            case "hotspots" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.hotspots");
             default -> view.type();
         };
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
@@ -338,6 +339,9 @@ public final class DialogUi {
         }
         if (Config.nemesisEnabled()) {
             types.add("nemesis");
+        }
+        if (Config.hotspotsEnabled()) {
+            types.add("hotspots");
         }
         List<Input> inputs = List.of(
                 choiceInput(player, "in_type", "command.deathcensus.ui.input.type",
