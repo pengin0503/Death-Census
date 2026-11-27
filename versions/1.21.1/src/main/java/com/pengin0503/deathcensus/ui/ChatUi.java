@@ -271,11 +271,13 @@ public final class ChatUi {
     }
 
     private static void renderRankings(ServerPlayer player, RankingView view) {
-        String typeLabel = "awards".equals(view.type())
-                ? ServerLang.formatForLang(player.clientInformation() != null
-                        ? player.clientInformation().language() : ServerLang.DEFAULT_LANG,
-                        "command.deathcensus.ui.ranking.awards")
-                : view.type();
+        String language = player.clientInformation() != null
+                ? player.clientInformation().language() : ServerLang.DEFAULT_LANG;
+        String typeLabel = switch (view.type()) {
+            case "awards" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.awards");
+            case "chronicle" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.chronicle");
+            default -> view.type();
+        };
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.title"));
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
                 typeLabel, view.period(), view.page(), view.pageCount()));

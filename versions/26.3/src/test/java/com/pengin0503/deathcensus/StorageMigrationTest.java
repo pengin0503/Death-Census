@@ -95,11 +95,16 @@ class StorageMigrationTest {
         assertTrue(pc.deaths.get(0).witnesses().isEmpty());
         assertEquals(DeathContext.EMPTY, pc.deaths.get(0).context());
         assertTrue(pc.nearDeaths.isEmpty());
-        assertTrue(loaded.chronicleEvents.isEmpty());
+        // PR-5: absent aggregate reconstructs only the provable server-first row.
+        assertEquals(1, loaded.chronicleEvents().size());
+        assertEquals(ChronicleEvent.Kind.SERVER_FIRST, loaded.chronicleEvents().get(0).kind());
+        assertTrue(loaded.chronicleEvents().get(0).reconstructed());
 
         CensusData again = load(save(loaded));
         assertTrue(again.playerOrNull(UUID_A).nearDeaths.isEmpty());
-        assertTrue(again.chronicleEvents.isEmpty());
+        // Reconstructed rows are persisted with their flag and no further reconstruction.
+        assertEquals(1, again.chronicleEvents().size());
+        assertTrue(again.chronicleEvents().get(0).reconstructed());
     }
 
     @Test

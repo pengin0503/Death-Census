@@ -19,7 +19,10 @@ import com.pengin0503.deathcensus.Awards;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonAwards;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonLabels;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonSection;
+import com.pengin0503.deathcensus.ChronicleEvent;
+import com.pengin0503.deathcensus.ChronicleRules;
 import com.pengin0503.deathcensus.DeathRedactor;
+import com.pengin0503.deathcensus.HiddenIdentities;
 import com.pengin0503.deathcensus.PlayerPrivacy;
 import com.pengin0503.deathcensus.WitnessAnalysis;
 import com.pengin0503.deathcensus.WitnessRedactor;
@@ -30,6 +33,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -158,6 +162,25 @@ public final class CensusCommands {
                                         IntegerArgumentType.getInteger(ctx, "page")))));
             }
             root.then(awards);
+        }
+
+        // 1.4.0 PR-5: /dc chronicle [oldest|newest] [page] (§3), public and paginated.
+        if (Config.chronicleEnabled()) {
+            LiteralArgumentBuilder<CommandSourceStack> chronicle = literal("chronicle")
+                    .executes(ctx -> chronicle(ctx, "oldest", 1))
+                    .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> chronicle(ctx, "oldest",
+                                    IntegerArgumentType.getInteger(ctx, "page"))));
+            for (String order : List.of("oldest", "newest")) {
+                chronicle.then(literal(order)
+                        .executes(ctx -> chronicle(ctx, order, 1))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> chronicle(ctx, order,
+                                        IntegerArgumentType.getInteger(ctx, "page")))));
+            }
+            root.then(chronicle);
         }
 
         LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
@@ -818,6 +841,9 @@ public final class CensusCommands {
         if (Config.awardsEnabled()) {
             send(ctx, "command.deathcensus.awards.help");
         }
+        if (Config.chronicleEnabled()) {
+            send(ctx, "command.deathcensus.chronicle.help");
+        }
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
@@ -1059,6 +1085,98 @@ public final class CensusCommands {
             }
         }
         return 1;
+    }
+
+    // --------------------------------------------------------------- chronicle (§3)
+
+    private static int chronicle(CommandContext<CommandSourceStack> ctx, String order, int page) {
+        MinecraftServer server = server(ctx);
+        if (server == null || !Config.chronicleEnabled()) {
+            return 0;
+        }
+        List<PlayerDeaths> snapshot = CensusData.get(server).snapshot();
+        List<ChronicleEvent> rows = ChronicleRules.sorted(chronicleRows(server, snapshot,
+                selfUuid(ctx), isAdmin(ctx), false));
+        if ("newest".equalsIgnoreCase(order)) {
+            List<ChronicleEvent> reversed = new ArrayList<>(rows);
+            Collections.reverse(reversed);
+            rows = reversed;
+        }
+        Pagination.Page<ChronicleEvent> p = Pagination.of(rows, page, PAGE_SIZE);
+        send(ctx, "command.deathcensus.chronicle.header", order, rows.size(), p.page(), p.pageCount());
+        if (p.items().isEmpty()) {
+            send(ctx, "command.deathcensus.chronicle.empty");
+        }
+        for (String line : chronicleLines(p.items(), languageOf(ctx))) {
+            sendLiteral(ctx, line);
+        }
+        if (p.pageCount() > 1) {
+            send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+        }
+        return 1;
+    }
+
+    @Nullable
+    private static UUID selfUuid(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer self = ctx.getSource().getPlayer();
+        return self == null ? null : self.getUUID();
+    }
+
+    /**
+     * Public projection of stored chronicle rows. Self/admin keep stored names;
+     * an opted-out player is never named for anyone else. The {@code discord}
+     * flag is the opt-in seam ({@code chronicleInDiscord}, default false) and
+     * applies the discordOptOut filter; PR-5 adds no Discord posts.
+     */
+    static List<ChronicleEvent> chronicleRows(MinecraftServer server, List<PlayerDeaths> snapshot,
+                                              @Nullable UUID viewerUuid, boolean admin, boolean discord) {
+        if (server == null || !Config.chronicleEnabled() || (discord && !Config.chronicleInDiscord())) {
+            return List.of();
+        }
+        Map<String, PlayerPrivacy> privacy = ChronicleRules.privacyById(snapshot);
+        HiddenIdentities hidden = HiddenIdentities.of(snapshot);
+        List<ChronicleEvent> projected = new ArrayList<>();
+        for (ChronicleEvent row : ChronicleRules.sorted(CensusData.get(server).chronicleEvents())) {
+            boolean privileged = admin || (viewerUuid != null
+                    && viewerUuid.toString().equalsIgnoreCase(row.uuid()));
+            projected.add(ChronicleRules.forPublic(row, privacy, hidden, privileged));
+        }
+        return discord ? ChronicleRules.forDiscord(projected, privacy) : List.copyOf(projected);
+    }
+
+    /** Localized, already-projected rows; the reconstructed label is appended once. */
+    static List<String> chronicleLines(List<ChronicleEvent> rows, String language) {
+        List<String> lines = new ArrayList<>();
+        for (ChronicleEvent row : rows) {
+            if (row == null) {
+                continue;
+            }
+            String kind = ServerLang.formatForLang(language, chronicleKindKey(row.kind()));
+            String detail = row.kind() == ChronicleEvent.Kind.TOTAL_COUNT
+                    ? Integer.toString(row.count())
+                    : ChronicleRules.HIDDEN_NAME.equals(row.name())
+                            ? ServerLang.formatForLang(language, "command.deathcensus.chronicle.hidden")
+                            : row.name();
+            String line = ServerLang.formatForLang(language, "command.deathcensus.chronicle.row",
+                    kind, detail, row.gameDay() + 1L);
+            if (row.reconstructed()) {
+                line = line + " (" + ServerLang.formatForLang(language,
+                        "command.deathcensus.chronicle.reconstructed") + ")";
+            }
+            lines.add(line);
+        }
+        return lines;
+    }
+
+    /** Full literal keys avoid dynamically constructed translation keys. */
+    private static String chronicleKindKey(ChronicleEvent.Kind kind) {
+        return switch (kind) {
+            case SERVER_FIRST -> "command.deathcensus.chronicle.kind.server_first";
+            case NETHER_FIRST -> "command.deathcensus.chronicle.kind.nether_first";
+            case END_DRAGON_DEATH -> "command.deathcensus.chronicle.kind.end_dragon_death";
+            case TOTAL_COUNT -> "command.deathcensus.chronicle.kind.total_count";
+            case CATEGORY_COMPLETE -> "command.deathcensus.chronicle.kind.category_complete";
+        };
     }
 
     // --------------------------------------------------------------- awards (§2)

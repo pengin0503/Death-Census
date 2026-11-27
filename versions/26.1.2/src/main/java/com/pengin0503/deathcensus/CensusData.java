@@ -14,6 +14,7 @@ import net.minecraft.world.level.saveddata.SavedDataType;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -530,6 +531,8 @@ public class CensusData extends SavedData {
         public <T> DataResult<Pair<CensusData, T>> decode(DynamicOps<T> ops, T input) {
             return ops.getMap(input).map(map -> {
                 CensusData data = new CensusData();
+                boolean lifetimeDeathsPresent = map.get("lifetimeDeaths") != null;
+                Map<String, Set<String>> storedCategories = new LinkedHashMap<>();
                 T playersValue = map.get("players");
                 if (playersValue != null) {
                     DataResult<MapLike<T>> playersResult = ops.getMap(playersValue);
@@ -541,6 +544,10 @@ public class CensusData extends SavedData {
                                 PlayerCensus pc = decodePlayer(ops, entry.getSecond(), key);
                                 if (pc != null) {
                                     data.players.put(uuid, pc);
+                                    Set<String> categories = storedCategories(ops, entry.getSecond());
+                                    if (!categories.isEmpty()) {
+                                        storedCategories.put(key, categories);
+                                    }
                                 } else {
                                     DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt player entry with key '{}' in SavedData", key);
                                     data.preservedPlayerValues.put(key, preservedCopy(entry.getSecond()));
@@ -569,8 +576,13 @@ public class CensusData extends SavedData {
                     }
                 }
                 data.lifetimeDeaths = storedLifetime;
-                data.chronicleEvents.addAll(decodeList(ops, map, "chronicleEvents",
-                        CHRONICLE_CODEC, "chronicle event"));
+                if (map.get("chronicleEvents") == null) {
+                    // Old save: only rows provable from retained records/counters (§3).
+                    reconstructChronicle(data, lifetimeDeathsPresent, storedCategories);
+                } else {
+                    data.chronicleEvents.addAll(decodeList(ops, map, "chronicleEvents",
+                            CHRONICLE_CODEC, "chronicle event"));
+                }
                 return Pair.of(data, input);
             });
         }
@@ -582,7 +594,7 @@ public class CensusData extends SavedData {
             CODEC);
 
     private final Map<UUID, PlayerCensus> players = new LinkedHashMap<>();
-    /** §3: server-level chronicle rows; empty on old saves, nothing reconstructed in PR-1. */
+    /** §3: server-level chronicle rows; old saves get a labelled, records-only reconstruction. */
     public final List<ChronicleEvent> chronicleEvents = new ArrayList<>();
     private long lastDigestEpochMillis = 0L;
     /** Lifetime deaths across all players; survives trimming of retained records. */
@@ -597,6 +609,80 @@ public class CensusData extends SavedData {
     /** Immutable view of the persisted chronicle aggregate. */
     public List<ChronicleEvent> chronicleEvents() {
         return Collections.unmodifiableList(chronicleEvents);
+    }
+
+    /**
+     * Appends recorded/reconstructed rows through the PR-5 storage seam, dropping
+     * the oldest beyond {@code chronicleMaxEvents} and dirtying the SavedData only
+     * when the aggregate actually changes. One log per overflow batch.
+     */
+    public void addChronicleEvents(Collection<ChronicleEvent> additions) {
+        if (additions == null || additions.isEmpty()) {
+            return;
+        }
+        ChronicleRules.CapResult capped = ChronicleRules.appendBounded(
+                chronicleEvents, additions, Config.chronicleMaxEvents());
+        if (capped.dropped() > 0) {
+            DeathCensus.LOGGER.info("[DeathCensus] Dropped {} oldest chronicle row(s) beyond cap {}",
+                    capped.dropped(), Config.chronicleMaxEvents());
+        }
+        if (!chronicleEvents.equals(capped.events())) {
+            chronicleEvents.clear();
+            chronicleEvents.addAll(capped.events());
+            setDirty();
+        }
+    }
+
+    public void addChronicleEvent(ChronicleEvent event) {
+        addChronicleEvents(event == null ? List.of() : List.of(event));
+    }
+
+    /** Load-only: derives the provable subset when the aggregate field is absent. */
+    private static void reconstructChronicle(CensusData data, boolean lifetimeDeathsPresent,
+                                             Map<String, Set<String>> storedCategories) {
+        if (!Config.chronicleEnabled()) {
+            return;
+        }
+        ChronicleRules.ReconstructionResult result = ChronicleRules.reconstruct(
+                new ChronicleRules.ReconstructionInput(data.snapshot(),
+                        lifetimeDeathsPresent
+                                ? (int) Math.min(data.lifetimeDeaths, Integer.MAX_VALUE) : null,
+                        storedCategories.isEmpty() ? null : storedCategories));
+        ChronicleRules.CapResult capped = ChronicleRules.cap(
+                result.events(), Config.chronicleMaxEvents());
+        if (!capped.events().isEmpty()) {
+            data.chronicleEvents.addAll(capped.events());
+            DeathCensus.LOGGER.info("[DeathCensus] Reconstructed {} chronicle row(s) from retained records",
+                    capped.events().size());
+            if (capped.dropped() > 0) {
+                DeathCensus.LOGGER.info("[DeathCensus] Dropped {} oldest reconstructed chronicle row(s)",
+                        capped.dropped());
+            }
+        }
+    }
+
+    /** Categories actually present in the old player value; empty means "missing". */
+    private static <T> Set<String> storedCategories(DynamicOps<T> ops, T value) {
+        DataResult<MapLike<T>> playerMap = ops.getMap(value);
+        if (playerMap.result().isEmpty()) {
+            return Set.of();
+        }
+        T categoriesValue = playerMap.result().get().get("lifetimeCategories");
+        if (categoriesValue == null) {
+            return Set.of();
+        }
+        DataResult<Consumer<Consumer<T>>> listResult = ops.getList(categoriesValue);
+        if (listResult.result().isEmpty()) {
+            return Set.of();
+        }
+        Set<String> categories = new LinkedHashSet<>();
+        listResult.result().get().accept(element -> {
+            String category = ops.getStringValue(element).result().orElse("");
+            if (CauseClassifier.isKnownCategory(category)) {
+                categories.add(category);
+            }
+        });
+        return categories;
     }
 
     public static CensusData get(MinecraftServer server) {
