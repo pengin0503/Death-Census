@@ -163,6 +163,27 @@ class UiDispatchTest {
     }
 
     @Test
+    void awardsRankingUsesPublicViewAndKeepsAnonymousTotals() {
+        List<PlayerDeaths> players = List.of(
+                TestData.player(TestData.ALICE, "Alice", false,
+                        TestData.death(TestData.ALICE, "Alice", 1_000L, "fall"),
+                        TestData.death(TestData.ALICE, "Alice", 2_000L, "fall")),
+                TestData.player(TestData.BOB, "Bob", true,
+                        TestData.death(TestData.BOB, "Bob", 3_000L, "fall"),
+                        TestData.death(TestData.BOB, "Bob", 4_000L, "fall"),
+                        TestData.death(TestData.BOB, "Bob", 5_000L, "fall")));
+        FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, players));
+        UiRequest request = new UiRequest(TestData.ALICE, "rankings", ctx.token(), 1, "", -1L,
+                Map.of("in_type", "awards", "in_period", "all"));
+        RankingView view = assertInstanceOf(RankingView.class, open(UiActions.handle(request, ctx)));
+        assertEquals("awards", view.type());
+        assertFalse(view.rows().isEmpty());
+        assertTrue(view.rows().stream().allMatch(row -> row.contains("Alice")));
+        assertFalse(view.rows().stream().anyMatch(row -> row.contains("Bob")));
+        assertTrue(view.anonymousTotalsLine().contains("total=5"));
+    }
+
+    @Test
     void privacySaveAppliesAndConsumesSession() {
         FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, List.of()));
         String token = ctx.token();

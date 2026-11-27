@@ -1,6 +1,7 @@
 package com.pengin0503.deathcensus.ui;
 
 import com.pengin0503.deathcensus.CauseClassifier;
+import com.pengin0503.deathcensus.Config;
 import com.pengin0503.deathcensus.DeathContext;
 import com.pengin0503.deathcensus.DeathCensus;
 import com.pengin0503.deathcensus.ServerLang;
@@ -299,8 +300,13 @@ public final class DialogUi {
 
     private static Dialog rankingDialog(ServerPlayer player, RankingView view) {
         List<DialogBody> body = new ArrayList<>();
+        String typeLabel = "awards".equals(view.type())
+                ? ServerLang.formatForLang(player.clientInformation() != null
+                        ? player.clientInformation().language() : ServerLang.DEFAULT_LANG,
+                        "command.deathcensus.ui.ranking.awards")
+                : view.type();
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
-                view.type(), view.period(), view.page(), view.pageCount())));
+                typeLabel, view.period(), view.page(), view.pageCount())));
         if (view.rows().isEmpty()) {
             body.add(line(ServerLang.tr(player, "command.deathcensus.ui.rankings.empty")));
         }
@@ -320,9 +326,13 @@ public final class DialogUi {
                 actionButton(player, "command.deathcensus.ui.next", "ranking_page",
                         Map.of("s", token, "p", Integer.toString(Math.min(Math.max(1, view.pageCount()),
                                 view.page() + 1))), null));
+        List<String> types = new ArrayList<>(List.of("deaths", "survival", "fastest", "rarest"));
+        if (Config.awardsEnabled()) {
+            types.add("awards");
+        }
         List<Input> inputs = List.of(
                 choiceInput(player, "in_type", "command.deathcensus.ui.input.type",
-                        List.of("deaths", "survival", "fastest", "rarest"), view.type()),
+                        types, view.type()),
                 choiceInput(player, "in_period", "command.deathcensus.ui.input.period",
                         HistoryFilter.PERIODS, view.period()));
         return new MultiActionDialog(common(player, "command.deathcensus.ui.rankings.title", body, inputs),

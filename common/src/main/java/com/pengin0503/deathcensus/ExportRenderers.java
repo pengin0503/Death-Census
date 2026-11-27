@@ -28,6 +28,12 @@ public final class ExportRenderers {
 
     private static String renderCsv(List<PlayerDeaths> players, boolean includeContext,
                                     Collection<PlayerDeaths> allPlayers) {
+        return renderCsv(players, includeContext, allPlayers, List.of(), "");
+    }
+
+    private static String renderCsv(List<PlayerDeaths> players, boolean includeContext,
+                                    Collection<PlayerDeaths> allPlayers,
+                                    List<String> awardLines, String awardLabel) {
         List<DeathEntry> rows = new ArrayList<>();
         // Aggregates are never built from these copies; only the rendered rows are.
         List<PlayerDeaths> safe = safePlayerList(players);
@@ -90,7 +96,22 @@ public final class ExportRenderers {
             }
             sb.append('\n');
         }
+        appendAwardsCsv(sb, awardLines, awardLabel);
         return sb.toString();
+    }
+
+    /** 1.4.0 §2: an opt-in second CSV table, never attached to anonymous totals. */
+    private static void appendAwardsCsv(StringBuilder sb, List<String> awardLines, String awardLabel) {
+        if (awardLines == null || awardLines.isEmpty()) {
+            return;
+        }
+        sb.append("\naward_section,award_line\n");
+        for (String line : awardLines) {
+            if (line != null && !line.isBlank()) {
+                sb.append(TextEscaping.csvField(awardLabel)).append(',')
+                        .append(TextEscaping.csvField(line)).append('\n');
+            }
+        }
     }
 
     /** As {@link #toCsv(List)}, but rendered from a redacted copy when requested. */
@@ -112,6 +133,14 @@ public final class ExportRenderers {
                                Collection<PlayerDeaths> fullSnapshot) {
         return renderCsv(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
                 includeContext, fullSnapshot);
+    }
+
+    /** 1.4.0 §2: as above, with an opt-in awards section rendered from localized lines. */
+    public static String toCsv(List<PlayerDeaths> players, boolean anonymize, boolean includeContext,
+                               Collection<PlayerDeaths> fullSnapshot,
+                               List<String> awardLines, String awardLabel) {
+        return renderCsv(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                includeContext, fullSnapshot, awardLines, awardLabel);
     }
 
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
@@ -139,6 +168,16 @@ public final class ExportRenderers {
                                 Collection<PlayerDeaths> fullSnapshot) {
         return renderJson(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
                 generatedAtEpochMillis, anonymize, false, List.of(), includeContext, fullSnapshot);
+    }
+
+    /** 1.4.0 §2: as above, with an opt-in awards section rendered from localized lines. */
+    public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                boolean anonymize, boolean includeContext,
+                                Collection<PlayerDeaths> fullSnapshot,
+                                List<String> awardLines, String awardLabel) {
+        return renderJson(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                generatedAtEpochMillis, anonymize, false, List.of(), includeContext, fullSnapshot,
+                awardLines, awardLabel);
     }
 
     /**
@@ -169,6 +208,15 @@ public final class ExportRenderers {
                                      boolean anonymized, boolean includeBaselines,
                                      List<ChronicleEvent> chronicleEvents, boolean includeContext,
                                      Collection<PlayerDeaths> allPlayers) {
+        return renderJson(players, generatedAtEpochMillis, anonymized, includeBaselines,
+                chronicleEvents, includeContext, allPlayers, List.of(), "");
+    }
+
+    private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                     boolean anonymized, boolean includeBaselines,
+                                     List<ChronicleEvent> chronicleEvents, boolean includeContext,
+                                     Collection<PlayerDeaths> allPlayers,
+                                     List<String> awardLines, String awardLabel) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
@@ -193,6 +241,7 @@ public final class ExportRenderers {
             appendChronicleEvents(sb, ChronicleEvent.copyOf(chronicleEvents), "  ");
             sb.append(",\n");
         }
+        appendAwardsJson(sb, awardLines, awardLabel);
         sb.append("  \"players\": [");
         if (!safePlayers.isEmpty()) {
             sb.append('\n');
@@ -319,17 +368,34 @@ public final class ExportRenderers {
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
                                 boolean anonymize, boolean includeContext, String contextHeader,
                                 Collection<PlayerDeaths> fullSnapshot) {
+        return toHtml(players, generatedAtEpochMillis, zone, anonymize, includeContext,
+                contextHeader, fullSnapshot, List.of(), "");
+    }
+
+    /** 1.4.0 §2: as above, with an opt-in awards section rendered from localized lines. */
+    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                boolean anonymize, boolean includeContext, String contextHeader,
+                                Collection<PlayerDeaths> fullSnapshot,
+                                List<String> awardLines, String awardLabel) {
         List<PlayerDeaths> safePlayers = anonymize
                 ? Anonymizer.apply(players, fullSnapshot)
                 : safePlayerList(players);
         return renderHtml(safePlayers, generatedAtEpochMillis, zone, includeContext,
                 contextHeader == null || contextHeader.isBlank() ? "Context" : contextHeader,
-                fullSnapshot);
+                fullSnapshot, awardLines, awardLabel);
     }
 
     private static String renderHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
                                      boolean includeContext, String contextHeader,
                                      Collection<PlayerDeaths> allPlayers) {
+        return renderHtml(players, generatedAtEpochMillis, zone, includeContext, contextHeader,
+                allPlayers, List.of(), "");
+    }
+
+    private static String renderHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                     boolean includeContext, String contextHeader,
+                                     Collection<PlayerDeaths> allPlayers,
+                                     List<String> awardLines, String awardLabel) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Summaries and rankings stay unredacted (DESIGN §8); timelines render
@@ -371,6 +437,25 @@ public final class ExportRenderers {
         sb.append("<div class=\"card\"><strong>Total Deaths:</strong> ").append(totalDeaths).append("</div>\n");
         sb.append("<div class=\"card\"><strong>Players:</strong> ").append(safePlayers.size()).append("</div>\n");
         sb.append("</section>\n");
+
+        if (awardLines != null && !awardLines.isEmpty()) {
+            sb.append("<section>\n");
+            sb.append("<h2>").append(TextEscaping.html(
+                    awardLabel == null || awardLabel.isBlank() ? "Awards" : awardLabel)).append("</h2>\n");
+            sb.append("<table>\n");
+            sb.append("<thead><tr><th>").append(TextEscaping.html(
+                    awardLabel == null || awardLabel.isBlank() ? "Awards" : awardLabel))
+                    .append("</th></tr></thead>\n");
+            sb.append("<tbody>\n");
+            for (String line : awardLines) {
+                if (line != null && !line.isBlank()) {
+                    sb.append("<tr><td>").append(TextEscaping.html(line)).append("</td></tr>\n");
+                }
+            }
+            sb.append("</tbody>\n");
+            sb.append("</table>\n");
+            sb.append("</section>\n");
+        }
 
         sb.append("<section>\n");
         sb.append("<h2>Cause Statistics</h2>\n");
@@ -515,6 +600,31 @@ public final class ExportRenderers {
         appendPart(sb, "Biome", c.biome());
         appendPart(sb, "Weather", c.weather());
         return sb.toString();
+    }
+
+    /** 1.4.0 §2: JSON awards object, omitted entirely when the section is disabled. */
+    private static void appendAwardsJson(StringBuilder sb, List<String> awardLines, String awardLabel) {
+        if (awardLines == null || awardLines.isEmpty()) {
+            return;
+        }
+        sb.append("  \"awards\": {\n");
+        sb.append("    \"section\": \"").append(TextEscaping.jsonString(awardLabel)).append("\",\n");
+        sb.append("    \"lines\": [");
+        boolean first = true;
+        for (String line : awardLines) {
+            if (line == null || line.isBlank()) {
+                continue;
+            }
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append("\n      \"").append(TextEscaping.jsonString(line)).append('"');
+        }
+        if (!first) {
+            sb.append('\n');
+        }
+        sb.append("    ]\n  },\n");
     }
 
     private static void appendPart(StringBuilder sb, String label, String value) {

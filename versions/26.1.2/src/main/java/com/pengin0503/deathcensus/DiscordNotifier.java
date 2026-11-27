@@ -803,11 +803,27 @@ public final class DiscordNotifier {
         if (now - last < interval) {
             return;
         }
+        // 1.4.0 §2: awards appear only in the digest/season post, never in a
+        // realtime death line. discordOptOut removes names here, not totals.
+        List<String> awardLines = List.of();
+        String discordLang = Config.discordLanguage();
+        if (Config.awardsEnabled() && Config.awardsInDigest()) {
+            List<PlayerDeaths> publicRecent = new ArrayList<>();
+            for (PlayerDeaths player : CensusStats.filterSince(data.snapshot(), last)) {
+                if (player != null && !player.optOutPublic()) {
+                    publicRecent.add(player);
+                }
+            }
+            awardLines = CensusCommands.awardLines(
+                    CensusCommands.computeAwards(server, publicRecent, true), discordLang);
+        }
         String content = DiscordLogic.digestContent(
                 data.snapshot(),
                 last,
                 Config.displayTimeZone(),
-                DiscordLogic.labelsFor(Config.discordLanguage()));
+                DiscordLogic.labelsFor(discordLang),
+                awardLines,
+                ServerLang.formatForLang(discordLang, "discord.deathcensus.awards.section"));
         if (content.isEmpty()) {
             // DESIGN §7.1: zero-death periods advance immediately; no send to confirm.
             data.setLastDigestEpochMillis(now);
