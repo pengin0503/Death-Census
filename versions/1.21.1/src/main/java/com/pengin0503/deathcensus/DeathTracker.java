@@ -54,6 +54,8 @@ public final class DeathTracker {
     private static final int MAX_RESPECTED_KEYS = 10_000;
     /** PR-9 (§8): bounded per-player rings and one-notice-per-key dedupe; never persisted. */
     private static final DeathLoopTracker LOOP_TRACKER = new DeathLoopTracker();
+    /** PR-10 (§9): transient, self-only return guide; no persisted state. */
+    private static final RespawnGuideTracker GUIDE_TRACKER = new RespawnGuideTracker();
 
     private DeathTracker() {
     }
@@ -64,6 +66,7 @@ public final class DeathTracker {
         RECENT_DEATHS.clear();
         RESPECTED.clear();
         LOOP_TRACKER.clear();
+        GUIDE_TRACKER.clear();
     }
 
     static int currentPlayTicks(ServerPlayer player) {
@@ -303,6 +306,126 @@ public final class DeathTracker {
                             loop.positionLabel()));
                 }
             }
+        }
+
+        // PR-10 (§9): a fresh death replaces the previous guide (the "second death"
+        // stop condition). Privacy flags do not apply: this is the victim's own
+        // position, sent only to the victim, never to a public surface.
+        if (Config.enabled() && Config.respawnGuideEnabled()) {
+            GUIDE_TRACKER.begin(player.getUUID(), entry.dimension(), player.getX(), player.getY(),
+                    player.getZ(), deathEpochMillis, guideTick(player), Config.respawnGuideMaxTicks());
+        } else {
+            GUIDE_TRACKER.remove(player.getUUID());
+        }
+    }
+
+    @SubscribeEvent
+    public static void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player) || player instanceof FakePlayer) {
+            return;
+        }
+        UUID uuid = player.getUUID();
+        RespawnGuideState state = GUIDE_TRACKER.get(uuid);
+        if (state == null) {
+            return;
+        }
+        if (!Config.enabled() || !Config.respawnGuideEnabled()) {
+            GUIDE_TRACKER.remove(uuid);
+            return;
+        }
+        long tick = guideTick(player);
+        if (state.expired(tick)) {
+            GUIDE_TRACKER.remove(uuid);
+            return;
+        }
+        String dimension = dimensionId(player);
+        if (!state.sameDimension(dimension)) {
+            // §9: show the dimension id; never invent a cross-dimension bearing.
+            player.sendSystemMessage(ServerLang.tr(player,
+                    "command.deathcensus.respawn.different_dimension",
+                    state.dimension(), RespawnGuideText.remainingTime(state.remainingTicks(tick))));
+            GUIDE_TRACKER.remove(uuid);
+            return;
+        }
+        double dx = state.x() - player.getX();
+        double dy = state.y() - player.getY();
+        double dz = state.z() - player.getZ();
+        int distance = RespawnGuideText.horizontalDistance(dx, dz);
+        int height = RespawnGuideText.heightDifference(state.y(), player.getY());
+        String remaining = RespawnGuideText.remainingTime(state.remainingTicks(tick));
+        // The victim only: no broadcast, no witness data, no public-surface lookup.
+        player.sendSystemMessage(ServerLang.tr(player, "command.deathcensus.respawn.chat",
+                RespawnGuideText.compass(dx, dz), distance,
+                RespawnGuideText.signedHeight(height), remaining));
+        // 1.21.1 exposes displayClientMessage; the 26.x trees use the equivalent
+        // sendSystemMessage(component, true) overlay overload (no custom packets).
+        player.displayClientMessage(ServerLang.tr(player, "command.deathcensus.respawn.actionbar",
+                RespawnGuideText.compass(dx, dz), distance,
+                RespawnGuideText.signedHeight(height), remaining), true);
+        state.markShown(tick);
+    }
+
+    @SubscribeEvent
+    public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            GUIDE_TRACKER.remove(player.getUUID());
+        }
+    }
+
+    /** Exact dimension id of the player's current level, per version API. */
+    private static String dimensionId(ServerPlayer player) {
+        return player.level().dimension().location().toString();
+    }
+
+    /** Server tick driving §9 expiry and the ActionBar throttle. */
+    private static long guideTick(ServerPlayer player) {
+        MinecraftServer server = player.level().getServer();
+        return server != null ? server.getTickCount() : player.level().getGameTime();
+    }
+
+    /** Called from the existing ServerTickEvent.Post handler. */
+    static void tickGuides(MinecraftServer server) {
+        if (server == null) {
+            return;
+        }
+        if (!Config.enabled() || !Config.respawnGuideEnabled()) {
+            // A runtime config change also drops pending guides; never send stale ones.
+            GUIDE_TRACKER.clear();
+            return;
+        }
+        long tick = server.getTickCount();
+        GUIDE_TRACKER.pruneExpired(tick);
+        // Never iterate other players' guide states: look up each viewer's own UUID.
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (player instanceof FakePlayer) {
+                continue;
+            }
+            UUID uuid = player.getUUID();
+            RespawnGuideState state = GUIDE_TRACKER.get(uuid);
+            if (state == null || !state.shown()) {
+                continue;
+            }
+            if (state.expired(tick) || !state.sameDimension(dimensionId(player))) {
+                GUIDE_TRACKER.remove(uuid);
+                continue;
+            }
+            if (!state.dueForRefresh(tick, Config.respawnGuideRefreshTicks())) {
+                continue;
+            }
+            double dx = state.x() - player.getX();
+            double dz = state.z() - player.getZ();
+            if (RespawnGuideText.arrived(dx, dz, Config.respawnGuideArrivalBlocks())) {
+                player.sendSystemMessage(ServerLang.tr(player, "command.deathcensus.respawn.arrival"));
+                GUIDE_TRACKER.remove(uuid);
+                continue;
+            }
+            int distance = RespawnGuideText.horizontalDistance(dx, dz);
+            int height = RespawnGuideText.heightDifference(state.y(), player.getY());
+            String remaining = RespawnGuideText.remainingTime(state.remainingTicks(tick));
+            player.displayClientMessage(ServerLang.tr(player, "command.deathcensus.respawn.actionbar",
+                    RespawnGuideText.compass(dx, dz), distance,
+                    RespawnGuideText.signedHeight(height), remaining), true);
+            state.markRefreshed(tick);
         }
     }
 

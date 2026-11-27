@@ -45,6 +45,7 @@ public class DeathCensus {
 
     private static void onServerTick(ServerTickEvent.Post event) {
         DiscordNotifier.tickDigest(event.getServer());
+        DeathTracker.tickGuides(event.getServer());
     }
 
     private static void onServerStopping(ServerStoppingEvent event) {
