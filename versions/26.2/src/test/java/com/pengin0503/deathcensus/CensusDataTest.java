@@ -154,7 +154,7 @@ class CensusDataTest {
     }
 
     @Test
-    void codecSkipsEpochlessEntriesAndFillsBlankUuidFromPlayerKey() {
+    void codecKeepsEpochZeroEntriesAndFillsBlankUuidFromPlayerKey() {
         UUID uuid = UUID.randomUUID();
         CensusData data = new CensusData();
         data.recordDeath(entry(uuid, "Alice", 0L, 100, 100), 100);
@@ -169,9 +169,10 @@ class CensusDataTest {
 
         CensusData loaded = CensusData.CODEC.parse(ops, root).getOrThrow();
         List<DeathEntry> restored = loaded.playerOrNull(uuid).deaths;
-        assertEquals(1, restored.size());
-        assertEquals(2000L, restored.get(0).epochMillis());
-        assertEquals(uuid.toString(), restored.get(0).playerUuid());
+        assertEquals(2, restored.size(), "codec must accept epoch <= 0 like NBT and backup restore");
+        assertEquals(0L, restored.get(0).epochMillis());
+        assertEquals(2000L, restored.get(1).epochMillis());
+        assertEquals(uuid.toString(), restored.get(1).playerUuid());
     }
 
     @Test

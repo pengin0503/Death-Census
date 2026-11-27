@@ -686,8 +686,8 @@ public final class CensusCommands {
 
     private static String formatEntryLine(DeathEntry raw, PlayerPrivacy privacy, boolean privileged, int index,
                                           Map<String, String> names, Map<String, PlayerPrivacy> privacyById,
-                                          String language) {
-        DeathEntry e = DeathRedactor.apply(raw, privacy, privileged);
+                                          String language, HiddenIdentities hidden) {
+        DeathEntry e = DeathRedactor.apply(raw, privacy, privileged, hidden);
         String coords = DeathRedactor.isCoordinateHidden(e)
                 ? DeathRedactor.COORDINATE_MARKER + ", " + DeathRedactor.COORDINATE_MARKER
                         + ", " + DeathRedactor.COORDINATE_MARKER
@@ -806,7 +806,7 @@ public final class CensusCommands {
         int base = (p.page() - 1) * PAGE_SIZE;
         for (int i = 0; i < p.items().size(); i++) {
             sendLiteral(ctx, formatEntryLine(p.items().get(i), privacy, privileged, p.total() - (base + i),
-                    witnessNames, witnessPrivacy, language));
+                    witnessNames, witnessPrivacy, language, HiddenIdentities.of(snapshot)));
         }
         if (p.pageCount() > 1) {
             send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());

@@ -277,4 +277,34 @@ class ExportRenderersTest {
         assertTrue(json.contains("\"causeId\": \"minecraft:fall\""));
         assertTrue(html.contains("<th>Witnesses</th>"));
     }
+
+    @Test
+    void publicExportsScrubHiddenIdentitiesFromTheFullSnapshot() {
+        // Review S3: Ghost is opted out and filtered out of the export, but is
+        // named in Bob's public record. The dictionary still comes from the
+        // full snapshot, so all three formats must be clean.
+        String ghostUuid = "00000000-0000-0000-0000-000000000001";
+        DeathEntry ghostDeath = new DeathEntry(ghostUuid, "Ghost", T1, 1L, 100, 100,
+                "minecraft:overworld", 1, 2, 3, "fall", "minecraft:fall", "Ghost fell",
+                "", "", "survival", 1, "", "", 0);
+        DeathEntry bobDeath = new DeathEntry("u-bob", "Bob", T2, 2L, 100, 100,
+                "minecraft:overworld", 1, 2, 3, "player", "minecraft:player",
+                "BOB was slain by GHOST and " + ghostUuid,
+                "minecraft:player", "gHoSt", "survival", 1, "GHOST did it", "bye Ghost", 0);
+        PlayerDeaths ghost = new PlayerDeaths(ghostUuid, "Ghost", true, List.of(ghostDeath));
+        PlayerDeaths bob = new PlayerDeaths("u-bob", "Bob", false, List.of(bobDeath));
+        List<PlayerDeaths> full = List.of(ghost, bob);
+        List<PlayerDeaths> exported = List.of(bob);
+
+        for (String rendered : List.of(
+                ExportRenderers.toCsv(exported, false, true, full),
+                ExportRenderers.toJson(exported, T2, false, true, full),
+                ExportRenderers.toHtml(exported, T2, ZoneOffset.UTC, false, true, "Context", full))) {
+            assertFalse(rendered.toLowerCase().contains("ghost"), rendered);
+            assertFalse(rendered.contains(ghostUuid), rendered);
+        }
+        // S2 is explicitly out of scope: backups keep their deliberate redaction
+        // path, and an opted-out player's own name is still in the backup.
+        assertTrue(ExportRenderers.toBackupJson(full, T2).contains("\"name\": \"Ghost\""));
+    }
 }
