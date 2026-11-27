@@ -23,6 +23,8 @@ import com.pengin0503.deathcensus.ChronicleEvent;
 import com.pengin0503.deathcensus.ChronicleRules;
 import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.HiddenIdentities;
+import com.pengin0503.deathcensus.NemesisAnalysis;
+import com.pengin0503.deathcensus.NemesisRow;
 import com.pengin0503.deathcensus.PlayerPrivacy;
 import com.pengin0503.deathcensus.WitnessAnalysis;
 import com.pengin0503.deathcensus.WitnessRedactor;
@@ -181,6 +183,47 @@ public final class CensusCommands {
                                         IntegerArgumentType.getInteger(ctx, "page")))));
             }
             root.then(chronicle);
+        }
+
+        // 1.4.0 PR-6: /dc nemesis [player] [mob|named|pvp] [page] (§4), public.
+        if (Config.nemesisEnabled()) {
+            LiteralArgumentBuilder<CommandSourceStack> nemesis = literal("nemesis")
+                    .executes(ctx -> nemesis(ctx, null, NemesisAnalysis.Mode.MOB_SPECIES, 1))
+                    .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> nemesis(ctx, null, NemesisAnalysis.Mode.MOB_SPECIES,
+                                    IntegerArgumentType.getInteger(ctx, "page"))));
+            for (NemesisAnalysis.Mode mode : NemesisAnalysis.Mode.values()) {
+                nemesis.then(literal(mode.token())
+                        .executes(ctx -> nemesis(ctx, null, mode, 1))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> nemesis(ctx, null, mode,
+                                        IntegerArgumentType.getInteger(ctx, "page")))));
+            }
+            com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, String> nemesisPlayer =
+                    com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, String>argument("player", StringArgumentType.word())
+                            .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
+                            .executes(ctx -> nemesis(ctx, StringArgumentType.getString(ctx, "player"),
+                                    NemesisAnalysis.Mode.MOB_SPECIES, 1))
+                            .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                    .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                    .executes(ctx -> nemesis(ctx, StringArgumentType.getString(ctx, "player"),
+                                            NemesisAnalysis.Mode.MOB_SPECIES,
+                                            IntegerArgumentType.getInteger(ctx, "page"))));
+            for (NemesisAnalysis.Mode mode : NemesisAnalysis.Mode.values()) {
+                com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, Integer> modePage =
+                        com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> nemesis(ctx, StringArgumentType.getString(ctx, "player"),
+                                        mode, IntegerArgumentType.getInteger(ctx, "page")));
+                nemesisPlayer.then(literal(mode.token())
+                        .executes(ctx -> nemesis(ctx, StringArgumentType.getString(ctx, "player"), mode, 1))
+                        .then(modePage));
+            }
+            nemesis.then(nemesisPlayer);
+            root.then(nemesis);
         }
 
         LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
@@ -844,6 +887,9 @@ public final class CensusCommands {
         if (Config.chronicleEnabled()) {
             send(ctx, "command.deathcensus.chronicle.help");
         }
+        if (Config.nemesisEnabled()) {
+            send(ctx, "command.deathcensus.nemesis.help");
+        }
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
@@ -1176,6 +1222,126 @@ public final class CensusCommands {
             case END_DRAGON_DEATH -> "command.deathcensus.chronicle.kind.end_dragon_death";
             case TOTAL_COUNT -> "command.deathcensus.chronicle.kind.total_count";
             case CATEGORY_COMPLETE -> "command.deathcensus.chronicle.kind.category_complete";
+        };
+    }
+
+    // --------------------------------------------------------------- nemesis (§4)
+
+    private static int nemesis(CommandContext<CommandSourceStack> ctx, @Nullable String playerName,
+                               NemesisAnalysis.Mode mode, int page) {
+        MinecraftServer server = server(ctx);
+        if (server == null || !Config.nemesisEnabled()) {
+            return 0;
+        }
+        List<PlayerDeaths> snapshot = CensusData.get(server).snapshot();
+        UUID target;
+        if (playerName == null) {
+            ServerPlayer self = ctx.getSource().getPlayer();
+            if (self == null) {
+                fail(ctx, "command.deathcensus.players_only");
+                return 0;
+            }
+            target = self.getUUID();
+        } else {
+            target = resolvePlayer(server, playerName);
+            if (target == null) {
+                fail(ctx, "command.deathcensus.player_not_found", playerName);
+                return 0;
+            }
+        }
+        String display = playerName == null ? "" : playerName;
+        for (PlayerDeaths player : snapshot) {
+            if (player.uuid().equalsIgnoreCase(target.toString()) && !player.name().isEmpty()) {
+                display = player.name();
+                break;
+            }
+        }
+        if (display.isEmpty()) {
+            display = target.toString();
+        }
+        boolean privileged = isAdmin(ctx) || target.equals(selfUuid(ctx));
+        CensusData.PlayerCensus stored = CensusData.get(server).allPlayers().get(target);
+        if (!privileged && stored != null && stored.optOutPublic) {
+            fail(ctx, "command.deathcensus.opted_out", display);
+            return 0;
+        }
+        List<PlayerDeaths> source = new ArrayList<>();
+        for (PlayerDeaths player : snapshot) {
+            if (player != null && player.uuid().equalsIgnoreCase(target.toString())) {
+                source.add(player);
+            }
+        }
+        List<NemesisRow> rows = nemesisRows(source, snapshot, mode, privileged);
+        Pagination.Page<NemesisRow> p = Pagination.of(rows, page, PAGE_SIZE);
+        String table = ServerLang.formatForLang(languageOf(ctx), nemesisTableKey(mode));
+        send(ctx, "command.deathcensus.nemesis.header", display, table, rows.size(),
+                p.page(), p.pageCount());
+        if (p.items().isEmpty()) {
+            send(ctx, "command.deathcensus.nemesis.empty", display, table);
+        }
+        for (String line : nemesisLines(p.items(), languageOf(ctx))) {
+            sendLiteral(ctx, line);
+        }
+        if (p.pageCount() > 1) {
+            send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+        }
+        return 1;
+    }
+
+    /** Privacy-composed rows for one table; the full snapshot supplies the identity dictionaries. */
+    static List<NemesisRow> nemesisRows(List<PlayerDeaths> source, List<PlayerDeaths> snapshot,
+                                        NemesisAnalysis.Mode mode, boolean privileged) {
+        if (!Config.nemesisEnabled()) {
+            return List.of();
+        }
+        NemesisAnalysis.Mode table = mode == null ? NemesisAnalysis.Mode.MOB_SPECIES : mode;
+        int min = table == NemesisAnalysis.Mode.MOB_SPECIES
+                ? Config.nemesisMinMobCount() : Config.nemesisMinNamedCount();
+        return NemesisAnalysis.rank(source, table, min, snapshot,
+                WitnessRedactor.namesById(snapshot), WitnessRedactor.privacyById(snapshot), privileged);
+    }
+
+    /** Server-wide public rows for exports; opted-out victims never contribute. */
+    static List<NemesisRow> publicNemesisRows(List<PlayerDeaths> snapshot) {
+        if (!Config.nemesisEnabled()) {
+            return List.of();
+        }
+        List<PlayerDeaths> source = new ArrayList<>();
+        for (PlayerDeaths player : snapshot) {
+            if (player != null && !player.optOutPublic()) {
+                source.add(player);
+            }
+        }
+        List<NemesisRow> rows = new ArrayList<>();
+        for (NemesisAnalysis.Mode mode : NemesisAnalysis.Mode.values()) {
+            rows.addAll(nemesisRows(source, snapshot, mode, false));
+        }
+        return rows;
+    }
+
+    /** Localized, already privacy-projected rows for chat, GUI and exports. */
+    static List<String> nemesisLines(List<NemesisRow> rows, String language) {
+        List<String> lines = new ArrayList<>();
+        for (NemesisRow row : rows) {
+            if (row == null) {
+                continue;
+            }
+            String table = ServerLang.formatForLang(language, nemesisTableKey(row.mode()));
+            String rival = row.anonymous()
+                    ? ServerLang.formatForLang(language, "command.deathcensus.nemesis.anonymous")
+                    : row.name();
+            lines.add(ServerLang.formatForLang(language, "command.deathcensus.nemesis.row",
+                    table, rival, row.count()));
+        }
+        return lines;
+    }
+
+    /** Full literal keys avoid dynamically constructed translation keys. */
+    private static String nemesisTableKey(NemesisAnalysis.Mode mode) {
+        return switch (mode) {
+            case MOB_SPECIES -> "command.deathcensus.nemesis.table.mob";
+            case NAMED_RIVAL -> "command.deathcensus.nemesis.table.named";
+            case PVP_RIVAL -> "command.deathcensus.nemesis.table.pvp";
         };
     }
 

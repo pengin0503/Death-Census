@@ -190,4 +190,30 @@ class DeathRedactorTest {
         }
         assertEquals(original, entry(), "redaction never mutates the input");
     }
+
+    @Test
+    void scrubOpponentUsesWordBoundariesAndCaseInsensitiveMatching() {
+        assertEquals("Alex was slain by ",
+                DeathRedactor.scrubOpponent("Alex was slain by Steve", "steve"));
+        assertEquals("Alex was slain by ",
+                DeathRedactor.scrubOpponent("Alex was slain by Steve", "Steve"));
+        assertEquals("Stevenson beat Alex",
+                DeathRedactor.scrubOpponent("Stevenson beat Alex", "Steve"));
+        assertEquals("A toucan flew by",
+                DeathRedactor.scrubOpponent("A toucan flew by", "can"));
+    }
+
+    @Test
+    void scrubOpponentIsNullAndBlankSafe() {
+        assertEquals("", DeathRedactor.scrubOpponent(null, "Steve"));
+        assertEquals("text", DeathRedactor.scrubOpponent("text", ""));
+        assertEquals("text", DeathRedactor.scrubOpponent("text", null));
+        assertEquals("", DeathRedactor.scrubOpponent("Steve", "Steve"));
+    }
+
+    @Test
+    void scrubOpponentMatchesUnicodeNames() {
+        assertEquals(" (slain)", DeathRedactor.scrubOpponent("Séverin (slain)", "séverin"));
+        assertEquals("", DeathRedactor.scrubOpponent("Étoile", "étoile"));
+    }
 }

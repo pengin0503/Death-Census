@@ -305,6 +305,7 @@ public final class DialogUi {
         String typeLabel = switch (view.type()) {
             case "awards" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.awards");
             case "chronicle" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.chronicle");
+            case "nemesis" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.nemesis");
             default -> view.type();
         };
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
@@ -334,6 +335,9 @@ public final class DialogUi {
         }
         if (Config.chronicleEnabled()) {
             types.add("chronicle");
+        }
+        if (Config.nemesisEnabled()) {
+            types.add("nemesis");
         }
         List<Input> inputs = List.of(
                 choiceInput(player, "in_type", "command.deathcensus.ui.input.type",

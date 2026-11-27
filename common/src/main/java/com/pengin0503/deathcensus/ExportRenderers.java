@@ -42,6 +42,16 @@ public final class ExportRenderers {
                                     Collection<PlayerDeaths> allPlayers,
                                     List<String> awardLines, String awardLabel,
                                     List<String> chronicleLines, String chronicleLabel) {
+        return renderCsv(players, includeContext, allPlayers, awardLines, awardLabel,
+                chronicleLines, chronicleLabel, List.of(), "");
+    }
+
+    /** 1.4.0 §4: as above, with an opt-in nemesis section. */
+    private static String renderCsv(List<PlayerDeaths> players, boolean includeContext,
+                                    Collection<PlayerDeaths> allPlayers,
+                                    List<String> awardLines, String awardLabel,
+                                    List<String> chronicleLines, String chronicleLabel,
+                                    List<String> nemesisLines, String nemesisLabel) {
         List<DeathEntry> rows = new ArrayList<>();
         // Aggregates are never built from these copies; only the rendered rows are.
         List<PlayerDeaths> safe = safePlayerList(players);
@@ -106,6 +116,7 @@ public final class ExportRenderers {
         }
         appendAwardsCsv(sb, awardLines, awardLabel);
         appendChronicleCsv(sb, chronicleLines, chronicleLabel);
+        appendNemesisCsv(sb, nemesisLines, nemesisLabel);
         return sb.toString();
     }
 
@@ -132,6 +143,20 @@ public final class ExportRenderers {
         for (String line : awardLines) {
             if (line != null && !line.isBlank()) {
                 sb.append(TextEscaping.csvField(awardLabel)).append(',')
+                        .append(TextEscaping.csvField(line)).append('\n');
+            }
+        }
+    }
+
+    /** 1.4.0 §4: nemesis rows are already privacy-projected by the caller. */
+    private static void appendNemesisCsv(StringBuilder sb, List<String> nemesisLines, String nemesisLabel) {
+        if (nemesisLines == null || nemesisLines.isEmpty()) {
+            return;
+        }
+        sb.append("\n" + "nemesis_section,nemesis_line\n");
+        for (String line : nemesisLines) {
+            if (line != null && !line.isBlank()) {
+                sb.append(TextEscaping.csvField(nemesisLabel)).append(',')
                         .append(TextEscaping.csvField(line)).append('\n');
             }
         }
@@ -173,6 +198,27 @@ public final class ExportRenderers {
                                             List<String> chronicleLines, String chronicleLabel) {
         return renderCsv(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
                 includeContext, fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel);
+    }
+
+    /** 1.4.0 §4: the chronicle entry point gains the new section without losing its name. */
+    public static String toCsvWithChronicle(List<PlayerDeaths> players, boolean anonymize,
+                                            boolean includeContext, Collection<PlayerDeaths> fullSnapshot,
+                                            List<String> awardLines, String awardLabel,
+                                            List<String> chronicleLines, String chronicleLabel,
+                                            List<String> nemesisLines, String nemesisLabel) {
+        return toCsvWithNemesis(players, anonymize, includeContext, fullSnapshot,
+                awardLines, awardLabel, chronicleLines, chronicleLabel, nemesisLines, nemesisLabel);
+    }
+
+    /** 1.4.0 §4: as above, with an opt-in public nemesis section. */
+    public static String toCsvWithNemesis(List<PlayerDeaths> players, boolean anonymize,
+                                          boolean includeContext, Collection<PlayerDeaths> fullSnapshot,
+                                          List<String> awardLines, String awardLabel,
+                                          List<String> chronicleLines, String chronicleLabel,
+                                          List<String> nemesisLines, String nemesisLabel) {
+        return renderCsv(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                includeContext, fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel);
     }
 
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
@@ -228,6 +274,30 @@ public final class ExportRenderers {
                 awardLines, awardLabel, chronicleLines, chronicleLabel);
     }
 
+    /** 1.4.0 §4: the chronicle entry point gains the new section without losing its name. */
+    public static String toJsonWithChronicle(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                             boolean anonymize, boolean includeContext,
+                                             Collection<PlayerDeaths> fullSnapshot,
+                                             List<String> awardLines, String awardLabel,
+                                             List<String> chronicleLines, String chronicleLabel,
+                                             List<String> nemesisLines, String nemesisLabel) {
+        return toJsonWithNemesis(players, generatedAtEpochMillis, anonymize, includeContext,
+                fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel);
+    }
+
+    /** 1.4.0 §4: as above, with an opt-in public nemesis section. */
+    public static String toJsonWithNemesis(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                           boolean anonymize, boolean includeContext,
+                                           Collection<PlayerDeaths> fullSnapshot,
+                                           List<String> awardLines, String awardLabel,
+                                           List<String> chronicleLines, String chronicleLabel,
+                                           List<String> nemesisLines, String nemesisLabel) {
+        return renderJson(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                generatedAtEpochMillis, anonymize, false, List.of(), includeContext, fullSnapshot,
+                awardLines, awardLabel, chronicleLines, chronicleLabel, nemesisLines, nemesisLabel);
+    }
+
     public static String toBackupJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
         return toBackupJson(players, generatedAtEpochMillis, List.of());
     }
@@ -271,6 +341,19 @@ public final class ExportRenderers {
                                      Collection<PlayerDeaths> allPlayers,
                                      List<String> awardLines, String awardLabel,
                                      List<String> chronicleLines, String chronicleLabel) {
+        return renderJson(players, generatedAtEpochMillis, anonymized, includeBaselines,
+                chronicleEvents, includeContext, allPlayers, awardLines, awardLabel,
+                chronicleLines, chronicleLabel, List.of(), "");
+    }
+
+    /** 1.4.0 §4: as above, with an opt-in public nemesis section. */
+    private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                     boolean anonymized, boolean includeBaselines,
+                                     List<ChronicleEvent> chronicleEvents, boolean includeContext,
+                                     Collection<PlayerDeaths> allPlayers,
+                                     List<String> awardLines, String awardLabel,
+                                     List<String> chronicleLines, String chronicleLabel,
+                                     List<String> nemesisLines, String nemesisLabel) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
@@ -297,6 +380,7 @@ public final class ExportRenderers {
         }
         appendAwardsJson(sb, awardLines, awardLabel);
         appendChronicleJson(sb, chronicleLines, chronicleLabel);
+        appendNemesisJson(sb, nemesisLines, nemesisLabel);
         sb.append("  \"players\": [");
         if (!safePlayers.isEmpty()) {
             sb.append('\n');
@@ -441,6 +525,34 @@ public final class ExportRenderers {
                 fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel);
     }
 
+    /** 1.4.0 §4: the chronicle entry point gains the new section without losing its name. */
+    public static String toHtmlWithChronicle(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                             ZoneId zone, boolean anonymize, boolean includeContext,
+                                             String contextHeader, Collection<PlayerDeaths> fullSnapshot,
+                                             List<String> awardLines, String awardLabel,
+                                             List<String> chronicleLines, String chronicleLabel,
+                                             List<String> nemesisLines, String nemesisLabel) {
+        return toHtmlWithNemesis(players, generatedAtEpochMillis, zone, anonymize, includeContext,
+                contextHeader, fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel);
+    }
+
+    /** 1.4.0 §4: as above, with an opt-in public nemesis section. */
+    public static String toHtmlWithNemesis(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                           boolean anonymize, boolean includeContext, String contextHeader,
+                                           Collection<PlayerDeaths> fullSnapshot,
+                                           List<String> awardLines, String awardLabel,
+                                           List<String> chronicleLines, String chronicleLabel,
+                                           List<String> nemesisLines, String nemesisLabel) {
+        List<PlayerDeaths> safePlayers = anonymize
+                ? Anonymizer.apply(players, fullSnapshot)
+                : safePlayerList(players);
+        return renderHtml(safePlayers, generatedAtEpochMillis, zone, includeContext,
+                contextHeader == null || contextHeader.isBlank() ? "Context" : contextHeader,
+                fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel);
+    }
+
     /** 1.4.0 §2: as above, with an opt-in awards section rendered from localized lines. */
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
                                 boolean anonymize, boolean includeContext, String contextHeader,
@@ -475,6 +587,17 @@ public final class ExportRenderers {
                                      Collection<PlayerDeaths> allPlayers,
                                      List<String> awardLines, String awardLabel,
                                      List<String> chronicleLines, String chronicleLabel) {
+        return renderHtml(players, generatedAtEpochMillis, zone, includeContext, contextHeader,
+                allPlayers, awardLines, awardLabel, chronicleLines, chronicleLabel, List.of(), "");
+    }
+
+    /** 1.4.0 §4: as above, with an opt-in public nemesis section. */
+    private static String renderHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                     boolean includeContext, String contextHeader,
+                                     Collection<PlayerDeaths> allPlayers,
+                                     List<String> awardLines, String awardLabel,
+                                     List<String> chronicleLines, String chronicleLabel,
+                                     List<String> nemesisLines, String nemesisLabel) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Summaries and rankings stay unredacted (DESIGN §8); timelines render
@@ -546,6 +669,24 @@ public final class ExportRenderers {
                     .append("</th></tr></thead>\n");
             sb.append("<tbody>\n");
             for (String line : chronicleLines) {
+                if (line != null && !line.isBlank()) {
+                    sb.append("<tr><td>").append(TextEscaping.html(line)).append("</td></tr>\n");
+                }
+            }
+            sb.append("</tbody>\n");
+            sb.append("</table>\n");
+            sb.append("</section>\n");
+        }
+
+        if (nemesisLines != null && !nemesisLines.isEmpty()) {
+            String label = nemesisLabel == null || nemesisLabel.isBlank() ? "Nemesis" : nemesisLabel;
+            sb.append("<section>\n");
+            sb.append("<h2>").append(TextEscaping.html(label)).append("</h2>\n");
+            sb.append("<table>\n");
+            sb.append("<thead><tr><th>").append(TextEscaping.html(label))
+                    .append("</th></tr></thead>\n");
+            sb.append("<tbody>\n");
+            for (String line : nemesisLines) {
                 if (line != null && !line.isBlank()) {
                     sb.append("<tr><td>").append(TextEscaping.html(line)).append("</td></tr>\n");
                 }
@@ -735,6 +876,31 @@ public final class ExportRenderers {
         sb.append("    \"lines\": [");
         boolean first = true;
         for (String line : awardLines) {
+            if (line == null || line.isBlank()) {
+                continue;
+            }
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append("\n      \"").append(TextEscaping.jsonString(line)).append('"');
+        }
+        if (!first) {
+            sb.append('\n');
+        }
+        sb.append("    ]\n  },\n");
+    }
+
+    /** 1.4.0 §4: public nemesis lines are already privacy-projected by the caller. */
+    private static void appendNemesisJson(StringBuilder sb, List<String> nemesisLines, String nemesisLabel) {
+        if (nemesisLines == null || nemesisLines.isEmpty()) {
+            return;
+        }
+        sb.append("  \"nemesis\": {\n");
+        sb.append("    \"section\": \"").append(TextEscaping.jsonString(nemesisLabel)).append("\",\n");
+        sb.append("    \"lines\": [");
+        boolean first = true;
+        for (String line : nemesisLines) {
             if (line == null || line.isBlank()) {
                 continue;
             }

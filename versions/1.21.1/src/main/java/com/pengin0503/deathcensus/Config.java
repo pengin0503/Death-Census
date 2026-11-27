@@ -99,6 +99,24 @@ public final class Config {
             .comment("A named award winner must beat this count (1-100); lower counts stay anonymous.")
             .defineInRange("awardsMinCount", 1, 1, 100);
 
+    // 1.4.0 PR-6 (§4): nemesis tables are derived from killer fields; nothing new is stored.
+    public static final ModConfigSpec.BooleanValue NEMESIS_ENABLED = BUILDER
+            .comment("Enable derived nemesis tables: /dc nemesis, the Nemesis ranking page and export section.",
+                    "All tables are recomputed from retained records; disabling hides every nemesis surface.")
+            .define("nemesisEnabled", true);
+
+    public static final ModConfigSpec.IntValue NEMESIS_MIN_MOB_COUNT = BUILDER
+            .comment("Minimum kill count for a mob-species nemesis row (1-100).")
+            .defineInRange("nemesisMinMobCount", 3, 1, 100);
+
+    public static final ModConfigSpec.IntValue NEMESIS_MIN_NAMED_COUNT = BUILDER
+            .comment("Minimum kill count for a named-mob or PvP rival nemesis row (1-100).")
+            .defineInRange("nemesisMinNamedCount", 2, 1, 100);
+
+    public static final ModConfigSpec.BooleanValue NEMESIS_IN_DIGEST = BUILDER
+            .comment("Opt-in seam for a future nemesis Discord section (default false; PR-6 adds no posts).")
+            .define("nemesisInDigest", false);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -399,6 +417,39 @@ public final class Config {
             return Math.max(1, Math.min(100, AWARDS_MIN_COUNT.get()));
         } catch (IllegalStateException notLoaded) {
             return 1;
+        }
+    }
+
+    public static boolean nemesisEnabled() {
+        try {
+            return NEMESIS_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static int nemesisMinMobCount() {
+        try {
+            return Math.max(1, Math.min(100, NEMESIS_MIN_MOB_COUNT.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 3;
+        }
+    }
+
+    public static int nemesisMinNamedCount() {
+        try {
+            return Math.max(1, Math.min(100, NEMESIS_MIN_NAMED_COUNT.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 2;
+        }
+    }
+
+    /** No new Discord posts in PR-6; this accessor is the opt-in seam. */
+    public static boolean nemesisInDigest() {
+        try {
+            return NEMESIS_IN_DIGEST.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
         }
     }
 
