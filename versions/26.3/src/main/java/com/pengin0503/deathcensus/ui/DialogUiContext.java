@@ -1,5 +1,6 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.ChronicleEvent;
 import com.pengin0503.deathcensus.CensusCommands;
 import com.pengin0503.deathcensus.CensusData;
 import com.pengin0503.deathcensus.CensusLogic;
@@ -107,6 +108,17 @@ public final class DialogUiContext implements UiContext {
     @Override
     public boolean awardsEnabled() {
         return Config.awardsEnabled();
+    }
+
+    @Override
+    public boolean chronicleEnabled() {
+        return Config.chronicleEnabled();
+    }
+
+    @Override
+    public List<ChronicleEvent> chronicleEvents() {
+        MinecraftServer server = server();
+        return server == null ? List.of() : CensusData.get(server).chronicleEvents();
     }
 
     @Override

@@ -1,5 +1,6 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.ChronicleEvent;
 import com.pengin0503.deathcensus.DeathContext;
 import com.pengin0503.deathcensus.DeathEntry;
 import com.pengin0503.deathcensus.DeathRedactor;
@@ -181,6 +182,30 @@ class UiDispatchTest {
         assertTrue(view.rows().stream().allMatch(row -> row.contains("Alice")));
         assertFalse(view.rows().stream().anyMatch(row -> row.contains("Bob")));
         assertTrue(view.anonymousTotalsLine().contains("total=5"));
+    }
+
+    @Test
+    void chronicleRankingProjectsHiddenNamesAndMarksReconstructedRows() {
+        List<PlayerDeaths> players = List.of(
+                TestData.player(TestData.ALICE, "Alice", false,
+                        TestData.death(TestData.ALICE, "Alice", 1_000L, "fall")),
+                TestData.player(TestData.BOB, "Bob", true,
+                        TestData.death(TestData.BOB, "Bob", 2_000L, "fall")));
+        FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, players));
+        ctx.chronicleEvents = List.of(
+                new ChronicleEvent(1_000L, 1L, ChronicleEvent.Kind.SERVER_FIRST,
+                        TestData.BOB.toString(), "Bob", "minecraft:overworld", "", 0, true),
+                new ChronicleEvent(2_000L, 2L, ChronicleEvent.Kind.TOTAL_COUNT,
+                        "", "", "", "", 100, false));
+        UiRequest request = new UiRequest(TestData.ALICE, "rankings", ctx.token(), 1, "", -1L,
+                Map.of("in_type", "chronicle", "in_period", "all"));
+        RankingView view = assertInstanceOf(RankingView.class, open(UiActions.handle(request, ctx)));
+        assertEquals("chronicle", view.type());
+        assertEquals(2, view.rows().size());
+        assertTrue(view.rows().get(0).contains("Anonymous"), view.rows().toString());
+        assertFalse(view.rows().get(0).contains("Bob"), view.rows().toString());
+        assertTrue(view.rows().get(0).contains("reconstructed"), view.rows().toString());
+        assertTrue(view.rows().get(1).contains("100"), view.rows().toString());
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.ChronicleEvent;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.PlayerPrivacy;
 
@@ -47,6 +48,16 @@ public interface UiContext {
     /** Lifetime category completion (1.4.0 §2 CATEGORY_COMPLETE), keyed by UUID. */
     default Map<String, Set<String>> lifetimeCategories() {
         return Map.of();
+    }
+
+    /** 1.4.0 §3: the chronicle page is read-only and hidden when disabled. */
+    default boolean chronicleEnabled() {
+        return true;
+    }
+
+    /** Stored chronicle rows; adapters read them from the version storage. */
+    default List<ChronicleEvent> chronicleEvents() {
+        return List.of();
     }
 
     /** Resolves a bundled lang key for a language-neutral view row. */

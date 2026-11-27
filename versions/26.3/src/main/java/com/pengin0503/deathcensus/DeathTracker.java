@@ -277,6 +277,16 @@ public final class DeathTracker {
                 announceMilestone(server, playerName, milestone, optedOut);
             }
         }
+        // PR-5: chronicle persistence is independent of announcements and opt-outs;
+        // hidden names are scrubbed when a public surface renders the stored row.
+        if (Config.chronicleEnabled()) {
+            boolean netherSeen = data.chronicleEvents().stream()
+                    .anyMatch(e -> e.kind() == ChronicleEvent.Kind.NETHER_FIRST);
+            List<ChronicleEvent> additions = ChronicleRules.eventsFor(entry,
+                    new ChronicleRules.Counters(totalDeathsBefore, netherSeen,
+                            playerDistinctCategoriesBefore, pc.lifetimeCategories.size()));
+            data.addChronicleEvents(additions);
+        }
     }
 
     private static void announceMilestone(MinecraftServer server, String playerName,

@@ -300,11 +300,13 @@ public final class DialogUi {
 
     private static Dialog rankingDialog(ServerPlayer player, RankingView view) {
         List<DialogBody> body = new ArrayList<>();
-        String typeLabel = "awards".equals(view.type())
-                ? ServerLang.formatForLang(player.clientInformation() != null
-                        ? player.clientInformation().language() : ServerLang.DEFAULT_LANG,
-                        "command.deathcensus.ui.ranking.awards")
-                : view.type();
+        String language = player.clientInformation() != null
+                ? player.clientInformation().language() : ServerLang.DEFAULT_LANG;
+        String typeLabel = switch (view.type()) {
+            case "awards" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.awards");
+            case "chronicle" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.chronicle");
+            default -> view.type();
+        };
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
                 typeLabel, view.period(), view.page(), view.pageCount())));
         if (view.rows().isEmpty()) {
@@ -329,6 +331,9 @@ public final class DialogUi {
         List<String> types = new ArrayList<>(List.of("deaths", "survival", "fastest", "rarest"));
         if (Config.awardsEnabled()) {
             types.add("awards");
+        }
+        if (Config.chronicleEnabled()) {
+            types.add("chronicle");
         }
         List<Input> inputs = List.of(
                 choiceInput(player, "in_type", "command.deathcensus.ui.input.type",

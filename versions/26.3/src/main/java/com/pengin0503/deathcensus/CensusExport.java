@@ -54,6 +54,16 @@ public final class CensusExport {
         return "deathcensus-" + timestamp(zone) + (anonymize ? "-anonymized" : "") + suffix + "." + format;
     }
 
+    /** §3: projected, localized chronicle rows for public exports (config-gated). */
+    private static List<String> chronicleLines(MinecraftServer server, List<PlayerDeaths> allPlayers) {
+        if (!Config.chronicleInExport()) {
+            return List.of();
+        }
+        return CensusCommands.chronicleLines(
+                CensusCommands.chronicleRows(server, allPlayers, null, false, false),
+                ServerLang.DEFAULT_LANG);
+    }
+
     /** Writes an export file and returns its path. Format is html, json or csv. */
     @Nullable
     public static Path writeExport(MinecraftServer server, String format, @Nullable UUID onlyPlayer) {
@@ -97,13 +107,17 @@ public final class CensusExport {
                 "command.deathcensus.export.awards");
         List<String> awardLines = CensusCommands.awardLines(
                 CensusCommands.computeAwards(server, players, false), ServerLang.DEFAULT_LANG);
+        // §3: chronicle rows are projected with the same privacy rules as chat/GUI.
+        List<String> chronicleLines = chronicleLines(server, allPlayers);
+        String chronicleHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                "command.deathcensus.export.chronicle");
         String content = switch (format) {
-            case "json" -> ExportRenderers.toJson(players, now, anonymize, includeContext, allPlayers,
-                    awardLines, awardsHeader);
-            case "csv" -> ExportRenderers.toCsv(players, anonymize, includeContext, allPlayers,
-                    awardLines, awardsHeader);
-            default -> ExportRenderers.toHtml(players, now, zone, anonymize, includeContext,
-                    contextHeader, allPlayers, awardLines, awardsHeader);
+            case "json" -> ExportRenderers.toJsonWithChronicle(players, now, anonymize, includeContext,
+                    allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader);
+            case "csv" -> ExportRenderers.toCsvWithChronicle(players, anonymize, includeContext,
+                    allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader);
+            default -> ExportRenderers.toHtmlWithChronicle(players, now, zone, anonymize, includeContext,
+                    contextHeader, allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader);
         };
         String playerName = onlyPlayer != null && !players.isEmpty() ? players.get(0).name() : null;
         Path file = exportsDir(server).resolve(exportFileName(format, playerName, anonymize, zone));
@@ -141,10 +155,12 @@ public final class CensusExport {
         ZoneId zone = Config.displayTimeZone();
         List<String> awardLines = CensusCommands.awardLines(
                 CensusCommands.computeAwards(server, players, false), ServerLang.DEFAULT_LANG);
-        String content = ExportRenderers.toHtml(players, System.currentTimeMillis(), zone, false,
+        String content = ExportRenderers.toHtmlWithChronicle(players, System.currentTimeMillis(), zone, false,
                 Config.deathContextInExports(), ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
                         "command.deathcensus.export.context"), allPlayers, awardLines,
-                ServerLang.formatForLang(ServerLang.DEFAULT_LANG, "command.deathcensus.export.awards"));
+                ServerLang.formatForLang(ServerLang.DEFAULT_LANG, "command.deathcensus.export.awards"),
+                chronicleLines(server, allPlayers), ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                        "command.deathcensus.export.chronicle"));
         Path file = exportsDir(server).resolve("season-" + range.fileNameStamp(zone) + ".html");
         try {
             Files.createDirectories(file.getParent());
@@ -348,7 +364,9 @@ public final class CensusExport {
         int skippedDeaths = 0;
         int skippedEpochless = 0;
         int skippedChronicle = 0;
-        JsonArray chronicleJson = root.getAsJsonArray("chronicleEvents");
+        JsonElement chronicleRaw = root.get("chronicleEvents");
+        JsonArray chronicleJson = chronicleRaw != null && chronicleRaw.isJsonArray()
+                ? chronicleRaw.getAsJsonArray() : null;
         if (chronicleJson != null && chronicleOut != null) {
             for (JsonElement ce : chronicleJson) {
                 try {

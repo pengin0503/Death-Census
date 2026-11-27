@@ -10,6 +10,7 @@ import net.minecraft.world.level.saveddata.SavedData;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -61,7 +62,7 @@ public class CensusData extends SavedData {
     }
 
     private final Map<UUID, PlayerCensus> players = new LinkedHashMap<>();
-    /** §3: server-level chronicle rows; empty on old saves, nothing reconstructed in PR-1. */
+    /** §3: server-level chronicle rows; old saves get a labelled, records-only reconstruction. */
     public final List<ChronicleEvent> chronicleEvents = new ArrayList<>();
     private long lastDigestEpochMillis = 0L;
     /** Lifetime deaths across all players; survives trimming of retained records. */
@@ -76,6 +77,56 @@ public class CensusData extends SavedData {
     /** Immutable view of the persisted chronicle aggregate. */
     public List<ChronicleEvent> chronicleEvents() {
         return Collections.unmodifiableList(chronicleEvents);
+    }
+
+    /**
+     * Appends recorded/reconstructed rows through the PR-5 storage seam, dropping
+     * the oldest beyond {@code chronicleMaxEvents} and dirtying the SavedData only
+     * when the aggregate actually changes. One log per overflow batch.
+     */
+    public void addChronicleEvents(Collection<ChronicleEvent> additions) {
+        if (additions == null || additions.isEmpty()) {
+            return;
+        }
+        ChronicleRules.CapResult capped = ChronicleRules.appendBounded(
+                chronicleEvents, additions, Config.chronicleMaxEvents());
+        if (capped.dropped() > 0) {
+            DeathCensus.LOGGER.info("[DeathCensus] Dropped {} oldest chronicle row(s) beyond cap {}",
+                    capped.dropped(), Config.chronicleMaxEvents());
+        }
+        if (!chronicleEvents.equals(capped.events())) {
+            chronicleEvents.clear();
+            chronicleEvents.addAll(capped.events());
+            setDirty();
+        }
+    }
+
+    public void addChronicleEvent(ChronicleEvent event) {
+        addChronicleEvents(event == null ? List.of() : List.of(event));
+    }
+
+    /** Load-only: derives the provable subset when the aggregate field is absent. */
+    private static void reconstructChronicle(CensusData data, boolean lifetimeDeathsPresent,
+                                             Map<String, Set<String>> storedCategories) {
+        if (!Config.chronicleEnabled()) {
+            return;
+        }
+        ChronicleRules.ReconstructionResult result = ChronicleRules.reconstruct(
+                new ChronicleRules.ReconstructionInput(data.snapshot(),
+                        lifetimeDeathsPresent
+                                ? (int) Math.min(data.lifetimeDeaths, Integer.MAX_VALUE) : null,
+                        storedCategories.isEmpty() ? null : storedCategories));
+        ChronicleRules.CapResult capped = ChronicleRules.cap(
+                result.events(), Config.chronicleMaxEvents());
+        if (!capped.events().isEmpty()) {
+            data.chronicleEvents.addAll(capped.events());
+            DeathCensus.LOGGER.info("[DeathCensus] Reconstructed {} chronicle row(s) from retained records",
+                    capped.events().size());
+            if (capped.dropped() > 0) {
+                DeathCensus.LOGGER.info("[DeathCensus] Dropped {} oldest reconstructed chronicle row(s)",
+                        capped.dropped());
+            }
+        }
     }
 
     public static CensusData get(MinecraftServer server) {
@@ -653,6 +704,9 @@ public class CensusData extends SavedData {
 
     public static CensusData load(CompoundTag tag, HolderLookup.Provider provider) {
         CensusData data = new CensusData();
+        boolean chronicleAbsent = !tag.contains("chronicleEvents", Tag.TAG_LIST);
+        boolean lifetimeDeathsPresent = tag.contains("lifetimeDeaths", Tag.TAG_ANY_NUMERIC);
+        Map<String, Set<String>> storedCategories = new LinkedHashMap<>();
         // A present-but-wrong-typed container is corruption, not an old save:
         // never replace it with players:{} on the next autosave (B1).
         if (tag.contains("players") && !tag.contains("players", Tag.TAG_COMPOUND)) {
@@ -760,7 +814,9 @@ public class CensusData extends SavedData {
                     }
                 }
             }
-            if (!usableCategory) {
+            if (usableCategory) {
+                storedCategories.put(uuidKey, Collections.unmodifiableSet(new LinkedHashSet<>(pc.lifetimeCategories)));
+            } else {
                 // Missing or unusable list: derive it from the retained deaths.
                 initializeCategoriesFromDeaths(pc);
             }
@@ -784,7 +840,7 @@ public class CensusData extends SavedData {
                 data.lifetimeDeaths += pc.deaths.size();
             }
         }
-        if (tag.contains("chronicleEvents", Tag.TAG_LIST)) {
+        if (!chronicleAbsent) {
             if (tag.get("chronicleEvents") instanceof ListTag events) {
                 for (Tag raw : events) {
                     ChronicleEvent e = raw instanceof CompoundTag c ? chronicleFromTag(c) : null;
@@ -797,6 +853,9 @@ public class CensusData extends SavedData {
             } else {
                 DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed chronicle list in SavedData");
             }
+        } else {
+            // Old save: only rows provable from retained records/counters (§3).
+            reconstructChronicle(data, lifetimeDeathsPresent, storedCategories);
         }
         return data;
     }

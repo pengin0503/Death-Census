@@ -62,6 +62,24 @@ public final class Config {
                     "Backups always keep it; turning this off only affects public export surfaces.")
             .define("deathContextInExports", true);
 
+    // 1.4.0 PR-5 (§3): world chronicle; old worlds get a labelled, records-only reconstruction.
+    public static final ModConfigSpec.BooleanValue CHRONICLE_ENABLED = BUILDER
+            .comment("Persist world chronicle events (DESIGN 1.4.0 §3).",
+                    "Missing history is never filled in; old worlds reconstruct only provable rows.")
+            .define("chronicleEnabled", true);
+
+    public static final ModConfigSpec.IntValue CHRONICLE_MAX_EVENTS = BUILDER
+            .comment("Maximum persisted chronicle rows (0-1000); the oldest are dropped beyond this.")
+            .defineInRange("chronicleMaxEvents", 200, 0, 1000);
+
+    public static final ModConfigSpec.BooleanValue CHRONICLE_IN_EXPORT = BUILDER
+            .comment("Include the chronicle section in JSON/CSV/HTML exports (default true).")
+            .define("chronicleInExport", true);
+
+    public static final ModConfigSpec.BooleanValue CHRONICLE_IN_DISCORD = BUILDER
+            .comment("Opt-in seam for future chronicle Discord rows (default false; PR-5 adds no new posts).")
+            .define("chronicleInDiscord", false);
+
     // 1.4.0 PR-4 (§2): derived awards are read-only; no stored winner history.
     public static final ModConfigSpec.BooleanValue AWARDS_ENABLED = BUILDER
             .comment("Enable derived awards/titles: /dc awards, the awards ranking page, export and digest sections.",
@@ -312,6 +330,40 @@ public final class Config {
             return DEATH_CONTEXT_IN_EXPORTS.get();
         } catch (IllegalStateException notLoaded) {
             return true;
+        }
+    }
+
+    /** Chronicle recording is on by default; the cap bounds stored history. */
+    public static boolean chronicleEnabled() {
+        try {
+            return CHRONICLE_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static int chronicleMaxEvents() {
+        try {
+            return Math.max(0, Math.min(1000, CHRONICLE_MAX_EVENTS.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 200;
+        }
+    }
+
+    public static boolean chronicleInExport() {
+        try {
+            return CHRONICLE_IN_EXPORT.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** No new Discord posts today; this is the opt-in seam for later. */
+    public static boolean chronicleInDiscord() {
+        try {
+            return CHRONICLE_IN_DISCORD.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
         }
     }
 

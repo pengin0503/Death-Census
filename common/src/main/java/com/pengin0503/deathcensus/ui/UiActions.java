@@ -2,6 +2,8 @@ package com.pengin0503.deathcensus.ui;
 
 import com.pengin0503.deathcensus.AwardResult;
 import com.pengin0503.deathcensus.Awards;
+import com.pengin0503.deathcensus.ChronicleEvent;
+import com.pengin0503.deathcensus.ChronicleRules;
 import com.pengin0503.deathcensus.CensusStats;
 import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
@@ -444,6 +446,7 @@ public final class UiActions {
         List<PlayerDeaths> filtered = CensusStats.filterSince(ctx.snapshot(), since);
         List<String> entries = switch (selection.type()) {
             case "awards" -> awardRows(ctx, filtered);
+            case "chronicle" -> chronicleRows(ctx, since);
             case "survival" -> {
                 List<String> rows = new ArrayList<>();
                 for (DeathEntry death : CensusStats.leaderboardSurvival(filtered, false)) {
@@ -505,6 +508,51 @@ public final class UiActions {
             rows.add(line);
         }
         return rows;
+    }
+
+    /** 1.4.0 §3: read-only timeline rows, projected with the wave-1 privacy path. */
+    private static List<String> chronicleRows(UiContext ctx, long sinceMillis) {
+        if (!ctx.chronicleEnabled()) {
+            return List.of();
+        }
+        List<PlayerDeaths> full = ctx.snapshot();
+        Map<String, PlayerPrivacy> privacy = ChronicleRules.privacyById(full);
+        HiddenIdentities hidden = HiddenIdentities.of(full);
+        String template = ctx.label("command.deathcensus.chronicle.row");
+        List<String> rows = new ArrayList<>();
+        for (ChronicleEvent event : ChronicleRules.sorted(ctx.chronicleEvents())) {
+            if (sinceMillis > 0L && event.epochMillis() < sinceMillis) {
+                continue;
+            }
+            UUID uuid = parseUuidOrNull(event.uuid());
+            boolean privileged = ctx.isAdmin() || (uuid != null && ctx.isSelf(uuid));
+            ChronicleEvent view = ChronicleRules.forPublic(event, privacy, hidden, privileged);
+            String kind = ctx.label(chronicleKindKey(view.kind()));
+            String detail = view.kind() == ChronicleEvent.Kind.TOTAL_COUNT
+                    ? Integer.toString(view.count())
+                    : ChronicleRules.HIDDEN_NAME.equals(view.name())
+                            ? ctx.label("command.deathcensus.chronicle.hidden")
+                            : view.name();
+            String line = template.contains("%")
+                    ? String.format(Locale.ROOT, template, kind, detail, view.gameDay() + 1L)
+                    : kind + ": " + detail;
+            if (view.reconstructed()) {
+                line = line + " (" + ctx.label("command.deathcensus.chronicle.reconstructed") + ")";
+            }
+            rows.add(line);
+        }
+        return rows;
+    }
+
+    /** Full literal keys keep the version-side lang-key scanner happy. */
+    private static String chronicleKindKey(ChronicleEvent.Kind kind) {
+        return switch (kind) {
+            case SERVER_FIRST -> "command.deathcensus.chronicle.kind.server_first";
+            case NETHER_FIRST -> "command.deathcensus.chronicle.kind.nether_first";
+            case END_DRAGON_DEATH -> "command.deathcensus.chronicle.kind.end_dragon_death";
+            case TOTAL_COUNT -> "command.deathcensus.chronicle.kind.total_count";
+            case CATEGORY_COMPLETE -> "command.deathcensus.chronicle.kind.category_complete";
+        };
     }
 
     /** Full literal keys keep the version-side lang-key scanner happy. */

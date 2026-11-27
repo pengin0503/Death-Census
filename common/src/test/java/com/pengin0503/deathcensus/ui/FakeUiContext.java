@@ -1,5 +1,6 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.ChronicleEvent;
 import com.pengin0503.deathcensus.DeathEntry;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.PlayerPrivacy;
@@ -27,6 +28,8 @@ final class FakeUiContext implements UiContext {
     boolean respectResult = true;
     boolean deleteResult = true;
     boolean optOut;
+    boolean chronicleEnabled = true;
+    List<ChronicleEvent> chronicleEvents = List.of();
     boolean privacyOtherAllowed;
     final Map<UUID, PlayerPrivacy> privacy = new HashMap<>();
 
@@ -64,6 +67,30 @@ final class FakeUiContext implements UiContext {
     @Override
     public boolean canManagePrivacy(UUID target) {
         return UiPrivacy.canManagePrivacy(viewer, target, privacyOtherAllowed || admin);
+    }
+
+    @Override
+    public boolean chronicleEnabled() {
+        return chronicleEnabled;
+    }
+
+    @Override
+    public List<ChronicleEvent> chronicleEvents() {
+        return chronicleEvents;
+    }
+
+    @Override
+    public String label(String key) {
+        if (key == null) {
+            return "";
+        }
+        return switch (key) {
+            case "command.deathcensus.chronicle.row" -> "%s — %s · day %s";
+            case "command.deathcensus.chronicle.hidden" -> "Anonymous";
+            case "command.deathcensus.chronicle.reconstructed" -> "reconstructed";
+            default -> key.contains(".chronicle.kind.")
+                    ? key.substring(key.lastIndexOf('.') + 1) : key;
+        };
     }
 
     @Override
