@@ -60,6 +60,21 @@ public interface UiContext {
         return List.of();
     }
 
+    /** 1.4.0 §4: the read-only Nemesis ranking page hides when disabled. */
+    default boolean nemesisEnabled() {
+        return true;
+    }
+
+    /** Minimum kill count before a mob-species row is listed on the Nemesis page. */
+    default int nemesisMinMobCount() {
+        return 3;
+    }
+
+    /** Minimum kill count before a named-mob/PvP row is listed on the Nemesis page. */
+    default int nemesisMinNamedCount() {
+        return 2;
+    }
+
     /** Resolves a bundled lang key for a language-neutral view row. */
     default String label(String key) {
         return key;

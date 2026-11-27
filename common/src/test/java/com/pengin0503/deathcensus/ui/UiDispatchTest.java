@@ -185,6 +185,29 @@ class UiDispatchTest {
     }
 
     @Test
+    void nemesisRankingShowsOwnMobAndPvpTables() {
+        DeathEntry creeper = nemesisDeath("minecraft:creeper", "", false);
+        DeathEntry steve = nemesisDeath("minecraft:player", "Steve", true);
+        List<PlayerDeaths> players = List.of(new PlayerDeaths(
+                TestData.ALICE.toString(), "Alice", false, false, false, false,
+                List.of(creeper, creeper, creeper, steve, steve)));
+        FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, players));
+        UiRequest request = new UiRequest(TestData.ALICE, "rankings", ctx.token(), 1, "", -1L,
+                Map.of("in_type", "nemesis", "in_period", "all"));
+        RankingView view = assertInstanceOf(RankingView.class, open(UiActions.handle(request, ctx)));
+        assertEquals("nemesis", view.type());
+        assertEquals(2, view.rows().size());
+        assertTrue(view.rows().get(0).contains("Mob species: minecraft:creeper — 3"), view.rows().toString());
+        assertTrue(view.rows().get(1).contains("PvP rival: Steve — 2"), view.rows().toString());
+    }
+
+    private static DeathEntry nemesisDeath(String killerType, String killerName, boolean playerCause) {
+        return new DeathEntry(TestData.ALICE.toString(), "Alice", 1_000L, 1L, 10, 10,
+                "minecraft:overworld", 0, 0, 0, playerCause ? "player" : "mob", killerType,
+                "slain", killerType, killerName, "survival", 0, "", "", 0);
+    }
+
+    @Test
     void chronicleRankingProjectsHiddenNamesAndMarksReconstructedRows() {
         List<PlayerDeaths> players = List.of(
                 TestData.player(TestData.ALICE, "Alice", false,

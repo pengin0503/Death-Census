@@ -88,6 +88,11 @@ final class FakeUiContext implements UiContext {
             case "command.deathcensus.chronicle.row" -> "%s — %s · day %s";
             case "command.deathcensus.chronicle.hidden" -> "Anonymous";
             case "command.deathcensus.chronicle.reconstructed" -> "reconstructed";
+            case "command.deathcensus.nemesis.row" -> "%s: %s — %s";
+            case "command.deathcensus.nemesis.anonymous" -> "Anonymous";
+            case "command.deathcensus.nemesis.table.mob" -> "Mob species";
+            case "command.deathcensus.nemesis.table.named" -> "Named rival";
+            case "command.deathcensus.nemesis.table.pvp" -> "PvP rival";
             default -> key.contains(".chronicle.kind.")
                     ? key.substring(key.lastIndexOf('.') + 1) : key;
         };

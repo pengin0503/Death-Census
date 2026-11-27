@@ -9,6 +9,8 @@ import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
 import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.HiddenIdentities;
+import com.pengin0503.deathcensus.NemesisAnalysis;
+import com.pengin0503.deathcensus.NemesisRow;
 import com.pengin0503.deathcensus.Pagination;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.PlayerPrivacy;
@@ -447,6 +449,7 @@ public final class UiActions {
         List<String> entries = switch (selection.type()) {
             case "awards" -> awardRows(ctx, filtered);
             case "chronicle" -> chronicleRows(ctx, since);
+            case "nemesis" -> nemesisRows(ctx, filtered);
             case "survival" -> {
                 List<String> rows = new ArrayList<>();
                 for (DeathEntry death : CensusStats.leaderboardSurvival(filtered, false)) {
@@ -542,6 +545,57 @@ public final class UiActions {
             rows.add(line);
         }
         return rows;
+    }
+
+    /**
+     * 1.4.0 §4: read-only own-nemesis tables. The viewer keeps truthful rival
+     * names for their own records (the same self/admin rule {@link DeathRedactor}
+     * applies); public lookups of other players go through the command's
+     * restricted projection instead.
+     */
+    private static List<String> nemesisRows(UiContext ctx, List<PlayerDeaths> filtered) {
+        if (!ctx.nemesisEnabled() || ctx.viewer() == null) {
+            return List.of();
+        }
+        String viewer = ctx.viewer().toString();
+        List<PlayerDeaths> own = new ArrayList<>();
+        for (PlayerDeaths player : filtered) {
+            if (player != null && viewer.equalsIgnoreCase(player.uuid()) && !player.deaths().isEmpty()) {
+                own.add(player);
+            }
+        }
+        if (own.isEmpty()) {
+            return List.of();
+        }
+        List<PlayerDeaths> full = ctx.snapshot();
+        Map<String, String> names = WitnessRedactor.namesById(full);
+        Map<String, PlayerPrivacy> privacy = WitnessRedactor.privacyById(full);
+        boolean privileged = ctx.isAdmin() || ctx.isSelf(ctx.viewer());
+        String template = ctx.label("command.deathcensus.nemesis.row");
+        String anonymous = ctx.label("command.deathcensus.nemesis.anonymous");
+        List<String> rows = new ArrayList<>();
+        for (NemesisAnalysis.Mode mode : NemesisAnalysis.Mode.values()) {
+            int min = mode == NemesisAnalysis.Mode.MOB_SPECIES
+                    ? ctx.nemesisMinMobCount() : ctx.nemesisMinNamedCount();
+            String table = ctx.label(nemesisTableKey(mode));
+            for (NemesisRow row : NemesisAnalysis.rank(own, mode, min, full,
+                    names, privacy, privileged)) {
+                String rival = row.anonymous() && !anonymous.isBlank() ? anonymous : row.name();
+                rows.add(template.contains("%")
+                        ? String.format(Locale.ROOT, template, table, rival, row.count())
+                        : table + ": " + rival + " — " + row.count());
+            }
+        }
+        return rows;
+    }
+
+    /** Full literal keys keep the version-side lang-key scanner happy. */
+    private static String nemesisTableKey(NemesisAnalysis.Mode mode) {
+        return switch (mode) {
+            case MOB_SPECIES -> "command.deathcensus.nemesis.table.mob";
+            case NAMED_RIVAL -> "command.deathcensus.nemesis.table.named";
+            case PVP_RIVAL -> "command.deathcensus.nemesis.table.pvp";
+        };
     }
 
     /** Full literal keys keep the version-side lang-key scanner happy. */

@@ -179,4 +179,15 @@ public final class DeathRedactor {
         matcher.appendTail(sb);
         return sb.toString();
     }
+
+    /**
+     * Public seam for the opponent-name scrub reused by derived tables such as
+     * nemesis (DESIGN 1.4.0 §4). It applies exactly the same Unicode-safe word
+     * boundary helper as {@link #apply} uses for {@code hidePvpOpponent}; the
+     * caller decides whether to substitute a lang-keyed anonymous marker for
+     * the removed name. Self/admin callers never reach this method.
+     */
+    public static String scrubOpponent(String text, String name) {
+        return name == null ? (text == null ? "" : text) : scrub(text, name);
+    }
 }

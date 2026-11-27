@@ -276,6 +276,7 @@ public final class ChatUi {
         String typeLabel = switch (view.type()) {
             case "awards" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.awards");
             case "chronicle" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.chronicle");
+            case "nemesis" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.nemesis");
             default -> view.type();
         };
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.title"));

@@ -116,6 +116,21 @@ public final class DialogUiContext implements UiContext {
     }
 
     @Override
+    public boolean nemesisEnabled() {
+        return Config.nemesisEnabled();
+    }
+
+    @Override
+    public int nemesisMinMobCount() {
+        return Config.nemesisMinMobCount();
+    }
+
+    @Override
+    public int nemesisMinNamedCount() {
+        return Config.nemesisMinNamedCount();
+    }
+
+    @Override
     public List<ChronicleEvent> chronicleEvents() {
         MinecraftServer server = server();
         return server == null ? List.of() : CensusData.get(server).chronicleEvents();
