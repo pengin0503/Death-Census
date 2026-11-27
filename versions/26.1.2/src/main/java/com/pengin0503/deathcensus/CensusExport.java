@@ -46,8 +46,11 @@ public final class CensusExport {
     @Nullable
     public static Path writeExport(MinecraftServer server, String format, @Nullable UUID onlyPlayer) {
         CensusData data = CensusData.get(server);
+        // S3: the hidden-identity dictionary is derived from the FULL snapshot;
+        // `players` below is only the exported subset of it.
+        List<PlayerDeaths> allPlayers = data.snapshot();
         List<PlayerDeaths> players = new ArrayList<>();
-        for (PlayerDeaths pd : data.snapshot()) {
+        for (PlayerDeaths pd : allPlayers) {
             if (onlyPlayer != null) {
                 if (pd.uuid().equals(onlyPlayer.toString())) {
                     // DESIGN §8: opted-out players appear in exports only with the config flag.
@@ -65,9 +68,9 @@ public final class CensusExport {
         long now = System.currentTimeMillis();
         ZoneId zone = Config.displayTimeZone();
         String content = switch (format) {
-            case "json" -> ExportRenderers.toJson(players, now);
-            case "csv" -> ExportRenderers.toCsv(players);
-            default -> ExportRenderers.toHtml(players, now, zone);
+            case "json" -> ExportRenderers.toJson(players, now, allPlayers);
+            case "csv" -> ExportRenderers.toCsv(players, allPlayers);
+            default -> ExportRenderers.toHtml(players, now, zone, allPlayers);
         };
         String suffix = "";
         if (onlyPlayer != null && !players.isEmpty()) {
@@ -98,18 +101,20 @@ public final class CensusExport {
     private static Path writeBackup(MinecraftServer server, @Nullable Path protectedSource) {
         CensusData data = CensusData.get(server);
         long now = System.currentTimeMillis();
-        String name = BackupLogic.backupFileName(now, Config.displayTimeZone());
-        // Backup names have second granularity: a safety backup made in the same
-        // second as the restore source would otherwise target the source itself.
+        // Millisecond + UUID uniqueness (M4): a freshly requested safety backup
+        // must never reuse a file written by an earlier backup in the same second.
+        String name = BackupLogic.uniqueBackupFileName(now, Config.displayTimeZone());
         if (protectedSource != null && protectedSource.getFileName().toString().equals(name)) {
             name = name.substring(0, name.length() - ".json".length()) + "-pre-restore.json";
         }
         Path file = backupsDir(server).resolve(name);
         try {
             Files.createDirectories(file.getParent());
-            // Two auto-backups can fire in the same second (server stop + final world save).
+            // Even a random collision must be refused: reporting an existing
+            // file as a new safety backup would hide a stale pre-mutation copy.
             if (Files.exists(file)) {
-                return file;
+                DeathCensus.LOGGER.error("[DeathCensus] Backup name collision, refusing to overwrite '{}'", file);
+                return null;
             }
             Files.writeString(file, ExportRenderers.toJson(data.snapshot(), now), StandardCharsets.UTF_8);
             // The just-written safety backup must not be pruned while protecting the source.
@@ -240,65 +245,111 @@ public final class CensusExport {
         }
     }
 
-    /** Parses the JSON produced by {@link ExportRenderers#toJson}; null on malformed input. */
+    /**
+     * Parses the JSON produced by {@link ExportRenderers#toJson}; null only when
+     * the file itself is unreadable. Per DESIGN §3.3, a corrupt player or death
+     * entry is skipped with a warning while all valid siblings are retained.
+     */
     @Nullable
     static List<PlayerDeaths> parseBackupJson(String json) {
+        JsonObject root;
+        JsonArray playersJson;
         try {
-            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-            JsonArray playersJson = root.getAsJsonArray("players");
-            if (playersJson == null) {
-                return null;
-            }
-            List<PlayerDeaths> players = new ArrayList<>();
-            int skippedTotal = 0;
-            for (JsonElement pe : playersJson) {
-                JsonObject p = pe.getAsJsonObject();
-                String uuid = p.get("uuid").getAsString();
-                UUID.fromString(uuid);
-                String name = p.has("name") ? p.get("name").getAsString() : "";
-                boolean optOut = p.has("optOutPublic") && p.get("optOutPublic").getAsBoolean();
-                List<DeathEntry> deaths = new ArrayList<>();
-                int skipped = 0;
-                JsonArray deathsJson = p.getAsJsonArray("deaths");
-                if (deathsJson != null) {
-                    for (JsonElement de : deathsJson) {
-                        JsonObject d = de.getAsJsonObject();
-                        // Absent epoch means "unknown time", not epoch 0: never restore it as a record.
-                        if (!d.has("epochMillis")) {
-                            skipped++;
-                            continue;
-                        }
-                        deaths.add(new DeathEntry(
-                                uuid,
-                                str(d, "playerName"),
-                                lng(d, "epochMillis"),
-                                lng(d, "gameDay"),
-                                integer(d, "playTicks"),
-                                integer(d, "survivalTicks"),
-                                str(d, "dimension"),
-                                dbl(d, "x"), dbl(d, "y"), dbl(d, "z"),
-                                str(d, "causeCategory"),
-                                str(d, "causeId"),
-                                str(d, "deathMessage"),
-                                str(d, "killerType"),
-                                str(d, "killerName"),
-                                str(d, "gameMode"),
-                                integer(d, "experienceLevel"),
-                                str(d, "excuse"),
-                                str(d, "lastWords"),
-                                integer(d, "fCount")));
-                    }
-                }
-                players.add(new PlayerDeaths(uuid, name, optOut, deaths));
-                skippedTotal += skipped;
-            }
-            if (skippedTotal > 0) {
-                DeathCensus.LOGGER.warn("[DeathCensus] Skipped {} backup death record(s) without epochMillis", skippedTotal);
-            }
-            return players;
+            root = JsonParser.parseString(json).getAsJsonObject();
+            playersJson = root.getAsJsonArray("players");
         } catch (RuntimeException e) {
             return null;
         }
+        if (playersJson == null) {
+            return null;
+        }
+        List<PlayerDeaths> players = new ArrayList<>();
+        int skippedPlayers = 0;
+        int skippedDeaths = 0;
+        int skippedEpochless = 0;
+        for (JsonElement pe : playersJson) {
+            try {
+                if (!pe.isJsonObject()) {
+                    skippedPlayers++;
+                    continue;
+                }
+                JsonObject p = pe.getAsJsonObject();
+                JsonElement uuidElement = p.get("uuid");
+                if (uuidElement == null || !uuidElement.isJsonPrimitive()) {
+                    skippedPlayers++;
+                    continue;
+                }
+                String uuid = uuidElement.getAsString();
+                UUID.fromString(uuid);
+                String name = str(p, "name");
+                boolean optOut = bool(p, "optOutPublic");
+                List<DeathEntry> deaths = new ArrayList<>();
+                JsonArray deathsJson = p.getAsJsonArray("deaths");
+                if (deathsJson != null) {
+                    for (JsonElement de : deathsJson) {
+                        try {
+                            if (!de.isJsonObject()) {
+                                skippedDeaths++;
+                                continue;
+                            }
+                            JsonObject d = de.getAsJsonObject();
+                            // Absent epoch means "unknown time", not epoch 0: never restore it as a record.
+                            if (!d.has("epochMillis")) {
+                                skippedEpochless++;
+                                continue;
+                            }
+                            deaths.add(new DeathEntry(
+                                    uuid,
+                                    str(d, "playerName"),
+                                    lng(d, "epochMillis"),
+                                    lng(d, "gameDay"),
+                                    integer(d, "playTicks"),
+                                    integer(d, "survivalTicks"),
+                                    str(d, "dimension"),
+                                    dbl(d, "x"), dbl(d, "y"), dbl(d, "z"),
+                                    str(d, "causeCategory"),
+                                    str(d, "causeId"),
+                                    str(d, "deathMessage"),
+                                    str(d, "killerType"),
+                                    str(d, "killerName"),
+                                    str(d, "gameMode"),
+                                    integer(d, "experienceLevel"),
+                                    str(d, "excuse"),
+                                    str(d, "lastWords"),
+                                    integer(d, "fCount")));
+                        } catch (RuntimeException e) {
+                            skippedDeaths++;
+                        }
+                    }
+                }
+                players.add(new PlayerDeaths(uuid, name, optOut, deaths));
+            } catch (RuntimeException e) {
+                skippedPlayers++;
+            }
+        }
+        if (skippedEpochless > 0) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Skipped {} backup death record(s) without epochMillis", skippedEpochless);
+        }
+        if (skippedDeaths > 0) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Skipped {} corrupt backup death record(s)", skippedDeaths);
+        }
+        if (skippedPlayers > 0) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Skipped {} corrupt backup player record(s)", skippedPlayers);
+        }
+        return players;
+    }
+
+    /** Absent or wrong-typed flags default to false; old backups omit the field. */
+    private static boolean bool(JsonObject o, String key) {
+        JsonElement value = o.get(key);
+        if (value == null) {
+            return false;
+        }
+        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean()) {
+            return value.getAsBoolean();
+        }
+        DeathCensus.LOGGER.warn("[DeathCensus] Ignoring non-boolean backup field '{}'", key);
+        return false;
     }
 
     private static String str(JsonObject o, String key) {

@@ -37,6 +37,20 @@ class DiscordLogicTest {
     }
 
     @Test
+    void deathContentScrubsHiddenIdentities() {
+        DeathEntry victim = entry("Alice", 1000L, 12L, 72000, "player", "Alice was slain by bob");
+        PlayerDeaths hidden = new PlayerDeaths("hidden-uuid", "Bob", true, List.of());
+        PlayerDeaths alice = new PlayerDeaths("alice-uuid", "Alice", false, List.of(victim));
+        HiddenIdentities dictionary = HiddenIdentities.of(List.of(hidden, alice));
+
+        String content = DiscordLogic.deathContent(victim, dictionary);
+        assertFalse(content.toLowerCase().contains("bob"));
+        assertTrue(content.contains(HiddenIdentities.HIDDEN_MARKER));
+        // Anonymous totals and the original record are unchanged.
+        assertEquals("Alice was slain by bob", victim.deathMessage());
+    }
+
+    @Test
     void digestContentEmptyAndNonEmpty() {
         long since = Instant.parse("2026-11-20T00:00:00Z").toEpochMilli();
         long before = Instant.parse("2026-11-19T12:00:00Z").toEpochMilli();

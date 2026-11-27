@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.2.1
+
+This is a maintenance patch for 1.2.0: it hardens saved data, closes privacy
+gaps and fixes Discord and UI issues. There are no new features and no config
+or language-key changes; existing worlds and settings keep working as before.
+
+- Saved-data safety: a malformed or wrong-typed `players` container keeps the
+  original data and pauses saving until an operator has taken a backup, instead
+  of silently erasing the census; corrupt player entries and death records are
+  skipped with a warning while valid neighbours are kept
+- Privacy: opted-out players are now scrubbed from every public view, including
+  other players' history, the GUI, Discord posts and HTML/JSON/CSV exports;
+  anonymous totals are unchanged
+- Backups and restores: one corrupt player or death no longer aborts a whole
+  restore; safety backup file names are unique even when several actions happen
+  in the same second
+- Discord delivery: a failed or dropped digest keeps its whole time window and
+  is retried instead of losing an interval, and workers never restart after
+  shutdown
+- UI: the 1.21.1 history "prev"/"next" buttons now work, dialog pagination
+  accepts whitespace-padded payloads, and delete confirmations report the
+  correct death number
+- Save compatibility: play-time defaults and death-record validation are now
+  consistent between the NBT and codec trees, and non-string category data no
+  longer empties a player's lifetime categories
+
 ## 1.2.0
 
 - In-game GUI: /dc with no arguments now opens a menu — native dialogs on

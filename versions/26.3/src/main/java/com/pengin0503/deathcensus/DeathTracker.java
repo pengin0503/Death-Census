@@ -257,7 +257,10 @@ public final class DeathTracker {
             }
         }
         if (!pc.optOutPublic) {
-            DiscordNotifier.notifyDeath(entry);
+            // S3: an opted-out opponent may be named in this victim's death
+            // message; realtime Discord is a public projection, so scrub with
+            // the full snapshot dictionary before rendering.
+            DiscordNotifier.notifyDeath(entry, HiddenIdentities.of(data.snapshot()));
         }
         if (Config.milestoneAnnouncements()) {
             int playerDistinctCategoriesAfter = pc.lifetimeCategories.size();

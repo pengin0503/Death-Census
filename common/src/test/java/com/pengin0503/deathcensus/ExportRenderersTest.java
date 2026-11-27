@@ -103,4 +103,52 @@ class ExportRenderersTest {
         assertTrue(html.contains("Last words: &quot;goodbye &lt;script&gt;alert(2)&lt;/script&gt;&quot;"));
         assertTrue(html.contains("F x4"));
     }
+
+    @Test
+    void csvJsonAndHtmlScrubHiddenIdentitiesFromFilteredExports() {
+        // Bob opts out; Alice's PvP record still names Bob. The export omits
+        // Bob's own player entry but must not leak his name in Alice's row.
+        String hiddenUuid = "00000000-0000-0000-0000-000000000001";
+        String aliceUuid = "00000000-0000-0000-0000-000000000002";
+        DeathEntry aliceDeath = new DeathEntry(
+                aliceUuid, "Alice", T1, 1L, 100, 100,
+                "minecraft:overworld", 1.0, 2.0, 3.0, "player", "minecraft:player",
+                "Alice was slain by bob", "minecraft:player", "bob",
+                "survival", 3, "bob did it", "gg bob", 0
+        );
+        PlayerDeaths hidden = new PlayerDeaths(hiddenUuid, "Bob", true, List.of());
+        PlayerDeaths alice = new PlayerDeaths(aliceUuid, "Alice", false, List.of(aliceDeath));
+        List<PlayerDeaths> fullSnapshot = List.of(hidden, alice);
+        List<PlayerDeaths> exported = List.of(alice);
+
+        String csv = ExportRenderers.toCsv(exported, fullSnapshot);
+        assertFalse(csv.toLowerCase().contains("bob"));
+        assertTrue(csv.contains(HiddenIdentities.HIDDEN_MARKER));
+
+        String json = ExportRenderers.toJson(exported, T2, fullSnapshot);
+        assertFalse(json.toLowerCase().contains("bob"));
+        assertTrue(json.contains(HiddenIdentities.HIDDEN_MARKER));
+        // "totalDeaths" remains an anonymous total computed from the export subset.
+        assertTrue(json.contains("\"totalDeaths\": 1"));
+
+        String html = ExportRenderers.toHtml(exported, T2, ZoneOffset.UTC, fullSnapshot);
+        assertFalse(html.toLowerCase().contains("bob"));
+        assertTrue(html.contains(HiddenIdentities.HIDDEN_MARKER));
+    }
+
+    @Test
+    void backupJsonKeepsHiddenIdentitiesUnchanged() {
+        String hiddenUuid = "00000000-0000-0000-0000-000000000001";
+        DeathEntry death = new DeathEntry(
+                hiddenUuid, "Bob", T1, 1L, 100, 100,
+                "minecraft:overworld", 1.0, 2.0, 3.0, "player", "minecraft:player",
+                "Bob was slain by Alice", "minecraft:player", "Alice",
+                "survival", 3, "", "", 0
+        );
+        List<PlayerDeaths> snapshot = List.of(
+                new PlayerDeaths(hiddenUuid, "Bob", true, List.of(death)));
+        String backup = ExportRenderers.toBackupJson(snapshot, T2);
+        assertTrue(backup.contains("Bob"));
+        assertTrue(backup.contains("Alice"));
+    }
 }

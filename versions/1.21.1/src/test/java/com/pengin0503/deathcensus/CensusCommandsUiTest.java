@@ -2,14 +2,20 @@ package com.pengin0503.deathcensus;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.ParseResults;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.pengin0503.deathcensus.ui.ChatUiRequestParser;
 import com.pengin0503.deathcensus.ui.UiRequest;
+import net.minecraft.commands.CommandSource;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.contents.TranslatableContents;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -68,5 +74,90 @@ class CensusCommandsUiTest {
             assertTrue(result.getExceptions().isEmpty(), command + " -> " + result.getExceptions());
             assertFalse(result.getReader().canRead(), command + " was not fully consumed");
         }
+    }
+
+    private static boolean containsKey(Component component, String key) {
+        if (component.getContents() instanceof TranslatableContents contents
+                && key.equals(contents.getKey())) {
+            return true;
+        }
+        for (Component sibling : component.getSiblings()) {
+            if (containsKey(sibling, key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * S7: the chat UI's prev/next buttons emit {@code /dc ui history <page> <token>}.
+     * Parsing alone never caught the missing token child — Brigadier rejected the
+     * same line at execute time. Run the real dispatcher and prove execution
+     * reaches the UI request handler.
+     */
+    @Test
+    void historyPageTokenCommandExecutesThroughUiRequestPath() {
+        CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
+        dispatcher.register(CensusCommands.root());
+        dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("dc")
+                .redirect(dispatcher.getRoot().getChild("deathcensus")));
+
+        List<Component> messages = new ArrayList<>();
+        CommandSource fakeSource = new CommandSource() {
+            @Override
+            public void sendSystemMessage(Component component) {
+                messages.add(component);
+            }
+
+            @Override
+            public boolean acceptsSuccess() {
+                return true;
+            }
+
+            @Override
+            public boolean acceptsFailure() {
+                return true;
+            }
+
+            @Override
+            public boolean shouldInformAdmins() {
+                return false;
+            }
+        };
+        // A non-player source makes runUi take its players-only branch; the
+        // single failure message is our observable that the command ran.
+        CommandSourceStack source = new CommandSourceStack(fakeSource, null, null, null, 0,
+                "tester", Component.empty(), null, null);
+        String token = "11111111-2222-3333-4444-555555555555";
+        // Brigadier command lines omit the leading slash used in click hints.
+        String command = "dc ui history 2 " + token;
+
+        int result = assertDoesNotThrow(() -> dispatcher.execute(command, source),
+                "the token child under the history page node must be registered for execute");
+        assertEquals(0, result, "non-player sources are refused by the UI handler");
+        assertEquals(1, messages.size(), "runUi must have been executed");
+        assertTrue(containsKey(messages.get(0), "command.deathcensus.players_only"),
+                "unexpected feedback from runUi: " + messages.get(0));
+
+        UiRequest request = ChatUiRequestParser.parse(VIEWER, CensusCommands.uiArgs(command)).orElseThrow();
+        assertEquals("history", request.action());
+        assertEquals(2, request.page());
+        assertEquals(token, request.token());
+    }
+
+    @Test
+    void publicHistoryLineDoesNotNameAHiddenOpponent() {
+        DeathEntry raw = new DeathEntry(VIEWER.toString(), "Alice", 1000L, 1L, 500, 400,
+                "minecraft:overworld", 1.0, 64.0, 2.0, "player", "minecraft:player",
+                "Alice was slain by Bob", "minecraft:player", "Bob", "survival", 5,
+                "why Bob", "gg Bob", 0);
+        HiddenIdentities hidden = HiddenIdentities.of(List.of(
+                new PlayerDeaths(TARGET.toString(), "Bob", true, List.of())));
+
+        String publicLine = CensusCommands.formatEntryLine(raw, 1, hidden);
+        assertFalse(publicLine.contains("Bob"), publicLine);
+        assertTrue(publicLine.contains("Anonymous"), publicLine);
+        // Self/admin viewers are passed an empty dictionary and keep the truth.
+        assertTrue(CensusCommands.formatEntryLine(raw, 1, HiddenIdentities.empty()).contains("Bob"));
     }
 }

@@ -8,6 +8,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BackupLogicTest {
@@ -39,5 +40,19 @@ class BackupLogicTest {
                 BackupLogic.backupFileName(epoch, null)
                         .matches("deathcensus-backup-\\d{8}-\\d{6}\\.json")
         );
+    }
+
+    @Test
+    void uniqueBackupNamesNeverReuseAStaleFile() {
+        long epoch = Instant.parse("2026-11-24T12:34:56.456Z").toEpochMilli();
+        String first = BackupLogic.uniqueBackupFileName(epoch, ZoneOffset.UTC);
+        String second = BackupLogic.uniqueBackupFileName(epoch, ZoneOffset.UTC);
+        assertTrue(first.matches(
+                "deathcensus-backup-\\d{8}-\\d{6}-\\d{3}-[0-9a-f]{8}\\.json"), first);
+        assertTrue(second.startsWith("deathcensus-backup-20261124-123456-456-"), second);
+        assertTrue(second.endsWith(".json"));
+        assertFalse(first.equals(second), "same-second backups must get distinct names");
+        assertEquals("deathcensus-backup-20261124-123456.json",
+                BackupLogic.backupFileName(epoch, ZoneOffset.UTC));
     }
 }

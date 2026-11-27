@@ -2,6 +2,7 @@ package com.pengin0503.deathcensus;
 
 import com.mojang.serialization.DynamicOps;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.IntTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.StringTag;
@@ -13,6 +14,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CensusDataTest {
@@ -27,6 +29,128 @@ class CensusDataTest {
                 "minecraft:overworld", 10.0, 64.0, -20.0, "fall", "minecraft:fall",
                 name + " fell from a high place", "", "", "survival", 5,
                 "It wasn't my fault", "See you on the other side", 4);
+    }
+
+    @Test
+    void codecMalformedPlayersMapPreservesRawInputAndDisablesSave() {
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CompoundTag raw = new CompoundTag();
+        raw.putString("players", "not a map");
+        raw.putLong("lifetimeDeaths", 42L);
+        raw.putString("marker", "keep me");
+
+        CensusData loaded = CensusData.CODEC.parse(ops, raw).getOrThrow();
+        assertTrue(loaded.isEmpty(), "a wrong-typed players container is corruption, not an old save");
+        Tag encoded = CensusData.CODEC.encodeStart(ops, loaded).getOrThrow();
+        assertEquals(raw, encoded, "encode must return the preserved raw input unchanged");
+        assertEquals("not a map", ((CompoundTag) encoded).getStringOr("players", ""));
+
+        raw.putString("marker", "mutated after load");
+        assertEquals("keep me", ((CompoundTag) CensusData.CODEC.encodeStart(ops, loaded).getOrThrow())
+                .getStringOr("marker", ""), "preserved input must be an independent copy");
+    }
+
+    @Test
+    void codecAbsentPlayersMapStillLoadsAndEncodesEmpty() {
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CensusData loaded = CensusData.CODEC.parse(ops, new CompoundTag()).getOrThrow();
+        assertTrue(loaded.isEmpty());
+        CompoundTag encoded = (CompoundTag) CensusData.CODEC.encodeStart(ops, loaded).getOrThrow();
+        assertTrue(encoded.getCompoundOrEmpty("players").isEmpty());
+    }
+
+    @Test
+    void codecPreservesWrongTypedPlayerEntriesAndInvalidKeysOnEncode() {
+        UUID good = UUID.randomUUID();
+        UUID bad = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(good, "Alice", 1000L, 100, 100), 100);
+
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CompoundTag root = (CompoundTag) CensusData.CODEC.encodeStart(ops, data).getOrThrow();
+        CompoundTag players = root.getCompoundOrEmpty("players");
+        players.put(bad.toString(), StringTag.valueOf("corrupt player"));
+        players.put("not-a-uuid", StringTag.valueOf("corrupt key"));
+
+        CensusData loaded = CensusData.CODEC.parse(ops, root).getOrThrow();
+        assertEquals(1, loaded.allPlayers().size(), "only valid player entries load");
+        assertEquals(1, loaded.playerOrNull(good).deaths.size());
+        assertNull(loaded.playerOrNull(bad));
+
+        CompoundTag saved = (CompoundTag) CensusData.CODEC.encodeStart(ops, loaded).getOrThrow();
+        CompoundTag savedPlayers = saved.getCompoundOrEmpty("players");
+        assertEquals("corrupt player", savedPlayers.getStringOr(bad.toString(), ""));
+        assertEquals("corrupt key", savedPlayers.getStringOr("not-a-uuid", ""));
+        assertEquals(1, savedPlayers.getCompoundOrEmpty(good.toString()).getListOrEmpty("deaths").size());
+    }
+
+    @Test
+    void codecSkipsNonCompoundDeathElementsKeepsValidSiblingAndRecomputesCounter() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(uuid, "Alice", 1000L, 100, 100), 100);
+        data.recordDeath(entry(uuid, "Alice", 2000L, 200, 100), 100);
+
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CompoundTag root = (CompoundTag) CensusData.CODEC.encodeStart(ops, data).getOrThrow();
+        CompoundTag player = root.getCompoundOrEmpty("players").getCompoundOrEmpty(uuid.toString());
+        ListTag mixed = new ListTag();
+        mixed.add(StringTag.valueOf("not a death map"));
+        mixed.add(IntTag.valueOf(7));
+        mixed.add(player.getListOrEmpty("deaths").getCompoundOrEmpty(1).copy());
+        player.put("deaths", mixed);
+        root.remove("lifetimeDeaths");
+
+        CensusData loaded = CensusData.CODEC.parse(ops, root).getOrThrow();
+        List<DeathEntry> deaths = loaded.playerOrNull(uuid).deaths;
+        assertEquals(1, deaths.size(), "valid sibling survives corrupt death elements");
+        assertEquals(2000L, deaths.get(0).epochMillis());
+        assertEquals(1L, loaded.lifetimeDeaths(), "derived counter follows retained records");
+    }
+
+    @Test
+    void codecNonStringLifetimeCategoriesFallBackToRetainedDeaths() {
+        UUID numeric = UUID.randomUUID();
+        UUID unknown = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entryWithCategory(numeric, "Alex", 100L, "fall"), 100);
+        data.recordDeath(entryWithCategory(unknown, "Alex", 200L, "lava"), 100);
+
+        DynamicOps<Tag> ops = NbtOps.INSTANCE;
+        CompoundTag root = (CompoundTag) CensusData.CODEC.encodeStart(ops, data).getOrThrow();
+        CompoundTag players = root.getCompoundOrEmpty("players");
+
+        ListTag numbers = new ListTag();
+        numbers.add(IntTag.valueOf(7));
+        players.getCompoundOrEmpty(numeric.toString()).put("lifetimeCategories", numbers);
+        ListTag unrecognized = new ListTag();
+        unrecognized.add(StringTag.valueOf("not-a-category"));
+        players.getCompoundOrEmpty(unknown.toString()).put("lifetimeCategories", unrecognized);
+
+        CensusData loaded = CensusData.CODEC.parse(ops, root).getOrThrow();
+        assertTrue(loaded.playerOrNull(numeric).lifetimeCategories.contains("fall"));
+        assertTrue(loaded.playerOrNull(unknown).lifetimeCategories.contains("lava"));
+    }
+
+    @Test
+    void codecMissingPlayTickFieldsDefaultToMinusOne() {
+        UUID uuid = UUID.randomUUID();
+        CompoundTag player = new CompoundTag();
+        player.put("deaths", new ListTag());
+        CompoundTag players = new CompoundTag();
+        players.put(uuid.toString(), player);
+        CompoundTag root = new CompoundTag();
+        root.put("players", players);
+
+        CensusData loaded = CensusData.CODEC.parse(NbtOps.INSTANCE, root).getOrThrow();
+        assertEquals(-1, loaded.player(uuid).baselinePlayTicks);
+        assertEquals(-1, loaded.player(uuid).lastDeathPlayTicks);
+
+        player.putString("baselinePlayTicks", "oops");
+        player.putString("lastDeathPlayTicks", "oops");
+        CensusData wrongTyped = CensusData.CODEC.parse(NbtOps.INSTANCE, root).getOrThrow();
+        assertEquals(-1, wrongTyped.player(uuid).baselinePlayTicks);
+        assertEquals(-1, wrongTyped.player(uuid).lastDeathPlayTicks);
     }
 
     @Test
@@ -89,7 +213,7 @@ class CensusDataTest {
     }
 
     @Test
-    void codecSkipsEpochlessEntriesAndFillsBlankUuidFromPlayerKey() {
+    void codecKeepsEpochZeroAndNegativeEntriesAndFillsBlankUuidFromPlayerKey() {
         UUID uuid = UUID.randomUUID();
         CensusData data = new CensusData();
         data.recordDeath(entry(uuid, "Alice", 0L, 100, 100), 100);
@@ -99,14 +223,16 @@ class CensusDataTest {
         CompoundTag root = (CompoundTag) CensusData.CODEC.encodeStart(ops, data).getOrThrow();
         CompoundTag player = root.getCompoundOrEmpty("players").getCompoundOrEmpty(uuid.toString());
         ListTag deaths = player.getListOrEmpty("deaths");
-        deaths.getCompoundOrEmpty(0).putLong("epochMillis", 0L);
+        deaths.getCompoundOrEmpty(0).putLong("epochMillis", -5L);
         deaths.getCompoundOrEmpty(1).putString("playerUuid", "");
 
         CensusData loaded = CensusData.CODEC.parse(ops, root).getOrThrow();
         List<DeathEntry> restored = loaded.playerOrNull(uuid).deaths;
-        assertEquals(1, restored.size());
-        assertEquals(2000L, restored.get(0).epochMillis());
-        assertEquals(uuid.toString(), restored.get(0).playerUuid());
+        assertEquals(2, restored.size(), "codec must accept epoch <= 0 like NBT and backup restore");
+        assertEquals(-5L, restored.get(0).epochMillis());
+        assertEquals(2000L, restored.get(1).epochMillis());
+        assertEquals(uuid.toString(), restored.get(1).playerUuid());
+        assertEquals(2L, loaded.lifetimeDeaths(), "counter stays consistent with retained records");
     }
 
     @Test

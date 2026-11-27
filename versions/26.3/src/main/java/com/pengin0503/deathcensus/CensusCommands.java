@@ -328,7 +328,13 @@ public final class CensusCommands {
         return suggestions;
     }
 
-    private static String formatEntryLine(DeathEntry e, int index) {
+    /**
+     * Renders one history line. Public viewers get a rendered copy scrubbed of
+     * snapshot-wide hidden identities (S3); self/admin viewers pass
+     * {@link HiddenIdentities#empty()} and see the stored text unchanged.
+     */
+    static String formatEntryLine(DeathEntry raw, int index, HiddenIdentities hidden) {
+        DeathEntry e = hidden == null ? raw : hidden.scrub(raw);
         return "#" + index
                 + " · Day " + (e.gameDay() + 1)
                 + " · " + TimeFormat.formatDateTime(e.epochMillis(), Config.displayTimeZone())
@@ -373,10 +379,17 @@ public final class CensusCommands {
         }
         java.util.Collections.reverse(newestFirst);
         Pagination.Page<DeathEntry> p = Pagination.of(newestFirst, page, PAGE_SIZE);
+        ServerPlayer self = ctx.getSource().getPlayer();
+        boolean privileged = isAdmin(ctx) || (self != null && self.getUUID().equals(uuid));
+        // S3: build the dictionary once per render from the FULL snapshot, not
+        // from this player's filtered list. Only self/admin see stored names.
+        HiddenIdentities hidden = privileged
+                ? HiddenIdentities.empty()
+                : HiddenIdentities.of(CensusData.get(server).snapshot());
         send(ctx, "command.deathcensus.history.header", displayName, p.total(), p.page(), p.pageCount());
         int base = (p.page() - 1) * PAGE_SIZE;
         for (int i = 0; i < p.items().size(); i++) {
-            sendLiteral(ctx, formatEntryLine(p.items().get(i), p.total() - (base + i)));
+            sendLiteral(ctx, formatEntryLine(p.items().get(i), p.total() - (base + i), hidden));
         }
         if (p.pageCount() > 1) {
             send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());

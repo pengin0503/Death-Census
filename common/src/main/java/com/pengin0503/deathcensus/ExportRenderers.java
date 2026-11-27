@@ -3,6 +3,7 @@ package com.pengin0503.deathcensus;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -18,11 +19,23 @@ public final class ExportRenderers {
     }
 
     public static String toCsv(List<PlayerDeaths> players) {
+        return toCsv(players, null);
+    }
+
+    /**
+     * As {@link #toCsv(List)}, but scrubs every snapshot-wide hidden identity
+     * (review S3) from the rendered rows. The full snapshot is the dictionary
+     * source; {@code players} only filters which records are exported.
+     */
+    public static String toCsv(List<PlayerDeaths> players, Collection<PlayerDeaths> fullSnapshot) {
+        HiddenIdentities hidden = HiddenIdentities.of(fullSnapshot);
         List<DeathEntry> rows = new ArrayList<>();
         if (players != null) {
             for (PlayerDeaths player : players) {
                 if (player != null) {
-                    rows.addAll(player.deaths());
+                    for (DeathEntry death : player.deaths()) {
+                        rows.add(hidden.scrub(death));
+                    }
                 }
             }
         }
@@ -66,6 +79,26 @@ public final class ExportRenderers {
     }
 
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
+        return renderJson(players, generatedAtEpochMillis, HiddenIdentities.empty());
+    }
+
+    /**
+     * As {@link #toJson(List, long)}, but scrubs snapshot-wide hidden identities
+     * (review S3) from the rendered rows. The full snapshot is the dictionary
+     * source; {@code players} only filters which records are exported.
+     */
+    public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                Collection<PlayerDeaths> fullSnapshot) {
+        return renderJson(players, generatedAtEpochMillis, HiddenIdentities.of(fullSnapshot));
+    }
+
+    /** Backup JSON keeps the raw records: backups are not a public projection. */
+    public static String toBackupJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
+        return renderJson(players, generatedAtEpochMillis, HiddenIdentities.empty());
+    }
+
+    private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                     HiddenIdentities hidden) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
 
@@ -87,7 +120,7 @@ public final class ExportRenderers {
                 if (!deaths.isEmpty()) {
                     sb.append('\n');
                     for (int j = 0; j < deaths.size(); j++) {
-                        DeathEntry d = deaths.get(j);
+                        DeathEntry d = hidden.scrub(deaths.get(j));
                         sb.append("        {\n");
                         sb.append("          \"playerUuid\": \"").append(TextEscaping.jsonString(d.playerUuid())).append("\",\n");
                         sb.append("          \"playerName\": \"").append(TextEscaping.jsonString(d.playerName())).append("\",\n");
@@ -136,6 +169,21 @@ public final class ExportRenderers {
     }
 
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone) {
+        return renderHtml(players, generatedAtEpochMillis, zone, HiddenIdentities.empty());
+    }
+
+    /**
+     * As {@link #toHtml(List, long, ZoneId)}, but scrubs snapshot-wide hidden
+     * identities (review S3) from the rendered timeline rows. The full snapshot
+     * is the dictionary source; {@code players} only filters what is exported.
+     */
+    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                Collection<PlayerDeaths> fullSnapshot) {
+        return renderHtml(players, generatedAtEpochMillis, zone, HiddenIdentities.of(fullSnapshot));
+    }
+
+    private static String renderHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                     HiddenIdentities hidden) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
         List<Map.Entry<String, Integer>> causes = CensusStats.causeCounts(safePlayers, true);
@@ -218,7 +266,8 @@ public final class ExportRenderers {
             sb.append("<table>\n");
             sb.append("<thead><tr><th>Date/Time</th><th>Day</th><th>Dimension</th><th>Position</th><th>Cause</th><th>Death Message</th><th>Survived</th></tr></thead>\n");
             sb.append("<tbody>\n");
-            for (DeathEntry d : player.deaths()) {
+            for (DeathEntry raw : player.deaths()) {
+                DeathEntry d = hidden.scrub(raw);
                 String position = String.format(Locale.ROOT, "%.1f, %.1f, %.1f", d.x(), d.y(), d.z());
                 sb.append("<tr><td>")
                         .append(TextEscaping.html(TimeFormat.formatDateTime(d.epochMillis(), zone)))

@@ -69,7 +69,8 @@ public final class CensusCommands {
         ui.then(literal("home").executes(CensusCommands::runUi));
 
         LiteralArgumentBuilder<CommandSourceStack> history = literal("history").executes(CensusCommands::runUi);
-        history.then(arg("page", IntegerArgumentType.integer(1)).executes(CensusCommands::runUi));
+        history.then(arg("page", IntegerArgumentType.integer(1)).executes(CensusCommands::runUi)
+                .then(arg("token", StringArgumentType.word()).executes(CensusCommands::runUi)));
         history.then(literal("filter")
                 .then(arg("period", StringArgumentType.word()).executes(CensusCommands::runUi)
                         .then(arg("category", StringArgumentType.word()).executes(CensusCommands::runUi)
@@ -432,6 +433,16 @@ public final class CensusCommands {
     }
 
     private static String formatEntryLine(DeathEntry e, int index) {
+        return formatEntryLine(e, index, HiddenIdentities.empty());
+    }
+
+    /**
+     * Renders one history line. A public viewer must never see an opted-out
+     * player named in another player's free text or killer field (S3); the
+     * dictionary is built once per render by {@link #showHistory}.
+     */
+    static String formatEntryLine(DeathEntry raw, int index, HiddenIdentities hidden) {
+        DeathEntry e = hidden == null ? raw : hidden.scrub(raw);
         return "#" + index
                 + " · Day " + (e.gameDay() + 1)
                 + " · " + TimeFormat.formatDateTime(e.epochMillis(), Config.displayTimeZone())
@@ -445,11 +456,16 @@ public final class CensusCommands {
     }
 
     private static int showHistory(CommandContext<CommandSourceStack> ctx, UUID uuid, String displayName, int page) {
-        return showHistory(ctx, uuid, displayName, page, null);
+        return showHistory(ctx, uuid, displayName, page, null, true);
     }
 
     private static int showHistory(CommandContext<CommandSourceStack> ctx, UUID uuid, String displayName,
                                    int page, @Nullable String filter) {
+        return showHistory(ctx, uuid, displayName, page, filter, true);
+    }
+
+    private static int showHistory(CommandContext<CommandSourceStack> ctx, UUID uuid, String displayName,
+                                   int page, @Nullable String filter, boolean privileged) {
         MinecraftServer server = server(ctx);
         if (server == null) {
             return 0;
@@ -459,7 +475,8 @@ public final class CensusCommands {
             fail(ctx, "command.deathcensus.filter_unknown", filter);
             return 0;
         }
-        CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+        CensusData data = CensusData.get(server);
+        CensusData.PlayerCensus pc = data.playerOrNull(uuid);
         if (pc == null || pc.deaths.isEmpty()) {
             send(ctx, "command.deathcensus.history.empty", displayName);
             return 0;
@@ -476,10 +493,13 @@ public final class CensusCommands {
         }
         java.util.Collections.reverse(newestFirst);
         Pagination.Page<DeathEntry> p = Pagination.of(newestFirst, page, PAGE_SIZE);
+        HiddenIdentities hidden = privileged
+                ? HiddenIdentities.empty()
+                : HiddenIdentities.of(data.snapshot());
         send(ctx, "command.deathcensus.history.header", displayName, p.total(), p.page(), p.pageCount());
         int base = (p.page() - 1) * PAGE_SIZE;
         for (int i = 0; i < p.items().size(); i++) {
-            sendLiteral(ctx, formatEntryLine(p.items().get(i), p.total() - (base + i)));
+            sendLiteral(ctx, formatEntryLine(p.items().get(i), p.total() - (base + i), hidden));
         }
         if (p.pageCount() > 1) {
             send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
@@ -566,7 +586,7 @@ public final class CensusCommands {
                 fail(ctx, "command.deathcensus.players_only");
                 return 0;
             }
-            return showHistory(ctx, self.getUUID(), self.getGameProfile().getName(), page, filter);
+            return showHistory(ctx, self.getUUID(), self.getGameProfile().getName(), page, filter, true);
         }
         UUID target = resolvePlayer(server, playerName);
         if (target == null) {
@@ -580,7 +600,8 @@ public final class CensusCommands {
             fail(ctx, "command.deathcensus.opted_out", playerName);
             return 0;
         }
-        return showHistory(ctx, target, playerName, page, filter);
+        // Self and admin viewers keep the truth; any other viewer is public.
+        return showHistory(ctx, target, playerName, page, filter, selfView || isAdmin(ctx));
     }
 
     private static int lookup(CommandContext<CommandSourceStack> ctx, String playerName, int page) {
@@ -598,7 +619,8 @@ public final class CensusCommands {
             fail(ctx, "command.deathcensus.player_not_found", playerName);
             return 0;
         }
-        return showHistory(ctx, target, playerName, page, filter);
+        // /dc lookup is admin-only (requires permission 2).
+        return showHistory(ctx, target, playerName, page, filter, true);
     }
 
     private static int ownStats(CommandContext<CommandSourceStack> ctx) {

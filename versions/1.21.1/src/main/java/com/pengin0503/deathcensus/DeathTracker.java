@@ -255,7 +255,9 @@ public final class DeathTracker {
             }
         }
         if (!pc.optOutPublic) {
-            DiscordNotifier.notifyDeath(entry);
+            // Hidden identities come from the full snapshot: an opted-out
+            // opponent can be named in this victim's PvP record (S3).
+            DiscordNotifier.notifyDeath(entry, HiddenIdentities.of(data.snapshot()));
         }
         if (Config.milestoneAnnouncements()) {
             int playerDistinctCategoriesAfter = pc.lifetimeCategories.size();

@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Receives vanilla custom-click events from dialogs and turns them into
@@ -51,13 +52,6 @@ public final class DialogClickHandler {
             inputs.put("s", session);
         }
         String rawPage = asString(payload.get("p"), "p");
-        if (!rawPage.isEmpty()) {
-            Optional<Integer> page = UiActions.parsePage(rawPage);
-            if (page.isEmpty()) {
-                return;
-            }
-            inputs.put("p", rawPage);
-        }
         for (String key : INPUT_KEYS) {
             Tag value = payload.get(key);
             if (value != null) {
@@ -84,15 +78,38 @@ public final class DialogClickHandler {
             epoch = parsed.get();
         }
 
-        UiRequest request = new UiRequest(player.getUUID(), action.get(), session,
-                rawPage.isEmpty() ? 1 : Integer.parseInt(rawPage), targetUuid, epoch, inputs);
-        UiResult result = UiActions.handle(request, new DialogUiContext(player));
+        Optional<UiRequest> request = requestFromPayload(player.getUUID(), action.get(), session,
+                rawPage, inputs, targetUuid, epoch);
+        if (request.isEmpty()) {
+            return;
+        }
+        UiResult result = UiActions.handle(request.get(), new DialogUiContext(player));
         if (result instanceof UiResult.NoChange) {
             return;
         }
         DialogUi.openResult(player, action.get(), result);
         // Required by CustomClickActionEvent's contract when the click was acted on.
         event.setCanceled(true);
+    }
+
+    /**
+     * Builds the request from already-validated payload fields. The page is the
+     * value validated by {@link UiActions#parsePage} (which trims), never a
+     * second {@code Integer.parseInt} of the untrimmed client string.
+     */
+    static Optional<UiRequest> requestFromPayload(UUID viewer, String action, String session,
+                                                  String rawPage, Map<String, String> inputs,
+                                                  String targetUuid, long epoch) {
+        int page = 1;
+        if (!rawPage.isEmpty()) {
+            Optional<Integer> parsed = UiActions.parsePage(rawPage);
+            if (parsed.isEmpty()) {
+                return Optional.empty();
+            }
+            page = parsed.get();
+            inputs.put("p", rawPage);
+        }
+        return Optional.of(new UiRequest(viewer, action, session, page, targetUuid, epoch, inputs));
     }
 
     /** NBT arrives with explicit tag types; strings, booleans and numbers are all bounded. */

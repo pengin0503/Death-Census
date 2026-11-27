@@ -29,11 +29,24 @@ public final class DiscordNotifier {
     private static ExecutorService executor;
     private static HttpClient httpClient;
     private static int tickCounter;
+    /** A stop is final: no enqueue path may lazily recreate a worker (M7). */
+    private static volatile boolean stopped;
+    /** While a digest is in flight the persisted period start must remain intact (S9). */
+    private static volatile boolean digestDeliveryPending;
+
+    /** Terminal delivery callback: 2xx confirms, drops and failures report false. */
+    @FunctionalInterface
+    interface DeliveryCallback {
+        void onDelivery(boolean delivered);
+    }
 
     private DiscordNotifier() {
     }
 
     private static synchronized ExecutorService executor() {
+        if (stopped) {
+            throw new RejectedExecutionException("Discord notifier is stopped");
+        }
         if (executor == null || executor.isShutdown()) {
             executor = Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "deathcensus-discord");
@@ -52,6 +65,10 @@ public final class DiscordNotifier {
     }
 
     public static synchronized void shutdown() {
+        stopped = true;
+        // A digest dropped at shutdown must be retried with its full period
+        // intact after a restart: its timestamp was deliberately not advanced.
+        digestDeliveryPending = false;
         if (executor != null) {
             executor.shutdownNow();
             executor = null;
@@ -61,6 +78,15 @@ public final class DiscordNotifier {
 
     public static void resetDigestThrottler() {
         tickCounter = 0;
+    }
+
+    static boolean isStopped() {
+        return stopped;
+    }
+
+    /** The persisted timestamp never moves backwards when delivery fails (S9). */
+    static long digestTimestampAfterDelivery(long previous, long periodEnd, boolean delivered) {
+        return delivered ? periodEnd : previous;
     }
 
     @Nullable
@@ -90,30 +116,70 @@ public final class DiscordNotifier {
     }
 
     private static void enqueue(URI uri, String content) {
+        enqueue(uri, content, null);
+    }
+
+    /** Enqueues one JSON post, with an optional terminal delivery callback. */
+    static void enqueue(URI uri, String content, @Nullable DeliveryCallback callback) {
         String json = payloadJson(content);
+        if (stopped) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord notifier is stopped; dropping a message");
+            reportDelivery(callback, false);
+            return;
+        }
         try {
-            executor().execute(() -> {
-                try {
-                    HttpRequest request = HttpRequest.newBuilder(uri)
-                            .timeout(TIMEOUT)
-                            .header("Content-Type", "application/json")
-                            .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
-                            .build();
-                    HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
-                    if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                        DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook returned HTTP {}", response.statusCode());
-                    }
-                } catch (Exception e) {
-                    DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook send failed: {}", e.toString());
-                }
-            });
+            executor().execute(() -> deliver(uri, json, callback));
         } catch (RejectedExecutionException e) {
             DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook queue is full; dropping a message");
+            reportDelivery(callback, false);
+        }
+    }
+
+    /** Runs on the daemon worker only; a 2xx is the only confirmed delivery. */
+    private static void deliver(URI uri, String json, @Nullable DeliveryCallback callback) {
+        boolean delivered = false;
+        try {
+            HttpRequest request = HttpRequest.newBuilder(uri)
+                    .timeout(TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                    .build();
+            HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status >= 200 && status < 300) {
+                delivered = true;
+            } else {
+                DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook returned HTTP {}", status);
+            }
+        } catch (Exception e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord webhook send failed: {}", e.toString());
+        }
+        reportDelivery(callback, delivered);
+    }
+
+    private static void reportDelivery(@Nullable DeliveryCallback callback, boolean delivered) {
+        if (callback == null) {
+            return;
+        }
+        try {
+            callback.onDelivery(delivered);
+        } catch (Exception e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Discord delivery callback failed ({})",
+                    e.getClass().getSimpleName());
         }
     }
 
     /** Posts one death notification (caller has already applied the opt-out check). */
     public static void notifyDeath(DeathEntry entry) {
+        notifyDeath(entry, HiddenIdentities.empty());
+    }
+
+    /**
+     * As above, with the snapshot-wide dictionary of hidden identities (S3).
+     * Realtime Discord is always a public viewer, so a hidden opponent must not
+     * survive in the victim's free text or killer field.
+     */
+    public static void notifyDeath(DeathEntry entry, HiddenIdentities hidden) {
         if (!Config.discordNotifyDeaths()) {
             return;
         }
@@ -121,14 +187,22 @@ public final class DiscordNotifier {
         if (uri == null) {
             return;
         }
-        String content = ServerLang.formatForLang(Config.discordLanguage(), "discord.deathcensus.death",
-                entry.deathMessage().isEmpty()
-                        ? entry.playerName() + " died (" + entry.causeCategory() + ")"
-                        : entry.deathMessage(),
-                entry.gameDay() + 1,
-                entry.dimension(),
-                TimeFormat.formatDuration(entry.survivalTicks()));
-        enqueue(uri, content);
+        enqueue(uri, renderDeath(entry, hidden));
+    }
+
+    /** Formats one death line, scrubbing hidden names before free text is rendered. */
+    static String renderDeath(DeathEntry entry, HiddenIdentities hidden) {
+        if (entry == null) {
+            return "";
+        }
+        DeathEntry shown = hidden == null ? entry : hidden.scrub(entry);
+        return ServerLang.formatForLang(Config.discordLanguage(), "discord.deathcensus.death",
+                shown.deathMessage().isEmpty()
+                        ? shown.playerName() + " died (" + shown.causeCategory() + ")"
+                        : shown.deathMessage(),
+                shown.gameDay() + 1,
+                shown.dimension(),
+                TimeFormat.formatDuration(shown.survivalTicks()));
     }
 
     /** Posts a milestone announcement to the configured webhook, if any. */
@@ -192,9 +266,26 @@ public final class DiscordNotifier {
                 last,
                 Config.displayTimeZone(),
                 DiscordLogic.labelsFor(Config.discordLanguage()));
-        data.setLastDigestEpochMillis(now);
-        if (!content.isEmpty()) {
-            enqueue(uri, content);
+        if (content.isEmpty()) {
+            // DESIGN §7.1: a zero-death period advances immediately; nothing to confirm.
+            data.setLastDigestEpochMillis(now);
+            return;
         }
+        if (digestDeliveryPending) {
+            // A previous digest is in flight or failed: keep the full period
+            // intact so the next check still reports those deaths (S9).
+            return;
+        }
+        digestDeliveryPending = true;
+        long periodEnd = now;
+        enqueue(uri, content, delivered -> {
+            try {
+                if (delivered && !stopped) {
+                    data.setLastDigestEpochMillis(digestTimestampAfterDelivery(last, periodEnd, delivered));
+                }
+            } finally {
+                digestDeliveryPending = false;
+            }
+        });
     }
 }

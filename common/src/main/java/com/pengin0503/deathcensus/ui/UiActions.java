@@ -3,6 +3,7 @@ package com.pengin0503.deathcensus.ui;
 import com.pengin0503.deathcensus.CensusStats;
 import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
+import com.pengin0503.deathcensus.HiddenIdentities;
 import com.pengin0503.deathcensus.Pagination;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.TimeFormat;
@@ -311,7 +312,7 @@ public final class UiActions {
             }
         }
         String lastLine = UiPrivacy.lastVisibleDeath(ctx.snapshot(), viewer, ctx.isAdmin())
-                .map(death -> truncate(formatDeath(death, ctx.zoneId())))
+                .map(death -> truncate(formatDeath(publicDeath(ctx, death), ctx.zoneId())))
                 .orElse(UiText.RECORD_UNAVAILABLE_KEY);
         return new HomeView(
                 CensusStats.totalDeaths(own),
@@ -352,7 +353,7 @@ public final class UiActions {
                     death.epochMillis(),
                     death.playerUuid(),
                     UiPrivacy.displayName(ctx.snapshot(), death.playerUuid()),
-                    truncate("#" + number + " · " + formatDeath(death, ctx.zoneId()))
+                    truncate("#" + number + " · " + formatDeath(publicDeath(ctx, death), ctx.zoneId()))
             ));
         }
         return new HistoryView(rows, page.page(), page.pageCount(), page.total(), filter, session.token());
@@ -369,7 +370,8 @@ public final class UiActions {
         return new UiResult.Open(detailView(ctx, death));
     }
 
-    private static DeathDetailView detailView(UiContext ctx, DeathEntry death) {
+    private static DeathDetailView detailView(UiContext ctx, DeathEntry rawDeath) {
+        DeathEntry death = publicDeath(ctx, rawDeath);
         UUID target = parseUuidOrNull(death.playerUuid());
         return new DeathDetailView(
                 death.playerUuid(),
@@ -565,13 +567,15 @@ public final class UiActions {
         if (consume(request, ctx) == null) {
             return expired(ctx);
         }
+        // DESIGN §6: confirm with player name, 1-based index and date. Capture
+        // the index before the delete: the record is removed from the live
+        // snapshot by deleteAfterBackup, so a later lookup always yields #1 (M14).
+        int index = Math.max(1, indexOfDeath(ctx.snapshot(), death.playerUuid(), death.epochMillis()));
         if (!ctx.deleteAfterBackup(parseUuidOrNull(death.playerUuid()), death.epochMillis())) {
             return new UiResult.Open(new NoticeView(
                     UiText.of("command.deathcensus.delete.backup_failed"), "ui/detail"));
         }
-        // DESIGN §6: confirm with player name, 1-based index and date. Build the
-        // descriptor here so both adapters render the same localized message.
-        int index = Math.max(1, indexOfDeath(ctx.snapshot(), death.playerUuid(), death.epochMillis()));
+        // Build the descriptor here so both adapters render the same localized message.
         UiText feedback = UiText.of("command.deathcensus.delete.done",
                 UiPrivacy.displayName(ctx.snapshot(), death.playerUuid()), index,
                 TimeFormat.formatDateTime(death.epochMillis(), ctx.zoneId()));
@@ -690,6 +694,22 @@ public final class UiActions {
             }
         }
         return uuid;
+    }
+
+    /**
+     * Public-view copy of a rendered death (S3). An opted-out player's identity
+     * must not survive in another player's message, excuse, last words or
+     * killer name; self and admin viewers keep the truth.
+     */
+    private static DeathEntry publicDeath(UiContext ctx, DeathEntry death) {
+        if (death == null) {
+            return null;
+        }
+        UUID owner = parseUuidOrNull(death.playerUuid());
+        if (ctx.isAdmin() || (owner != null && ctx.isSelf(owner))) {
+            return death;
+        }
+        return HiddenIdentities.of(ctx.snapshot()).scrub(death);
     }
 
     private static String formatDeath(DeathEntry death, java.time.ZoneId zone) {
