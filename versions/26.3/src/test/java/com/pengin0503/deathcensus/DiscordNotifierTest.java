@@ -6,13 +6,22 @@ import com.google.gson.JsonParser;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonSection;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneOffset;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -22,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Version-side checks for DESIGN 1.3.0 §1/§2/§4: defaults, batching gate, routing and secret hygiene. */
 class DiscordNotifierTest {
@@ -308,6 +318,176 @@ class DiscordNotifierTest {
                 DiscordMultipart.attachmentName(range, ZoneOffset.UTC));
         assertEquals("season.html", DiscordMultipart.attachmentName(null, ZoneOffset.UTC));
         assertTrue(DiscordMultipart.tooLarge(DiscordMultipart.MAX_ATTACHMENT_BYTES + 1));
+    }
+
+
+    @Test
+    void batchWindowHeaderUsesTruthfulFractionalSecondsInBothLanguages() {
+        assertEquals("1.5", DiscordNotifier.batchWindowLabel(1500));
+        assertEquals("0.1", DiscordNotifier.batchWindowLabel(100));
+        assertEquals("0.0", DiscordNotifier.batchWindowLabel(0));
+        assertEquals("60.0", DiscordNotifier.batchWindowLabel(60000));
+        String label = DiscordNotifier.batchWindowLabel(1500);
+        assertTrue(ServerLang.formatForLang("en_us", "discord.deathcensus.batch.header", 5, label)
+                .contains("1.5"));
+        assertTrue(ServerLang.formatForLang("ja_jp", "discord.deathcensus.batch.header", 5, label)
+                .contains("1.5"));
+    }
+
+    @Test
+    void digestTimestampAdvancesOnlyAfterConfirmedDelivery() throws IOException {
+        long previous = 1_000L;
+        long periodEnd = 2_000L;
+        assertEquals(previous, DiscordNotifier.digestTimestampAfterDelivery(previous, periodEnd, false));
+        assertEquals(periodEnd, DiscordNotifier.digestTimestampAfterDelivery(previous, periodEnd, true));
+
+        String sourceDir = System.getProperty("deathcensus.mainSourceDir");
+        assertNotNull(sourceDir);
+        Path packageDir = Path.of(sourceDir, "com", "pengin0503", "deathcensus");
+        String notifier = Files.readString(packageDir.resolve("DiscordNotifier.java"));
+        String digest = between(notifier, "public static void checkAndSendDigest(", "    }\n}");
+        assertTrue(digest.contains("if (content.isEmpty())"), "zero-death periods must advance immediately");
+        assertTrue(digest.contains("data.setLastDigestEpochMillis(now)"));
+        enqueue: {
+            int send = digest.indexOf("enqueueJson(uri, payloadJson(content), delivered ->");
+            assertTrue(send > 0, "digest must be enqueued with a delivery callback");
+            int advance = digest.indexOf("setLastDigestEpochMillis(digestTimestampAfterDelivery", send);
+            assertTrue(advance > send, "timestamp must only advance inside the delivery callback");
+        }
+    }
+
+    @Test
+    void invalidDigestUrlIsWarnedOncePerConfigCycle() {
+        String typo = "https://example.com/not-a-discord-webhook";
+        DiscordNotifier.resetDigestUrlWarning();
+        assertFalse(DiscordNotifier.digestWarningSilenced());
+        assertNull(DiscordNotifier.webhookUri(WebhookChannel.DIGEST, PRIMARY, typo));
+        assertTrue(DiscordNotifier.digestWarningSilenced());
+        assertNull(DiscordNotifier.webhookUri(WebhookChannel.DIGEST, PRIMARY, typo));
+        assertTrue(DiscordNotifier.digestWarningSilenced());
+        DiscordNotifier.resetDigestUrlWarning();
+        assertFalse(DiscordNotifier.digestWarningSilenced());
+    }
+
+    @Test
+    void batchFlushRejectionRearmsInsteadOfStrandingTheBuffer() throws Exception {
+        Field bufferField = DiscordNotifier.class.getDeclaredField("BATCH_BUFFER");
+        Field flagField = DiscordNotifier.class.getDeclaredField("batchFlushScheduled");
+        Field schedulerField = DiscordNotifier.class.getDeclaredField("batchScheduler");
+        bufferField.setAccessible(true);
+        flagField.setAccessible(true);
+        schedulerField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        ArrayDeque<String> buffer = (ArrayDeque<String>) bufferField.get(null);
+        Object oldScheduler = schedulerField.get(null);
+        boolean oldFlag = flagField.getBoolean(null);
+        List<String> oldContents = new ArrayList<>(buffer);
+        ScheduledThreadPoolExecutor fake = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(
+                1, r -> {
+                    Thread t = new Thread(r, "deathcensus-test-batch-timer");
+                    t.setDaemon(true);
+                    return t;
+                });
+        try {
+            schedulerField.set(null, fake);
+            synchronized (DiscordNotifier.class) {
+                buffer.clear();
+                buffer.addLast("death one");
+                buffer.addLast("death two");
+                flagField.setBoolean(null, true);
+            }
+            assertTrue(DiscordNotifier.flushPending());
+            DiscordNotifier.handleFlushRejection();
+            assertTrue(DiscordNotifier.flushPending(), "non-empty buffer must have a pending flush after rejection");
+            assertEquals(2, DiscordNotifier.bufferedDeathCount());
+            assertTrue(fake.getQueue().size() >= 1, "rejection must re-arm a flush with backoff");
+            DiscordNotifier.handleFlushRejection();
+            assertTrue(DiscordNotifier.flushPending());
+        } finally {
+            fake.shutdownNow();
+            synchronized (DiscordNotifier.class) {
+                buffer.clear();
+                buffer.addAll(oldContents);
+                flagField.setBoolean(null, oldFlag);
+            }
+            schedulerField.set(null, oldScheduler);
+        }
+    }
+
+    @Test
+    void stoppedNotifierNeverRecreatesWorkers() throws Exception {
+        Field stoppedField = DiscordNotifier.class.getDeclaredField("stopped");
+        stoppedField.setAccessible(true);
+        boolean before = stoppedField.getBoolean(null);
+        Method executor = DiscordNotifier.class.getDeclaredMethod("executor");
+        Method scheduler = DiscordNotifier.class.getDeclaredMethod("batchScheduler");
+        executor.setAccessible(true);
+        scheduler.setAccessible(true);
+        try {
+            stoppedField.setBoolean(null, true);
+            assertTrue(DiscordNotifier.isStopped());
+            InvocationTargetException worker = assertThrows(InvocationTargetException.class, () -> executor.invoke(null));
+            assertTrue(worker.getCause() instanceof RejectedExecutionException);
+            InvocationTargetException timer = assertThrows(InvocationTargetException.class, () -> scheduler.invoke(null));
+            assertTrue(timer.getCause() instanceof RejectedExecutionException);
+        } finally {
+            stoppedField.setBoolean(null, before);
+        }
+    }
+
+    @Test
+    void seasonOutcomeIsReportedByWorkerCallbackNotAtQueueTime() throws Exception {
+        String sourceDir = System.getProperty("deathcensus.mainSourceDir");
+        assertNotNull(sourceDir);
+        Path commands = Path.of(sourceDir, "com", "pengin0503", "deathcensus", "CensusCommands.java");
+        String season = between(Files.readString(commands), "private static int digestSeason(",
+                "public static final int DELETE_OK");
+        assertTrue(season.contains("case QUEUED ->"), "command time must report queued, not attached");
+        assertFalse(season.contains("case ATTACHED"));
+        assertTrue(season.contains("onAttachmentSuccess()"));
+
+        AtomicBoolean success = new AtomicBoolean();
+        AtomicBoolean failure = new AtomicBoolean();
+        DiscordNotifier.MessageCallback callback = new DiscordNotifier.MessageCallback() {
+            @Override
+            public void onAttachmentFailure() {
+                failure.set(true);
+            }
+
+            @Override
+            public void onAttachmentSuccess() {
+                success.set(true);
+            }
+        };
+        DiscordMultipart.Body body = DiscordMultipart.compose("{}", "season.html", "<html>x</html>");
+        Method worker = DiscordNotifier.class.getDeclaredMethod("sendMultipartWithRetry", URI.class,
+                String.class, DiscordMultipart.Body.class, DiscordNotifier.MultipartSender.class,
+                DiscordNotifier.MessageCallback.class);
+        worker.setAccessible(true);
+        worker.invoke(null, URI.create(PRIMARY), "{}", body,
+                (DiscordNotifier.MultipartSender) (target, multipart, contentType) -> new WebhookResponse(204, null),
+                callback);
+        assertTrue(success.get(), "2xx must notify the admin of a confirmed attachment");
+        assertFalse(failure.get());
+        success.set(false);
+        worker.invoke(null, URI.create(PRIMARY), "{}", body,
+                (DiscordNotifier.MultipartSender) (target, multipart, contentType) -> new WebhookResponse(400, null),
+                callback);
+        assertTrue(failure.get(), "a terminal failure must notify the admin of the fallback");
+        assertFalse(success.get());
+    }
+
+    @Test
+    void doctorExposesWarnedDigestStateAndReloadResetsWarning() throws IOException {
+        String sourceDir = System.getProperty("deathcensus.mainSourceDir");
+        assertNotNull(sourceDir);
+        String commands = Files.readString(
+                Path.of(sourceDir, "com", "pengin0503", "deathcensus", "CensusCommands.java"));
+        assertTrue(commands.contains("DiscordNotifier.digestWarningSilenced()"),
+                "doctor must expose the invalid-digest warning state");
+        String reload = between(commands, "private static int reload(", "    }\n}");
+        assertTrue(reload.contains("DiscordNotifier.resetDigestUrlWarning()"),
+                "a config reload must re-enable the one-time warning");
     }
 
     private static String between(String source, String startMarker, String endMarker) {

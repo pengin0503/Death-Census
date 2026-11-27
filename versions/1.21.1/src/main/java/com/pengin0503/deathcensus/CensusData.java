@@ -82,6 +82,12 @@ public class CensusData extends SavedData {
         return server.overworld().getDataStorage().computeIfAbsent(FACTORY, DATA_NAME);
     }
 
+    /** Non-creating lookup for read-only commands; does not mark SavedData dirty. */
+    @Nullable
+    public static CensusData getIfExists(MinecraftServer server) {
+        return server.overworld().getDataStorage().get(FACTORY, DATA_NAME);
+    }
+
     /** Raw stored counter without vanilla baselines; used by the importer to avoid double counting. */
     public long storedLifetimeDeaths() {
         return lifetimeDeaths;

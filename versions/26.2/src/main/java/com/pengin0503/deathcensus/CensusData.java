@@ -609,6 +609,12 @@ public class CensusData extends SavedData {
         return data;
     }
 
+    /** Non-creating lookup for read-only commands; does not register/dirty SavedData. */
+    @Nullable
+    public static CensusData getIfExists(MinecraftServer server) {
+        return server.getDataStorage().get(TYPE);
+    }
+
     /** Raw stored counter without vanilla baselines; used by the importer to avoid double counting. */
     public long storedLifetimeDeaths() {
         return lifetimeDeaths;

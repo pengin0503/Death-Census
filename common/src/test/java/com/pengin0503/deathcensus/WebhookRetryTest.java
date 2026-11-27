@@ -1,5 +1,6 @@
 package com.pengin0503.deathcensus;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -58,6 +59,12 @@ class WebhookRetryTest {
                                                        WebhookRetry.RetryConfig config,
                                                        RecordingSleeper sleeper) {
         return WebhookRetry.sendWithRetry(sender, TARGET, JSON, config, sleeper, () -> NOW);
+    }
+
+    /** Never leak an interrupt flag into the JUnit runner or a later test. */
+    @AfterEach
+    void clearInterruptFlag() {
+        Thread.interrupted();
     }
 
     @Test
@@ -256,5 +263,56 @@ class WebhookRetryTest {
         } finally {
             Thread.interrupted(); // clear for the test runner
         }
+    }
+
+    @Test
+    void transportInterruptedExceptionIsTerminalWithoutRetryOrSleep() {
+        InterruptedException boom = new InterruptedException("shutdownNow");
+        ScriptedSender sender = new ScriptedSender(boom);
+        RecordingSleeper sleeper = new RecordingSleeper();
+
+        WebhookRetry.WebhookSendResult result = send(sender, WebhookRetry.RetryConfig.defaults(), sleeper);
+
+        assertFalse(result.delivered());
+        assertEquals(1, result.attempts());
+        assertEquals(0, result.statusCode());
+        assertSame(boom, result.exception());
+        assertEquals(1, sender.calls);
+        assertEquals(List.of(), sleeper.delays);
+        assertTrue(Thread.currentThread().isInterrupted());
+    }
+
+    @Test
+    void interruptedThreadWithOtherExceptionIsTerminalWithoutRetryOrSleep() {
+        IOException boom = new IOException("transport failure while interrupted");
+        WebhookSender sender = (uri, json) -> {
+            Thread.currentThread().interrupt();
+            throw boom;
+        };
+        RecordingSleeper sleeper = new RecordingSleeper();
+
+        WebhookRetry.WebhookSendResult result = WebhookRetry.sendWithRetry(
+                sender, TARGET, JSON, WebhookRetry.RetryConfig.defaults(), sleeper, () -> NOW);
+
+        assertFalse(result.delivered());
+        assertEquals(1, result.attempts());
+        assertEquals(0, result.statusCode());
+        assertSame(boom, result.exception());
+        assertEquals(List.of(), sleeper.delays);
+        assertTrue(Thread.currentThread().isInterrupted());
+    }
+
+    @Test
+    void ordinaryIOExceptionStillRetriesAsBefore() {
+        IOException boom = new IOException("fake transport failure");
+        ScriptedSender sender = new ScriptedSender(boom, new WebhookResponse(204, null));
+        RecordingSleeper sleeper = new RecordingSleeper();
+
+        WebhookRetry.WebhookSendResult result = send(sender, WebhookRetry.RetryConfig.defaults(), sleeper);
+
+        assertTrue(result.delivered());
+        assertEquals(2, result.attempts());
+        assertEquals(List.of(1000L), sleeper.delays);
+        assertFalse(Thread.currentThread().isInterrupted());
     }
 }
