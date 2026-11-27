@@ -245,6 +245,37 @@ public final class CensusExport {
         }
     }
 
+    /**
+     * 1.4.0 §6: standalone read-only comparison report. The caller passes the
+     * already privacy-gated result, so the file can never name a hidden player
+     * or a hidden opponent. Reports live only in {@code exports/}, never backups.
+     */
+    @Nullable
+    public static Path writeCompareHtml(MinecraftServer server, CompareResult result,
+                                        String period, String language) {
+        if (server == null || result == null || !result.ok() || !Config.compareEnabled()) {
+            return null;
+        }
+        String lang = language == null || language.isBlank() ? ServerLang.DEFAULT_LANG : language;
+        String title = ServerLang.formatForLang(lang, "command.deathcensus.compare.header",
+                result.a().name(), result.b().name(), period == null ? "all" : period);
+        String content = ExportRenderers.compareHtml(title, result.a().name(), result.b().name(),
+                CensusCommands.compareLines(result.a(), lang),
+                CensusCommands.compareLines(result.b(), lang),
+                System.currentTimeMillis(), Config.displayTimeZone());
+        String filePart = sanitizeFilePart(result.a().name()) + "-" + sanitizeFilePart(result.b().name());
+        Path file = exportsDir(server).resolve("compare-" + filePart + "-"
+                + timestamp(Config.displayTimeZone()) + ".html");
+        try {
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, content, StandardCharsets.UTF_8);
+            return file;
+        } catch (IOException e) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Could not write comparison report {}", file, e);
+            return null;
+        }
+    }
+
     /** Writes a JSON backup of all data (including opted-out players) and prunes old generations. */
     @Nullable
     public static Path writeBackup(MinecraftServer server) {

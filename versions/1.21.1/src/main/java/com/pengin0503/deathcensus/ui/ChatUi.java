@@ -121,6 +121,8 @@ public final class ChatUi {
             renderDetail(player, detail);
         } else if (view instanceof RankingView ranking) {
             renderRankings(player, ranking);
+        } else if (view instanceof CompareView compare) {
+            renderCompare(player, compare);
         } else if (view instanceof PrivacyView privacy) {
             renderPrivacy(player, privacy);
         } else if (view instanceof NoticeView notice) {
@@ -285,6 +287,7 @@ public final class ChatUi {
                     "command.deathcensus.ui.ranking.distribution.y");
             case "loops" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.loops");
             case "neardeath" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.neardeath");
+            case "compare" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.compare");
             default -> view.type();
         };
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.title"));
@@ -309,11 +312,46 @@ public final class ChatUi {
                 + Math.max(1, view.page() - 1) + " " + token, null));
         buttons.add(commandButton(player, "command.deathcensus.ui.next", "/dc ui rankings page "
                 + Math.min(Math.max(1, view.pageCount()), view.page() + 1) + " " + token, null));
+        if (Config.compareEnabled()) {
+            buttons.add(suggestButton(player, "command.deathcensus.ui.compare.open", "/dc ui compare ",
+                    null));
+        }
         buttons.add(backButton(player));
         buttonRows(player, buttons);
         line(player, ServerLang.tr(player, Config.awardsEnabled()
                 ? "command.deathcensus.ui.chat.ranking_hint"
                 : "command.deathcensus.ui.chat.ranking_hint_no_awards"));
+    }
+
+    /** §6: two aligned metric columns, already localized and privacy-projected. */
+    private static void renderCompare(ServerPlayer player, CompareView view) {
+        line(player, ServerLang.tr(player, "command.deathcensus.ui.compare.title"));
+        line(player, ServerLang.tr(player, "command.deathcensus.ui.compare.header",
+                view.nameA().isEmpty() ? "?" : view.nameA(),
+                view.nameB().isEmpty() ? "?" : view.nameB(), view.period()));
+        if (!view.message().isEmpty()) {
+            line(player, Component.literal(view.message()));
+        }
+        if (view.rowsA().isEmpty() && view.rowsB().isEmpty() && view.message().isEmpty()) {
+            line(player, ServerLang.tr(player, "command.deathcensus.ui.compare.empty"));
+        }
+        for (int i = 0; i < Math.max(view.rowsA().size(), view.rowsB().size()); i++) {
+            String left = i < view.rowsA().size() ? view.rowsA().get(i) : "";
+            String right = i < view.rowsB().size() ? view.rowsB().get(i) : "";
+            line(player, Component.literal(truncate(left + " | " + right)));
+        }
+        StringBuilder command = new StringBuilder("/dc ui compare");
+        if (!view.nameA().isEmpty() && !view.nameB().isEmpty()) {
+            command.append(' ').append(view.nameA()).append(' ').append(view.nameB())
+                    .append(' ').append(view.period());
+            if (!view.sessionToken().isEmpty()) {
+                command.append(' ').append(view.sessionToken());
+            }
+            command.append(' ');
+        }
+        buttonRows(player, List.of(
+                suggestButton(player, "command.deathcensus.ui.compare.open", command.toString(), null),
+                backButton(player)));
     }
 
     private static void renderPrivacy(ServerPlayer player, PrivacyView view) {

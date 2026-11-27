@@ -23,6 +23,8 @@ import com.pengin0503.deathcensus.DiscordLogic.SeasonLabels;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonSection;
 import com.pengin0503.deathcensus.ChronicleEvent;
 import com.pengin0503.deathcensus.ChronicleRules;
+import com.pengin0503.deathcensus.CompareAnalysis;
+import com.pengin0503.deathcensus.CompareResult;
 import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.HiddenIdentities;
 import com.pengin0503.deathcensus.NemesisAnalysis;
@@ -299,6 +301,31 @@ public final class CensusCommands {
                 distribution.then(modeNode);
             }
             root.then(distribution);
+        }
+
+        // 1.4.0 PR-12: /dc compare <playerA> <playerB> [today|7d|30d|all] [--html] (§6), public.
+        if (Config.compareEnabled()) {
+            RequiredArgumentBuilder<CommandSourceStack, String> compareA = arg("playerA", StringArgumentType.word())
+                    .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder));
+            RequiredArgumentBuilder<CommandSourceStack, String> compareB = arg("playerB", StringArgumentType.word())
+                    .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder));
+            compareB.executes(ctx -> compare(ctx, StringArgumentType.getString(ctx, "playerA"),
+                            StringArgumentType.getString(ctx, "playerB"),
+                            Config.compareDefaultPeriod(), false))
+                    .then(literal("--html").executes(ctx -> compare(ctx,
+                            StringArgumentType.getString(ctx, "playerA"),
+                            StringArgumentType.getString(ctx, "playerB"),
+                            Config.compareDefaultPeriod(), true)));
+            for (String period : PERIODS) {
+                compareB.then(literal(period)
+                        .executes(ctx -> compare(ctx, StringArgumentType.getString(ctx, "playerA"),
+                                StringArgumentType.getString(ctx, "playerB"), period, false))
+                        .then(literal("--html").executes(ctx -> compare(ctx,
+                                StringArgumentType.getString(ctx, "playerA"),
+                                StringArgumentType.getString(ctx, "playerB"), period, true))));
+            }
+            compareA.then(compareB);
+            root.then(literal("compare").then(compareA));
         }
 
         // 1.4.0 PR-9: /dc loops [player] [page] (§8), public ranking of derived loops.
@@ -1348,6 +1375,74 @@ public final class CensusCommands {
             case TOTAL_COUNT -> "command.deathcensus.chronicle.kind.total_count";
             case CATEGORY_COMPLETE -> "command.deathcensus.chronicle.kind.category_complete";
         };
+    }
+
+    // ---------------------------------------------------------------- compare (§6)
+
+    /**
+     * Public two-player comparison. Both names are resolved and privacy-gated by
+     * {@link CompareAnalysis}; unknown and hidden targets deliberately produce
+     * the identical error so account existence is not disclosed (§15 Q16).
+     */
+    private static int compare(CommandContext<CommandSourceStack> ctx, String nameA, String nameB,
+                               String period, boolean html) {
+        MinecraftServer server = server(ctx);
+        if (server == null || !Config.compareEnabled()) {
+            return 0;
+        }
+        List<PlayerDeaths> snapshot = CensusData.get(server).snapshot();
+        CompareResult result = CompareAnalysis.compare(snapshot, nameA, nameB, sinceMillis(period),
+                WitnessRedactor.privacyById(snapshot), selfUuid(ctx), isAdmin(ctx));
+        if (!result.ok()) {
+            fail(ctx, "command.deathcensus.compare.unknown");
+            return 0;
+        }
+        send(ctx, "command.deathcensus.compare.header", result.a().name(), result.b().name(), period);
+        String language = languageOf(ctx);
+        List<String> left = compareLines(result.a(), language);
+        List<String> right = compareLines(result.b(), language);
+        for (int i = 0; i < left.size(); i++) {
+            sendLiteral(ctx, left.get(i) + " | " + (i < right.size() ? right.get(i) : ""));
+        }
+        if (html) {
+            Path file = CensusExport.writeCompareHtml(server, result, period, language);
+            if (file != null) {
+                send(ctx, "command.deathcensus.compare.html", file.getFileName().toString());
+            }
+        }
+        return 1;
+    }
+
+    /** Shared localized projection for chat, the standalone report and the GUI adapters. */
+    static List<String> compareLines(CompareResult.Row row, String language) {
+        List<String> lines = new ArrayList<>();
+        if (row == null) {
+            return lines;
+        }
+        String none = ServerLang.formatForLang(language, "command.deathcensus.ui.none");
+        int shortest = row.summary().shortestSurvivalTicks();
+        String opponent = row.topOpponent().isEmpty()
+                ? none
+                : row.opponentHidden()
+                        ? ServerLang.formatForLang(language, "command.deathcensus.compare.anonymous")
+                        : row.topOpponent();
+        lines.add(ServerLang.formatForLang(language, "command.deathcensus.compare.row.deaths",
+                row.summary().deaths()));
+        lines.add(ServerLang.formatForLang(language, "command.deathcensus.compare.row.average_survival",
+                TimeFormat.formatDuration((int) Math.max(0L,
+                        Math.min(row.averageSurvivalTicks(), Integer.MAX_VALUE)))));
+        lines.add(ServerLang.formatForLang(language, "command.deathcensus.compare.row.longest_survival",
+                TimeFormat.formatDuration(row.summary().longestSurvivalTicks())));
+        lines.add(ServerLang.formatForLang(language, "command.deathcensus.compare.row.shortest_survival",
+                shortest < 0 ? none : TimeFormat.formatDuration(shortest)));
+        lines.add(ServerLang.formatForLang(language, "command.deathcensus.compare.row.top_cause",
+                row.topCause().isEmpty() ? none : row.topCause()));
+        // §15 Q15: deaths caused by players only; there is no wins/losses claim.
+        lines.add(ServerLang.formatForLang(language, "command.deathcensus.compare.row.player_deaths",
+                row.playerCausedDeaths()));
+        lines.add(ServerLang.formatForLang(language, "command.deathcensus.compare.row.top_opponent",
+                opponent));
+        return lines;
     }
 
     // --------------------------------------------------------------- nemesis (§4)

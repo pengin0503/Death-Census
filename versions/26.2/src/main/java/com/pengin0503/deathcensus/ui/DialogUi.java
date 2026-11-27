@@ -1,6 +1,7 @@
 package com.pengin0503.deathcensus.ui;
 
 import com.pengin0503.deathcensus.CauseClassifier;
+import com.pengin0503.deathcensus.CompareAnalysis;
 import com.pengin0503.deathcensus.Config;
 import com.pengin0503.deathcensus.DeathContext;
 import com.pengin0503.deathcensus.DeathCensus;
@@ -136,6 +137,8 @@ public final class DialogUi {
             dialog = detailDialog(player, detail);
         } else if (view instanceof RankingView ranking) {
             dialog = rankingDialog(player, ranking);
+        } else if (view instanceof CompareView compare) {
+            dialog = compareDialog(player, compare);
         } else if (view instanceof PrivacyView privacy) {
             dialog = privacyDialog(player, privacy);
         } else if (view instanceof NoticeView notice) {
@@ -314,6 +317,7 @@ public final class DialogUi {
                     "command.deathcensus.ui.ranking.distribution.y");
             case "loops" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.loops");
             case "neardeath" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.neardeath");
+            case "compare" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.compare");
             default -> view.type();
         };
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
@@ -329,14 +333,18 @@ public final class DialogUi {
                     truncate(view.anonymousTotalsLine()))));
         }
         String token = sessionToken(player);
-        List<ActionButton> actions = List.of(
-                actionButton(player, "command.deathcensus.ui.rankings.apply", "rankings",
-                        Map.of("s", token, "p", "1"), "command.deathcensus.ui.tooltip.apply"),
-                actionButton(player, "command.deathcensus.ui.prev", "ranking_page",
-                        Map.of("s", token, "p", Integer.toString(Math.max(1, view.page() - 1))), null),
-                actionButton(player, "command.deathcensus.ui.next", "ranking_page",
-                        Map.of("s", token, "p", Integer.toString(Math.min(Math.max(1, view.pageCount()),
-                                view.page() + 1))), null));
+        List<ActionButton> actions = new ArrayList<>();
+        actions.add(actionButton(player, "command.deathcensus.ui.rankings.apply", "rankings",
+                Map.of("s", token, "p", "1"), "command.deathcensus.ui.tooltip.apply"));
+        actions.add(actionButton(player, "command.deathcensus.ui.prev", "ranking_page",
+                Map.of("s", token, "p", Integer.toString(Math.max(1, view.page() - 1))), null));
+        actions.add(actionButton(player, "command.deathcensus.ui.next", "ranking_page",
+                Map.of("s", token, "p", Integer.toString(Math.min(Math.max(1, view.pageCount()),
+                        view.page() + 1))), null));
+        if (Config.compareEnabled()) {
+            actions.add(actionButton(player, "command.deathcensus.ui.compare.open", "compare",
+                    Map.of("s", token, "p", "1", "in_period", view.period()), null));
+        }
         List<String> types = new ArrayList<>(List.of("deaths", "survival", "fastest", "rarest"));
         if (Config.awardsEnabled()) {
             types.add("awards");
@@ -363,6 +371,42 @@ public final class DialogUi {
                 choiceInput(player, "in_period", "command.deathcensus.ui.input.period",
                         HistoryFilter.PERIODS, view.period()));
         return new MultiActionDialog(common(player, "command.deathcensus.ui.rankings.title", body, inputs),
+                actions, Optional.of(backButton(player)), COLUMNS);
+    }
+
+    /** §6: two columns of identical metric rows, projected by the common dispatcher. */
+    private static Dialog compareDialog(ServerPlayer player, CompareView view) {
+        List<DialogBody> body = new ArrayList<>();
+        body.add(line(ServerLang.tr(player, "command.deathcensus.ui.compare.header",
+                view.nameA().isEmpty() ? "?" : view.nameA(),
+                view.nameB().isEmpty() ? "?" : view.nameB(), view.period())));
+        if (!view.message().isEmpty()) {
+            body.add(line(ServerLang.tr(player, view.message())));
+        }
+        if (view.rowsA().isEmpty() && view.rowsB().isEmpty() && view.message().isEmpty()) {
+            body.add(line(ServerLang.tr(player, "command.deathcensus.ui.compare.empty")));
+        }
+        for (String row : view.rowsA()) {
+            body.add(line(Component.literal(truncate(row))));
+        }
+        for (String row : view.rowsB()) {
+            body.add(line(Component.literal(truncate(row))));
+        }
+        String token = view.sessionToken().isEmpty() ? sessionToken(player) : view.sessionToken();
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("s", token);
+        params.put("p", "1");
+        params.put("in_period", view.period());
+        List<ActionButton> actions = List.of(
+                actionButton(player, "command.deathcensus.ui.compare.open", "compare", params, null));
+        List<Input> inputs = List.of(
+                textInput(player, "in_compare_a", "command.deathcensus.ui.compare.input.a",
+                        view.nameA(), CompareAnalysis.MAX_NAME_LENGTH),
+                textInput(player, "in_compare_b", "command.deathcensus.ui.compare.input.b",
+                        view.nameB(), CompareAnalysis.MAX_NAME_LENGTH),
+                choiceInput(player, "in_period", "command.deathcensus.ui.input.period",
+                        HistoryFilter.PERIODS, view.period()));
+        return new MultiActionDialog(common(player, "command.deathcensus.ui.compare.title", body, inputs),
                 actions, Optional.of(backButton(player)), COLUMNS);
     }
 

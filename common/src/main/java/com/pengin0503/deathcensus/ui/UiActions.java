@@ -4,6 +4,8 @@ import com.pengin0503.deathcensus.AwardResult;
 import com.pengin0503.deathcensus.Awards;
 import com.pengin0503.deathcensus.ChronicleEvent;
 import com.pengin0503.deathcensus.ChronicleRules;
+import com.pengin0503.deathcensus.CompareAnalysis;
+import com.pengin0503.deathcensus.CompareResult;
 import com.pengin0503.deathcensus.CensusStats;
 import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
@@ -47,7 +49,7 @@ public final class UiActions {
     public static final Set<String> ACTIONS = Set.of(
             "home", "history", "history_search", "history_page", "detail",
             "excuse_open", "excuse_save", "respect", "rankings", "ranking_page",
-            "privacy", "privacy_save", "delete_ask", "delete_confirm", "admin"
+            "compare", "privacy", "privacy_save", "delete_ask", "delete_confirm", "admin"
     );
     public static final int PAGE_SIZE = 10;
     public static final int MAX_PAGE = 10_000;
@@ -59,6 +61,7 @@ public final class UiActions {
     private static final Set<String> BOUNDED_KEYS = Set.of(
             "s", "p", "t", "d", "f",
             "in_period", "in_category", "in_dimension", "in_query", "in_excuse", "in_type",
+            "in_compare_a", "in_compare_b",
             "in_optout", "in_hide_coords", "in_hide_opponent", "in_discord_optout"
     );
 
@@ -153,6 +156,11 @@ public final class UiActions {
                 case "in_query" -> {
                     if (value.length() > HistoryFilter.MAX_QUERY_LENGTH) {
                         return Optional.of("invalid_query");
+                    }
+                }
+                case "in_compare_a", "in_compare_b" -> {
+                    if (value.length() > CompareAnalysis.MAX_NAME_LENGTH) {
+                        return Optional.of("invalid_compare_name");
                     }
                 }
                 case "in_excuse" -> {
@@ -308,6 +316,7 @@ public final class UiActions {
             case "excuse_save" -> saveExcuse(request, ctx);
             case "respect" -> respect(request, ctx);
             case "rankings", "ranking_page" -> openRankings(request, ctx, action);
+            case "compare" -> openCompare(request, ctx);
             case "privacy" -> openPrivacy(request, ctx);
             case "privacy_save" -> savePrivacy(request, ctx);
             case "delete_ask" -> askDelete(request, ctx);
@@ -501,6 +510,93 @@ public final class UiActions {
                 selection.type(), selection.period(), page.page(), page.pageCount(),
                 page.items(), truncate(UiPrivacy.anonymousTotalsLine(filtered))
         );
+    }
+
+    // ------------------------------------------------------------- compare (§6)
+
+    /**
+     * Opens the two-column comparison from the Ranking screen. Names arrive as
+     * bounded inputs; the dispatcher re-checks both targets against live privacy
+     * before any value is rendered.
+     */
+    private static UiResult openCompare(UiRequest request, UiContext ctx) {
+        if (!ctx.compareEnabled()) {
+            return noChange("compare_disabled");
+        }
+        String nameA = compareName(input(request, "in_compare_a"));
+        String nameB = compareName(input(request, "in_compare_b"));
+        String period = HistoryFilter.normalizePeriod(input(request, "in_period"));
+        UiSession current = ctx.currentSession();
+        UiSession session = rotate(request, ctx,
+                current == null ? HistoryFilter.DEFAULT.withPeriod(period) : current.filter(),
+                current == null ? UiSession.DEFAULT_RANKING : current.ranking());
+        if (session == null) {
+            return expired(ctx);
+        }
+        return new UiResult.Open(compareView(ctx, nameA, nameB, period, session.token()));
+    }
+
+    private static String compareName(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String trimmed = raw.trim();
+        return trimmed.length() > CompareAnalysis.MAX_NAME_LENGTH ? "" : trimmed;
+    }
+
+    private static CompareView compareView(UiContext ctx, String nameA, String nameB,
+                                           String period, String token) {
+        if (nameA.isEmpty() || nameB.isEmpty()) {
+            return new CompareView(period, nameA, nameB, List.of(), List.of(), "", token);
+        }
+        long since = HistoryFilter.DEFAULT.withPeriod(period)
+                .sinceMillis(ctx.nowMillis(), ctx.zoneId());
+        CompareResult result = CompareAnalysis.compare(ctx.snapshot(), nameA, nameB, since,
+                WitnessRedactor.privacyById(ctx.snapshot()), ctx.viewer(), ctx.isAdmin());
+        if (!result.ok()) {
+            String message = ctx.label("command.deathcensus.compare.unknown");
+            return new CompareView(period, nameA, nameB, List.of(), List.of(), message, token);
+        }
+        return new CompareView(period, result.a().name(), result.b().name(),
+                compareRows(ctx, result.a()), compareRows(ctx, result.b()), "", token);
+    }
+
+    /** One localized field per metric; both columns use exactly the same rows. */
+    private static List<String> compareRows(UiContext ctx, CompareResult.Row row) {
+        String empty = ctx.label("command.deathcensus.ui.none");
+        int longest = row.summary().longestSurvivalTicks();
+        int shortest = row.summary().shortestSurvivalTicks();
+        String opponent = row.topOpponent().isEmpty()
+                ? empty
+                : row.opponentHidden()
+                        ? ctx.label("command.deathcensus.compare.anonymous")
+                        : row.topOpponent();
+        List<String> rows = new ArrayList<>();
+        rows.add(compareField(ctx, "command.deathcensus.compare.row.deaths", row.summary().deaths()));
+        rows.add(compareField(ctx, "command.deathcensus.compare.row.average_survival",
+                TimeFormat.formatDuration(compareTicks(row.averageSurvivalTicks()))));
+        rows.add(compareField(ctx, "command.deathcensus.compare.row.longest_survival",
+                TimeFormat.formatDuration(longest)));
+        rows.add(compareField(ctx, "command.deathcensus.compare.row.shortest_survival",
+                shortest < 0 ? empty : TimeFormat.formatDuration(shortest)));
+        rows.add(compareField(ctx, "command.deathcensus.compare.row.top_cause",
+                row.topCause().isEmpty() ? empty : row.topCause()));
+        rows.add(compareField(ctx, "command.deathcensus.compare.row.player_deaths",
+                row.playerCausedDeaths()));
+        rows.add(compareField(ctx, "command.deathcensus.compare.row.top_opponent", opponent));
+        return List.copyOf(rows);
+    }
+
+    /** Survival ticks are int-formatted throughout the UI; clamp derived longs. */
+    private static int compareTicks(long ticks) {
+        return (int) Math.max(0L, Math.min(ticks, Integer.MAX_VALUE));
+    }
+
+    private static String compareField(UiContext ctx, String key, Object value) {
+        String template = ctx.label(key);
+        return template.contains("%")
+                ? String.format(Locale.ROOT, template, value)
+                : template + ": " + value;
     }
 
     /** 1.4.0 §2: awards are computed from the same period-scoped public view. */

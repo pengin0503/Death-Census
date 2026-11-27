@@ -225,6 +225,20 @@ public final class Config {
             .comment("Opt-in seam for future near-death Discord posts (default false; realtime death lines are unchanged).")
             .define("nearDeathInDiscord", false);
 
+    // 1.4.0 PR-12 (§6): comparison is derived from retained records; nothing new is stored.
+    public static final ModConfigSpec.BooleanValue COMPARE_ENABLED = BUILDER
+            .comment("Enable player comparison: /dc compare, the two-column Compare view and the standalone HTML report.",
+                    "Comparison is public and privacy-gated; no win/loss record is stored or inferred.")
+            .define("compareEnabled", true);
+
+    public static final ModConfigSpec.ConfigValue<String> COMPARE_DEFAULT_PERIOD = BUILDER
+            .comment("Default period for /dc compare (today|7d|30d|all; default all, matching /dc leaderboard).")
+            .define("compareDefaultPeriod", "all", Config::validateComparePeriod);
+
+    public static final ModConfigSpec.BooleanValue COMPARE_IN_DISCORD = BUILDER
+            .comment("Opt-in seam for a future comparison Discord post (default false; comparisons are interactive queries).")
+            .define("compareInDiscord", false);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -350,6 +364,11 @@ public final class Config {
     static boolean validateAwardsPeriod(Object obj) {
         return obj instanceof String s && (s.equals("today") || s.equals("7d")
                 || s.equals("30d") || s.equals("all"));
+    }
+
+    /** §6 uses the same four period literals as awards and leaderboards. */
+    static boolean validateComparePeriod(Object obj) {
+        return validateAwardsPeriod(obj);
     }
 
     public static ZoneId displayTimeZone() {
@@ -627,6 +646,33 @@ public final class Config {
     public static boolean distributionsInDigest() {
         try {
             return DISTRIBUTIONS_IN_DIGEST.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    public static boolean compareEnabled() {
+        try {
+            return COMPARE_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** Validated §15 Q17 default: all, matching the leaderboard. */
+    public static String compareDefaultPeriod() {
+        try {
+            String value = COMPARE_DEFAULT_PERIOD.get();
+            return validateComparePeriod(value) ? value : "all";
+        } catch (IllegalStateException notLoaded) {
+            return "all";
+        }
+    }
+
+    /** No comparison Discord posts in PR-12; this accessor is the opt-in seam. */
+    public static boolean compareInDiscord() {
+        try {
+            return COMPARE_IN_DISCORD.get();
         } catch (IllegalStateException notLoaded) {
             return false;
         }

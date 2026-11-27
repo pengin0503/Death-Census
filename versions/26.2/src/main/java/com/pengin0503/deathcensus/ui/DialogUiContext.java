@@ -146,6 +146,11 @@ public final class DialogUiContext implements UiContext {
     }
 
     @Override
+    public boolean compareEnabled() {
+        return Config.compareEnabled();
+    }
+
+    @Override
     public boolean distributionsEnabled() {
         return Config.distributionsEnabled();
     }

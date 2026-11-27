@@ -48,6 +48,7 @@ public final class ChatUiRequestParser {
             case "delete" -> parseDelete(viewer, args);
             case "excuse" -> parseExcuse(viewer, args);
             case "rankings" -> parseRankings(viewer, args);
+            case "compare" -> parseCompare(viewer, args);
             case "privacy" -> parsePrivacy(viewer, args);
             case "admin" -> args.size() == 1
                     ? Optional.of(request(viewer, "admin", "", 1, "", -1L, Map.of()))
@@ -242,6 +243,35 @@ public final class ChatUiRequestParser {
         inputs.put("in_type", type);
         inputs.put("in_period", period);
         return Optional.of(request(viewer, "rankings", token, page, "", -1L, inputs));
+    }
+
+    /** {@code compare <playerA> <playerB> [period] [session]} opens the two-column view. */
+    private static Optional<UiRequest> parseCompare(UUID viewer, List<String> args) {
+        if (args.size() == 1) {
+            return Optional.of(request(viewer, "compare", "", 1, "", -1L, Map.of()));
+        }
+        if (args.size() < 3 || args.size() > 5) {
+            return Optional.empty();
+        }
+        String nameA = args.get(1).trim();
+        String nameB = args.get(2).trim();
+        if (nameA.isEmpty() || nameB.isEmpty()) {
+            return Optional.empty();
+        }
+        int max = com.pengin0503.deathcensus.CompareAnalysis.MAX_NAME_LENGTH;
+        if (nameA.length() > max || nameB.length() > max) {
+            return Optional.empty();
+        }
+        String period = args.size() >= 4 ? HistoryFilter.normalizePeriod(args.get(3)) : HistoryFilter.ALL;
+        String token = args.size() == 5 ? args.get(4) : "";
+        if (!validToken(token)) {
+            return Optional.empty();
+        }
+        Map<String, String> inputs = new LinkedHashMap<>();
+        inputs.put("in_compare_a", nameA);
+        inputs.put("in_compare_b", nameB);
+        inputs.put("in_period", period);
+        return Optional.of(request(viewer, "compare", token, 1, "", -1L, inputs));
     }
 
     private static Optional<UiRequest> parsePrivacy(UUID viewer, List<String> args) {

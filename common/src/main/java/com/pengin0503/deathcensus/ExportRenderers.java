@@ -1653,4 +1653,43 @@ public final class ExportRenderers {
         }
         sb.append(']');
     }
+
+    /**
+     * 1.4.0 §6: standalone two-column comparison report. Callers pass already
+     * localized, already privacy-projected row strings; this renderer only
+     * escapes them, so it can never reintroduce a hidden name.
+     */
+    public static String compareHtml(String title, String nameA, String nameB,
+                                     List<String> rowsA, List<String> rowsB,
+                                     long generatedAtEpochMillis, ZoneId zone) {
+        List<String> left = rowsA == null ? List.of() : rowsA;
+        List<String> right = rowsB == null ? List.of() : rowsB;
+        ZoneId z = zone == null ? ZoneId.systemDefault() : zone;
+        StringBuilder sb = new StringBuilder(2048);
+        sb.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n")
+                .append("<title>").append(TextEscaping.html(title == null ? "Compare" : title))
+                .append("</title>\n<style>\n")
+                .append("body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; color: #1f2937; }\n")
+                .append("table { width: 100%; border-collapse: collapse; }\n")
+                .append("th, td { border: 1px solid #e5e7eb; padding: 0.5rem 0.75rem; text-align: left; }\n")
+                .append("th { background: #f3f4f6; }\n</style>\n</head>\n<body>\n")
+                .append("<h1>").append(TextEscaping.html(title == null ? "Compare" : title)).append("</h1>\n")
+                .append("<p>Generated: ")
+                .append(TextEscaping.html(TimeFormat.formatDateTime(generatedAtEpochMillis, z)))
+                .append("</p>\n<table>\n<thead><tr><th>")
+                .append(TextEscaping.html(nameA == null ? "" : nameA))
+                .append("</th><th>")
+                .append(TextEscaping.html(nameB == null ? "" : nameB))
+                .append("</th></tr></thead>\n<tbody>\n");
+        int count = Math.max(left.size(), right.size());
+        for (int i = 0; i < count; i++) {
+            sb.append("<tr><td>")
+                    .append(i < left.size() && left.get(i) != null ? TextEscaping.html(left.get(i)) : "")
+                    .append("</td><td>")
+                    .append(i < right.size() && right.get(i) != null ? TextEscaping.html(right.get(i)) : "")
+                    .append("</td></tr>\n");
+        }
+        sb.append("</tbody>\n</table>\n</body>\n</html>\n");
+        return sb.toString();
+    }
 }
