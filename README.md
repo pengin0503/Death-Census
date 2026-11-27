@@ -10,7 +10,7 @@ timelines, server-wide leaderboards, and cause-of-death statistics.
 It runs **entirely on the server**. Players join with a plain vanilla
 client; nothing needs to be installed on the client side.
 
-> **Status: 1.4.0 feature set.** See [CHANGELOG.md](CHANGELOG.md) for the
+> **Status: 1.4.0 release.** See [CHANGELOG.md](CHANGELOG.md) for the
 > release notes and [docs/DESIGN.md](docs/DESIGN.md) for the design.
 
 ## Why another death log?
