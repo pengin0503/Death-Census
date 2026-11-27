@@ -504,10 +504,32 @@ New config keys (default in parentheses):
    stays a separate two-column action (never a pseudo-ranking kind).
 5. **Orphan lang keys?** **Default: remove keys superseded by another key or
    never rendered** (`witnesses.help`, `ui.privacy.state`, `export.compare`);
-   the final bundles hold 313 identical keys in en/ja.
+   the final bundles hold 314 identical keys in en/ja
+   (the added key is `command.deathcensus.chronicle.row_undated`, which renders
+   reconstructed counter rows without inventing a day).
 6. **Export section order?** **Default: awards → chronicle → nemesis →
    hotspots → distributions → loops → near-death in HTML, JSON and CSV**; the
    opt-in loop section must never differ by format.
 7. **Unreachable ranking-label cases?** **Default: leave them** — no adapter
    generates a `compare` ranking type, so they are harmless compatibility
    labels rather than dead navigation entries.
+
+### 15.2 Review-140 disposition notes
+
+- **M5 (`discordOptOut` and awards):** disposition only. PR-4 explicitly
+  decided that `discordOptOut` excludes a player from *named Discord award
+  sections* but not from anonymous totals (the §12 Q17 rule carried over from
+  1.3.0). Existing behavior matches that decision; changing it would be a
+  semantics change, not a review fix.
+- **M8 (hotspot/distribution digest toggles):** disposition only.
+  `hotspotsInDigest` and `distributionsInDigest` are intentional opt-in seams,
+  default false, and `/dc doctor` is their only consumer. Adding sections by
+  default would change documented behavior.
+- **M9 (loop threshold range):** fixed as a genuine config/detector mismatch:
+  `deathLoopMinDeaths` is now clamped to `2–100` to agree with the detector's
+  `Math.max(2, minDeaths)` floor.
+- **M11 (marker-based predicates and GUI localization):** genuine defect, not a
+  disposition. Named GUI surfaces now localize `witnesses.hidden` while exports
+  stay English-by-design, and hidden rows are detected structurally (empty
+  UUID / before-after change) so a real witness named "Anonymous" is no longer
+  filtered out of awards or misread as a hidden PvP rival.

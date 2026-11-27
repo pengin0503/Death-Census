@@ -83,6 +83,17 @@ public final class DeathTracker {
         return Math.floorDiv(server.overworld().getDayTime(), 24000L);
     }
 
+    /**
+     * S2: chronicle totals count only deaths recorded by this mod. Milestones
+     * keep using the baseline-inflated {@link CensusData#lifetimeDeaths()}.
+     */
+    static int chronicleTotalBefore(CensusData data) {
+        if (data == null) {
+            return 0;
+        }
+        return (int) Math.min(Math.max(0L, data.storedLifetimeDeaths()), (long) Integer.MAX_VALUE);
+    }
+
     @SubscribeEvent
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player) || player instanceof FakePlayer) {
@@ -254,7 +265,9 @@ public final class DeathTracker {
 
         // Lifetime counters/categories survive record trimming; retained lists do not.
         // recordDeath increments the counter, so snapshot it first (same ordering as before).
+        // Milestones use the baseline-inflated total; chronicle rows use the stored one (S2).
         int totalDeathsBefore = (int) Math.min(data.lifetimeDeaths(), (long) Integer.MAX_VALUE);
+        int chronicleDeathsBefore = chronicleTotalBefore(data);
         int playerDeathsBefore = pc.deaths.size();
         int playerDistinctCategoriesBefore = pc.lifetimeCategories.size();
         boolean optedOut = pc.optOutPublic;
@@ -271,7 +284,10 @@ public final class DeathTracker {
                 ChatUi.sendDeathLine(viewer, player.getUUID(), deathEpochMillis, playerName);
             }
         }
-        if (!pc.optOutPublic) {
+        // M14: the snapshot-wide dictionary is built only when a realtime post can
+        // actually happen; opt-out-only users never pay for it.
+        if (!pc.optOutPublic && !pc.discordOptOut
+                && Config.discordNotifyDeaths() && DiscordNotifier.realtimeWebhookConfigured()) {
             DiscordNotifier.notifyDeath(entry, new PlayerPrivacy(
                     pc.optOutPublic, pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut),
                     HiddenIdentities.of(data.snapshot()));
@@ -293,7 +309,7 @@ public final class DeathTracker {
             boolean netherSeen = data.chronicleEvents().stream()
                     .anyMatch(e -> e.kind() == ChronicleEvent.Kind.NETHER_FIRST);
             List<ChronicleEvent> additions = ChronicleRules.eventsFor(entry,
-                    new ChronicleRules.Counters(totalDeathsBefore, netherSeen,
+                    new ChronicleRules.Counters(chronicleDeathsBefore, netherSeen,
                             playerDistinctCategoriesBefore, pc.lifetimeCategories.size()));
             data.addChronicleEvents(additions);
         }
@@ -544,6 +560,9 @@ public final class DeathTracker {
     /** PR-11: the version's totem event is observed directly, never guessed. */
     @SubscribeEvent
     public static void onTotemUsed(net.neoforged.neoforge.event.entity.living.LivingUseTotemEvent event) {
+        if (event.isCanceled()) {
+            return;
+        }
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }

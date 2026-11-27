@@ -121,15 +121,23 @@ class ChronicleRulesTest {
         Set<String> all = new HashSet<>(CauseClassifier.CATEGORIES);
         ChronicleRules.ReconstructionResult result = ChronicleRules.reconstruct(
                 new ChronicleRules.ReconstructionInput(List.of(player, other), 250, Map.of("u1", all)));
+        // M4: undated counter/category rows sort after the provably dated ones.
         assertEquals(List.of(
                 ChronicleEvent.Kind.SERVER_FIRST,
-                ChronicleEvent.Kind.TOTAL_COUNT,
-                ChronicleEvent.Kind.TOTAL_COUNT,
-                ChronicleEvent.Kind.CATEGORY_COMPLETE,
                 ChronicleEvent.Kind.NETHER_FIRST,
-                ChronicleEvent.Kind.END_DRAGON_DEATH), kinds(result.events()));
+                ChronicleEvent.Kind.END_DRAGON_DEATH,
+                ChronicleEvent.Kind.TOTAL_COUNT,
+                ChronicleEvent.Kind.TOTAL_COUNT,
+                ChronicleEvent.Kind.CATEGORY_COMPLETE), kinds(result.events()));
         assertTrue(result.events().stream().allMatch(ChronicleEvent::reconstructed));
-        assertEquals("u2", result.events().get(5).uuid());
+        assertEquals("u2", result.events().get(2).uuid());
+        for (ChronicleEvent row : result.events()) {
+            if (row.kind() == ChronicleEvent.Kind.TOTAL_COUNT
+                    || row.kind() == ChronicleEvent.Kind.CATEGORY_COMPLETE) {
+                assertTrue(ChronicleRules.isUndated(row));
+                assertEquals(0L, row.epochMillis());
+            }
+        }
         assertEquals(0, result.dropped());
     }
 
@@ -178,7 +186,29 @@ class ChronicleRulesTest {
                         List.of(new PlayerDeaths("u1", "Alice", false, deaths)), 30_000, null));
         assertTrue(result.dropped() > 0);
         assertEquals(ChronicleRules.DEFAULT_MAX_EVENTS, result.events().size());
-        assertTrue(result.events().stream().allMatch(e -> e.kind() == ChronicleEvent.Kind.TOTAL_COUNT));
+        assertEquals(1, result.events().stream()
+                .filter(e -> e.kind() == ChronicleEvent.Kind.SERVER_FIRST).count());
+        assertEquals(ChronicleRules.DEFAULT_MAX_EVENTS - 1, result.events().stream()
+                .filter(e -> e.kind() == ChronicleEvent.Kind.TOTAL_COUNT).count());
+    }
+
+    @Test
+    void reconstructionHonorsTheCallersCapAndValidatesStoredEpochs() {
+        // M1: a crafted counter near Integer.MAX_VALUE must not allocate a row
+        // per hundred; the configured cap bounds generation itself.
+        List<DeathEntry> deaths = List.of(death(1_000L, 1L, "minecraft:overworld", ""));
+        ChronicleRules.ReconstructionResult result = ChronicleRules.reconstruct(
+                new ChronicleRules.ReconstructionInput(
+                        List.of(new PlayerDeaths("u1", "Alice", false, deaths)),
+                        Integer.MAX_VALUE, null), 1_000);
+        assertEquals(1_000, result.events().size());
+        assertTrue(result.dropped() > Integer.MAX_VALUE / 200L);
+        assertEquals(999, result.events().stream()
+                .filter(ChronicleRules::isUndated).count());
+
+        assertTrue(ChronicleRules.isValidEpoch(1L));
+        assertFalse(ChronicleRules.isValidEpoch(0L));
+        assertFalse(ChronicleRules.isValidEpoch(-1L));
     }
 
     @Test

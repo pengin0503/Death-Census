@@ -82,7 +82,8 @@ class AwardsWiringTest {
             assertTrue(commands.contains("command.deathcensus.awards.title." + rule), rule);
         }
         assertTrue(commands.contains("command.deathcensus.awards.row"), commands);
-        assertTrue(commands.contains("Awards.evaluate(eligible, Config.awardsMinCount(),"), commands);
+        assertTrue(commands.contains("Awards.evaluate(eligible, minCount, new Awards.Context(categories, rarest))"),
+                commands);
         assertTrue(commands.contains("ServerLang.formatForLang(language,"), commands);
     }
 
@@ -94,13 +95,13 @@ class AwardsWiringTest {
         assertTrue(commands.contains("!entry.getValue().optOutPublic"), commands);
 
         String export = source("CensusExport.java");
-        assertTrue(export.contains("CensusCommands.computeAwards(server, players, false)"), export);
+        assertTrue(export.contains("CensusCommands.computeAwards(server, players, allPlayers, false)"), export);
         assertTrue(export.contains("CensusCommands.awardLines("), export);
         assertTrue(export.contains("command.deathcensus.export.awards"), export);
 
         String discord = source("DiscordNotifier.java");
         assertTrue(discord.contains("Config.awardsInDigest()"), discord);
-        assertTrue(discord.contains("CensusCommands.computeAwards(server, publicRecent, true)"), discord);
+        assertTrue(discord.contains("CensusCommands.computeAwards(server, publicRecent, fullRecent, true)"), discord);
         assertTrue(discord.contains("discord.deathcensus.awards.section"), discord);
 
         String dir = System.getProperty("deathcensus.mainSourceDir");
@@ -108,6 +109,9 @@ class AwardsWiringTest {
                 "ui", "DialogUiContext.java")) ? "ui/DialogUiContext.java" : "ui/ChatUiContext.java";
         String ui = source(uiFile);
         assertTrue(ui.contains("public boolean awardsEnabled()"), ui);
+        // S4: every UI adapter must honor the configured awards threshold.
+        assertTrue(ui.contains("public int awardsMinCount()"), ui);
+        assertTrue(ui.contains("return Config.awardsMinCount();"), ui);
         assertTrue(ui.contains("public Map<String, Set<String>> lifetimeCategories()"), ui);
         assertTrue(ui.contains("public String label(String key)"), ui);
 

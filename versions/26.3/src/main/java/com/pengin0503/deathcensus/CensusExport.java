@@ -139,7 +139,7 @@ public final class CensusExport {
         String awardsHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
                 "command.deathcensus.export.awards");
         List<String> awardLines = CensusCommands.awardLines(
-                CensusCommands.computeAwards(server, players, false), ServerLang.DEFAULT_LANG);
+                CensusCommands.computeAwards(server, players, allPlayers, false), ServerLang.DEFAULT_LANG);
         // §3: chronicle rows are projected with the same privacy rules as chat/GUI.
         List<String> chronicleLines = chronicleLines(server, allPlayers);
         String chronicleHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
@@ -205,16 +205,17 @@ public final class CensusExport {
         // The full snapshot is the privacy dictionary source; the date range and
         // opt-out gate below only filter which records are rendered (S3).
         List<PlayerDeaths> allPlayers = CensusData.get(server).snapshot();
+        List<PlayerDeaths> inPeriod = CensusStats.filterRange(
+                allPlayers, range.fromMillisInclusive(), range.toMillisInclusive());
         List<PlayerDeaths> players = new ArrayList<>();
-        for (PlayerDeaths player : CensusStats.filterRange(
-                allPlayers, range.fromMillisInclusive(), range.toMillisInclusive())) {
+        for (PlayerDeaths player : inPeriod) {
             if (!player.optOutPublic()) {
                 players.add(player);
             }
         }
         ZoneId zone = Config.displayTimeZone();
         List<String> awardLines = CensusCommands.awardLines(
-                CensusCommands.computeAwards(server, players, false), ServerLang.DEFAULT_LANG);
+                CensusCommands.computeAwards(server, players, inPeriod, false), ServerLang.DEFAULT_LANG);
         String content = ExportRenderers.toHtmlWithChronicle(players, System.currentTimeMillis(), zone, false,
                 Config.deathContextInExports(), ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
                         "command.deathcensus.export.context"), allPlayers, awardLines,
@@ -522,15 +523,16 @@ public final class CensusExport {
                                 continue;
                             }
                             JsonObject d = de.getAsJsonObject();
-                            // Absent epoch means "unknown time", not epoch 0: never restore it as a record.
-                            if (!d.has("epochMillis")) {
+                            // Absent or non-positive epoch means "unknown time": never restore it as a record (M3).
+                            long epochMillis = lng(d, "epochMillis");
+                            if (!d.has("epochMillis") || !ChronicleRules.isValidEpoch(epochMillis)) {
                                 skippedEpochless++;
                                 continue;
                             }
                             deaths.add(new DeathEntry(
                                     uuid,
                                     str(d, "playerName"),
-                                    lng(d, "epochMillis"),
+                                    epochMillis,
                                     lng(d, "gameDay"),
                                     integer(d, "playTicks"),
                                     integer(d, "survivalTicks"),
@@ -605,16 +607,41 @@ public final class CensusExport {
         return false;
     }
 
+    /** M12: tolerant loading means absent/wrong-typed fields default, not coerce. */
     private static String str(JsonObject o, String key) {
-        return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : "";
+        JsonElement value = o.get(key);
+        if (value == null) {
+            return "";
+        }
+        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+            return value.getAsString();
+        }
+        DeathCensus.LOGGER.warn("[DeathCensus] Ignoring non-string backup field '{}'", key);
+        return "";
     }
 
     private static long lng(JsonObject o, String key) {
-        return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsLong() : 0L;
+        JsonElement value = o.get(key);
+        if (value == null) {
+            return 0L;
+        }
+        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
+            return value.getAsLong();
+        }
+        DeathCensus.LOGGER.warn("[DeathCensus] Ignoring non-number backup field '{}'", key);
+        return 0L;
     }
 
     private static int integer(JsonObject o, String key) {
-        return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsInt() : 0;
+        JsonElement value = o.get(key);
+        if (value == null) {
+            return 0;
+        }
+        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
+            return value.getAsInt();
+        }
+        DeathCensus.LOGGER.warn("[DeathCensus] Ignoring non-number backup field '{}'", key);
+        return 0;
     }
 
     private static double dbl(JsonObject o, String key) {
@@ -660,7 +687,10 @@ public final class CensusExport {
             }
             out.add(ref);
         }
-        return out;
+        if (out.size() > DeathEntry.MAX_WITNESSES) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Clamped backup witness list to {} entries", DeathEntry.MAX_WITNESSES);
+        }
+        return WitnessRef.clamp(out, DeathEntry.MAX_WITNESSES);
     }
 
     /** A missing or malformed context compound decodes as {@link DeathContext#EMPTY}. */

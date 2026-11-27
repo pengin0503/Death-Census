@@ -1,6 +1,7 @@
 package com.pengin0503.deathcensus;
 
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -266,6 +267,105 @@ class CensusDataTest {
         assertTrue(data.removePlayer(uuid));
         assertTrue(data.playerOrNull(uuid) == null);
         assertFalse(data.removePlayer(uuid));
+    }
+
+    @Test
+    void redactionCopiesKeepRecordedWitnessesAndContext() {
+        UUID uuid = UUID.randomUUID();
+        UUID witness = UUID.randomUUID();
+        DeathContext context = new DeathContext("minecraft:diamond_sword",
+                List.of("minecraft:leather_helmet"), List.of("minecraft:speed:1"),
+                "minecraft:forest", "clear");
+        DeathEntry rich = new DeathEntry(uuid.toString(), "Rich", 1000L, 1L, 100, 90,
+                "minecraft:overworld", 1.0, 64.0, 2.0, "fall", "minecraft:fall",
+                "Rich fell", "", "", "survival", 0, "", "", 0,
+                List.of(new WitnessRef(witness.toString(), "Helper")), context);
+        CensusData data = new CensusData();
+        data.recordDeath(rich, 10_000);
+        assertTrue(data.setExcuse(uuid, 1000L, "My fault"));
+        assertTrue(data.addRespect(uuid, 1000L));
+
+        DeathEntry copy = data.playerOrNull(uuid).deaths.get(0);
+        assertEquals("My fault", copy.excuse());
+        assertEquals(1, copy.fCount());
+        assertEquals(rich.witnesses(), copy.witnesses());
+        assertEquals(context, copy.context());
+    }
+
+    @Test
+    void reconstructionHonorsConfiguredMaxEvents() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(uuid, "Steve", 1000L, 100, 90), 10_000);
+        CompoundTag root = data.save(new CompoundTag(), null);
+        root.remove("chronicleEvents");
+        root.putLong("lifetimeDeaths", 1_000_000L);
+
+        CensusData loaded = CensusData.load(root, null);
+        assertEquals(Config.chronicleMaxEvents(), loaded.chronicleEvents().size());
+    }
+
+    @Test
+    void zeroStoredCounterIsAbsentForReconstruction() throws IOException {
+        String dir = System.getProperty("deathcensus.mainSourceDir");
+        assertNotNull(dir);
+        String src = Files.readString(Path.of(dir,
+                "com", "pengin0503", "deathcensus", "CensusData.java"));
+        int start = src.indexOf("private static boolean lifetimeDeathsPresent(");
+        assertTrue(start > 0);
+        String body = src.substring(start, start + 220);
+        assertTrue(body.contains("> 0L"), body);
+
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(uuid, "Steve", 1000L, 100, 90), 10_000);
+        CompoundTag root = data.save(new CompoundTag(), null);
+        root.remove("chronicleEvents");
+        root.putLong("lifetimeDeaths", 0L);
+
+        CensusData loaded = CensusData.load(root, null);
+        assertTrue(loaded.chronicleEvents().stream()
+                .noneMatch(e -> e.kind() == ChronicleEvent.Kind.TOTAL_COUNT));
+    }
+
+    @Test
+    void nbtDecodeSkipsZeroAndNegativeDeathEpochs() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(uuid, "Steve", 1000L, 100, 90), 10_000);
+        CompoundTag root = data.save(new CompoundTag(), null);
+        CompoundTag death = root.getCompound("players").getCompound(uuid.toString())
+                .getList("deaths", Tag.TAG_COMPOUND).getCompound(0);
+
+        death.putLong("epoch", 0L);
+        CensusData zero = CensusData.load(root, null);
+        assertTrue(zero.playerOrNull(uuid) == null || zero.playerOrNull(uuid).deaths.isEmpty());
+
+        death.putLong("epoch", -7L);
+        CensusData negative = CensusData.load(root, null);
+        assertTrue(negative.playerOrNull(uuid) == null || negative.playerOrNull(uuid).deaths.isEmpty());
+    }
+
+    @Test
+    void nbtWitnessListIsClampedToStorageCeiling() {
+        UUID uuid = UUID.randomUUID();
+        CensusData data = new CensusData();
+        data.recordDeath(entry(uuid, "Steve", 1000L, 100, 90), 10_000);
+        CompoundTag root = data.save(new CompoundTag(), null);
+        CompoundTag death = root.getCompound("players").getCompound(uuid.toString())
+                .getList("deaths", Tag.TAG_COMPOUND).getCompound(0);
+        ListTag witnesses = new ListTag();
+        for (int i = 0; i < DeathEntry.MAX_WITNESSES + 4; i++) {
+            CompoundTag w = new CompoundTag();
+            w.putString("uuid", UUID.randomUUID().toString());
+            w.putString("nameAtDeath", "W" + i);
+            witnesses.add(w);
+        }
+        death.put("witnesses", witnesses);
+
+        CensusData loaded = CensusData.load(root, null);
+        assertEquals(DeathEntry.MAX_WITNESSES,
+                loaded.playerOrNull(uuid).deaths.get(0).witnesses().size());
     }
 
     @Test

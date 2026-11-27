@@ -45,6 +45,11 @@ public interface UiContext {
         return true;
     }
 
+    /** 1.4.0 §2: minimum count before an award row is listed (S4). */
+    default int awardsMinCount() {
+        return 1;
+    }
+
     /** Lifetime category completion (1.4.0 §2 CATEGORY_COMPLETE), keyed by UUID. */
     default Map<String, Set<String>> lifetimeCategories() {
         return Map.of();

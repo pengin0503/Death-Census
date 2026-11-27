@@ -194,7 +194,10 @@ public final class Awards {
         List<WitnessAnalysis.Row> witnessRows = WitnessAnalysis.rank(
                 publicPlayers, null, 0L,
                 WitnessRedactor.namesById(players), WitnessRedactor.privacyById(players), false).stream()
-                .filter(row -> !WitnessRedactor.HIDDEN_NAME_MARKER.equals(row.name()))
+                // M11: hidden rows are identified structurally (empty UUID key),
+                // never by comparing the public marker string; a real witness
+                // named "Anonymous" must still be eligible for the title.
+                .filter(row -> !row.uuid().isEmpty())
                 .toList();
         if (!witnessRows.isEmpty()) {
             WitnessAnalysis.Row top = witnessRows.stream()

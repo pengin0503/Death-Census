@@ -27,6 +27,9 @@ public record DeathEntry(
         List<WitnessRef> witnesses,
         DeathContext context
 ) {
+    /** Hard ceiling for decoded/stored witnesses (§13.2 point 6; config range 0–16). */
+    public static final int MAX_WITNESSES = 16;
+
     /**
      * Compatibility constructor for the 1.3.0 20-component shape. DESIGN 1.4.0
      * §13.2 keeps every existing call site working: old records have neither
@@ -77,7 +80,7 @@ public record DeathEntry(
         excuse = excuse == null ? "" : excuse;
         lastWords = lastWords == null ? "" : lastWords;
         fCount = Math.max(0, fCount);
-        witnesses = WitnessRef.copyOf(witnesses);
+        witnesses = WitnessRef.clamp(witnesses, MAX_WITNESSES);
         context = context == null ? DeathContext.EMPTY : context;
     }
 }

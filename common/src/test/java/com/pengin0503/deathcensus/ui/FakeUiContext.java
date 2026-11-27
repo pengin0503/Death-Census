@@ -29,6 +29,7 @@ final class FakeUiContext implements UiContext {
     boolean deleteResult = true;
     boolean optOut;
     boolean chronicleEnabled = true;
+    int awardsMinCount = 1;
     List<ChronicleEvent> chronicleEvents = List.of();
     boolean privacyOtherAllowed;
     final Map<UUID, PlayerPrivacy> privacy = new HashMap<>();
@@ -80,6 +81,11 @@ final class FakeUiContext implements UiContext {
     }
 
     @Override
+    public int awardsMinCount() {
+        return awardsMinCount;
+    }
+
+    @Override
     public String label(String key) {
         if (key == null) {
             return "";
@@ -87,6 +93,7 @@ final class FakeUiContext implements UiContext {
         return switch (key) {
             case "command.deathcensus.chronicle.row" -> "%s — %s · day %s";
             case "command.deathcensus.chronicle.hidden" -> "Anonymous";
+            case "command.deathcensus.witnesses.hidden" -> "Anonymous";
             case "command.deathcensus.chronicle.reconstructed" -> "reconstructed";
             case "command.deathcensus.nemesis.row" -> "%s: %s — %s";
             case "command.deathcensus.nemesis.anonymous" -> "Anonymous";

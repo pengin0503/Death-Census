@@ -34,7 +34,10 @@ public final class ChronicleRules {
     public static final String RECONSTRUCTED_NOTE_TOKEN = "reconstructed";
 
     private static final Comparator<ChronicleEvent> ORDER =
-            Comparator.comparingLong(ChronicleEvent::epochMillis)
+            // Counter/category-derived rows have no provable date (M4): keep them
+            // out of chronological placement by sorting them after dated rows.
+            Comparator.comparing(ChronicleRules::isUndated)
+                    .thenComparingLong(ChronicleEvent::epochMillis)
                     .thenComparingLong(ChronicleEvent::gameDay)
                     .thenComparingInt(event -> event.kind().ordinal())
                     .thenComparing(ChronicleEvent::uuid)
@@ -106,6 +109,21 @@ public final class ChronicleRules {
                 withCause ? entry.causeCategory() : "", count, false);
     }
 
+    /** One validity rule for every stored chronicle reader (NBT, codec and backup; M3). */
+    public static boolean isValidEpoch(long epochMillis) {
+        return epochMillis > 0L;
+    }
+
+    /**
+     * True for a reconstructed counter/category row whose date cannot be proved
+     * from retained records (M4). Such rows carry no epoch and render without a
+     * day label.
+     */
+    public static boolean isUndated(ChronicleEvent event) {
+        return event != null && event.reconstructed() && !isValidEpoch(event.epochMillis())
+                && event.count() > 0;
+    }
+
     /** True only for the persisted dimension id, never a localized death message. */
     public static boolean isNether(String dimension) {
         return dimension != null && NETHER_DIMENSION_ID.equalsIgnoreCase(dimension.trim());
@@ -141,6 +159,18 @@ public final class ChronicleRules {
      * trimmed-away history produce no speculative rows.
      */
     public static ReconstructionResult reconstruct(ReconstructionInput input) {
+        return reconstruct(input, DEFAULT_MAX_EVENTS);
+    }
+
+    /**
+     * As above, but honors the caller's configured retention cap while deriving
+     * rows. Generation stops once the cap is reached, so a crafted lifetime
+     * counter near {@code Integer.MAX_VALUE} cannot force millions of event
+     * allocations on load (M1). Rows whose date is not provable from retained
+     * records (counter/category rows) carry no epoch (M4).
+     */
+    public static ReconstructionResult reconstruct(ReconstructionInput input, int maxEvents) {
+        int cap = Math.max(0, maxEvents);
         ReconstructionInput state = input == null ? ReconstructionInput.EMPTY : input;
         List<DeathEntry> retained = new ArrayList<>();
         for (PlayerDeaths player : state.players()) {
@@ -150,27 +180,43 @@ public final class ChronicleRules {
                 }
             }
         }
-        List<ChronicleEvent> events = new ArrayList<>(8);
+        List<ChronicleEvent> events = new ArrayList<>(Math.min(cap, 16) + 4);
+        int dropped = 0;
         DeathEntry earliest = retained.stream().min(ORDER_ROW).orElse(null);
         if (earliest != null) {
-            events.add(reconstructed(earliest, ChronicleEvent.Kind.SERVER_FIRST, 1));
+            if (events.size() < cap) {
+                events.add(reconstructed(earliest, ChronicleEvent.Kind.SERVER_FIRST, 1));
+            } else {
+                dropped++;
+            }
         }
         DeathEntry firstNether = retained.stream()
                 .filter(death -> isNether(death.dimension())).min(ORDER_ROW).orElse(null);
         if (firstNether != null) {
-            events.add(reconstructed(firstNether, ChronicleEvent.Kind.NETHER_FIRST, 1));
+            if (events.size() < cap) {
+                events.add(reconstructed(firstNether, ChronicleEvent.Kind.NETHER_FIRST, 1));
+            } else {
+                dropped++;
+            }
         }
         DeathEntry firstDragon = retained.stream()
                 .filter(ChronicleRules::isEnderDragon).min(ORDER_ROW).orElse(null);
         if (firstDragon != null) {
-            events.add(reconstructed(firstDragon, ChronicleEvent.Kind.END_DRAGON_DEATH, 1));
+            if (events.size() < cap) {
+                events.add(reconstructed(firstDragon, ChronicleEvent.Kind.END_DRAGON_DEATH, 1));
+            } else {
+                dropped++;
+            }
         }
         Integer lifetime = state.lifetimeDeaths();
         if (lifetime != null && lifetime > 0 && earliest != null) {
-            for (int threshold = TOTAL_COUNT_STEP; threshold <= lifetime; threshold += TOTAL_COUNT_STEP) {
-                events.add(new ChronicleEvent(earliest.epochMillis(), earliest.gameDay(),
-                        ChronicleEvent.Kind.TOTAL_COUNT, "", "", "", "", threshold, true));
+            int provableRows = lifetime / TOTAL_COUNT_STEP;
+            int affordable = Math.min(provableRows, Math.max(0, cap - events.size()));
+            for (int i = 1; i <= affordable; i++) {
+                events.add(undated(ChronicleEvent.Kind.TOTAL_COUNT,
+                        i * TOTAL_COUNT_STEP, "", ""));
             }
+            dropped += provableRows - affordable;
         }
         if (state.lifetimeCategories() != null && earliest != null) {
             for (PlayerDeaths player : state.players()) {
@@ -186,15 +232,24 @@ public final class ChronicleRules {
                     }
                 }
                 if (all) {
-                    events.add(new ChronicleEvent(earliest.epochMillis(), earliest.gameDay(),
-                            ChronicleEvent.Kind.CATEGORY_COMPLETE, player.uuid(), player.name(),
-                            "", "", CauseClassifier.CATEGORIES.size(), true));
+                    if (events.size() < cap) {
+                        events.add(undated(ChronicleEvent.Kind.CATEGORY_COMPLETE,
+                                CauseClassifier.CATEGORIES.size(), player.uuid(), player.name()));
+                    } else {
+                        dropped++;
+                    }
                     break;
                 }
             }
         }
-        CapResult capped = cap(events, DEFAULT_MAX_EVENTS);
-        return new ReconstructionResult(capped.events(), capped.dropped());
+        CapResult capped = cap(events, cap);
+        dropped += capped.dropped();
+        return new ReconstructionResult(capped.events(), dropped);
+    }
+
+    private static ChronicleEvent undated(ChronicleEvent.Kind kind, int count,
+                                          String uuid, String name) {
+        return new ChronicleEvent(0L, 0L, kind, uuid, name, "", "", count, true);
     }
 
     private static final Comparator<DeathEntry> ORDER_ROW =

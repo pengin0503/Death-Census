@@ -143,7 +143,7 @@ class CompareWiringTest {
         JsonObject en = loadLang("en_us");
         JsonObject ja = loadLang("ja_jp");
         assertEquals(en.keySet(), ja.keySet());
-        assertEquals(313, en.size());
+        assertEquals(314, en.size());
         for (String key : List.of(
                 "command.deathcensus.compare.help", "command.deathcensus.compare.header",
                 "command.deathcensus.compare.row.deaths",
@@ -181,6 +181,13 @@ class CompareWiringTest {
         assertEquals(CompareResult.Failure.HIDDEN_PLAYER, publicResult.failure());
         assertTrue(CompareAnalysis.compare(players, "Alice", "Bob", 0L,
                 Map.of(), UUID.randomUUID(), true).ok());
+    }
+
+    @Test
+    void chatAdapterRendersComparePairsWithPipeSeparator() throws IOException {
+        // M10: both columns are rendered as one aligned "left | right" line.
+        String adapter = source("ui/ChatUi.java");
+        assertTrue(adapter.contains("left + \" | \" + right"), adapter);
     }
 
     @Test

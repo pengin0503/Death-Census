@@ -62,11 +62,23 @@ public final class WitnessRedactor {
      */
     public static List<String> displayNames(DeathEntry entry, Map<String, String> names,
                                             Map<String, PlayerPrivacy> privacy, boolean viewerIsSelfOrAdmin) {
+        return displayNames(entry, names, privacy, viewerIsSelfOrAdmin, HIDDEN_NAME_MARKER);
+    }
+
+    /**
+     * As above, but renders an opted-out witness with a caller-supplied label
+     * (M11). Renderers with a language context pass the localized
+     * {@code command.deathcensus.witnesses.hidden} label; exports keep English.
+     */
+    public static List<String> displayNames(DeathEntry entry, Map<String, String> names,
+                                            Map<String, PlayerPrivacy> privacy, boolean viewerIsSelfOrAdmin,
+                                            String hiddenName) {
         if (entry == null || entry.witnesses().isEmpty()) {
             return List.of();
         }
         Map<String, String> currentNames = names == null ? Map.of() : names;
         Map<String, PlayerPrivacy> currentPrivacy = privacy == null ? Map.of() : privacy;
+        String marker = hiddenName == null || hiddenName.isBlank() ? HIDDEN_NAME_MARKER : hiddenName;
         List<String> result = new ArrayList<>(entry.witnesses().size());
         for (WitnessRef ref : entry.witnesses()) {
             if (ref == null || ref.isEmpty()) {
@@ -74,7 +86,7 @@ public final class WitnessRedactor {
             }
             PlayerPrivacy flags = currentPrivacy.get(ref.uuid());
             if (!viewerIsSelfOrAdmin && flags != null && flags.hidesPublicIdentity()) {
-                result.add(HIDDEN_NAME_MARKER);
+                result.add(marker);
                 continue;
             }
             String resolved = currentNames.get(ref.uuid());
@@ -89,6 +101,13 @@ public final class WitnessRedactor {
     public static List<String> displayNames(DeathEntry entry, Collection<PlayerDeaths> players,
                                             boolean viewerIsSelfOrAdmin) {
         return displayNames(entry, namesById(players), privacyById(players), viewerIsSelfOrAdmin);
+    }
+
+    /** As above, with an explicit label for hidden witnesses (M11). */
+    public static List<String> displayNames(DeathEntry entry, Collection<PlayerDeaths> players,
+                                            boolean viewerIsSelfOrAdmin, String hiddenName) {
+        return displayNames(entry, namesById(players), privacyById(players),
+                viewerIsSelfOrAdmin, hiddenName);
     }
 
     /** Public-view convenience: never reveals an opted-out witness name. */

@@ -143,7 +143,7 @@ public class CensusData extends SavedData {
                         stringValue(ops, map, "causeCategory"),
                         intValue(ops, map, "count"),
                         booleanValue(ops, map, "reconstructed"));
-                return event.epochMillis() <= 0L
+                return !ChronicleRules.isValidEpoch(event.epochMillis())
                         ? DataResult.error(() -> "Chronicle event without a valid epoch")
                         : DataResult.success(Pair.of(event, input));
             });
@@ -179,7 +179,7 @@ public class CensusData extends SavedData {
                         stringValue(ops, map, "causeCategory"),
                         stringValue(ops, map, "causeId"),
                         enumValue(ops, map, "kind", NearDeathEvent.Kind.class, NearDeathEvent.Kind.CANCELLED));
-                return event.epochMillis() <= 0L || event.uuid().isEmpty()
+                return !ChronicleRules.isValidEpoch(event.epochMillis()) || event.uuid().isEmpty()
                         ? DataResult.error(() -> "Near-death event without uuid/epoch")
                         : DataResult.success(Pair.of(event, input));
             });
@@ -223,10 +223,16 @@ public class CensusData extends SavedData {
 
         @Override
         public <T> DataResult<Pair<DeathEntry, T>> decode(DynamicOps<T> ops, T input) {
-            return ops.getMap(input).map(map -> Pair.of(new DeathEntry(
+            return ops.getMap(input).flatMap(map -> {
+                // M3: an absent or non-positive epoch is unknown time, never a record.
+                long epochMillis = lng(ops, map, "epochMillis");
+                if (!ChronicleRules.isValidEpoch(epochMillis)) {
+                    return DataResult.error(() -> "Death entry without a valid epoch");
+                }
+                return DataResult.success(Pair.of(new DeathEntry(
                     str(ops, map, "playerUuid"),
                     str(ops, map, "playerName"),
-                    lng(ops, map, "epochMillis"),
+                    epochMillis,
                     lng(ops, map, "gameDay"),
                     (int) lng(ops, map, "playTicks"),
                     (int) lng(ops, map, "survivalTicks"),
@@ -244,8 +250,9 @@ public class CensusData extends SavedData {
                     str(ops, map, "excuse"),
                     str(ops, map, "lastWords"),
                     (int) lng(ops, map, "fCount"),
-                    decodeList(ops, map, "witnesses", WITNESS_CODEC, "witness"),
+                    witnessList(ops, map),
                     contextValue(ops, map)), input));
+            });
         }
 
         private <T> String str(DynamicOps<T> ops, MapLike<T> map, String key) {
@@ -317,6 +324,16 @@ public class CensusData extends SavedData {
             }
         });
         return out;
+    }
+
+    /** M13: NBT witness lists are clamped to the canonical record bound. */
+    private static <T> List<WitnessRef> witnessList(DynamicOps<T> ops, MapLike<T> map) {
+        List<WitnessRef> decoded = decodeList(ops, map, "witnesses", WITNESS_CODEC, "witness");
+        if (decoded.size() > DeathEntry.MAX_WITNESSES) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Clamped NBT witness list to {} entries",
+                    DeathEntry.MAX_WITNESSES);
+        }
+        return WitnessRef.clamp(decoded, DeathEntry.MAX_WITNESSES);
     }
 
     private static <T> List<String> stringListValue(DynamicOps<T> ops, MapLike<T> map, String key) {
@@ -532,7 +549,6 @@ public class CensusData extends SavedData {
         public <T> DataResult<Pair<CensusData, T>> decode(DynamicOps<T> ops, T input) {
             return ops.getMap(input).map(map -> {
                 CensusData data = new CensusData();
-                boolean lifetimeDeathsPresent = map.get("lifetimeDeaths") != null;
                 Map<String, Set<String>> storedCategories = new LinkedHashMap<>();
                 T playersValue = map.get("players");
                 if (playersValue != null) {
@@ -569,14 +585,16 @@ public class CensusData extends SavedData {
                     }
                 }
                 data.lastDigestEpochMillis = Math.max(0L, longValue(ops, map, "lastDigestEpoch"));
-                long storedLifetime = longValue(ops, map, "lifetimeDeaths");
-                if (storedLifetime <= 0L) {
+                // M2: a present-but-zero/absent counter is not evidence of a
+                // stored lifetime total; only a positive value counts.
+                data.lifetimeDeaths = Math.max(0L, longValue(ops, map, "lifetimeDeaths"));
+                boolean lifetimeDeathsPresent = data.lifetimeDeathsPresent();
+                if (!lifetimeDeathsPresent) {
                     // Old data has no counter: the retained deaths are the best available approximation.
                     for (PlayerCensus pc : data.players.values()) {
-                        storedLifetime += pc.deaths.size();
+                        data.lifetimeDeaths += pc.deaths.size();
                     }
                 }
-                data.lifetimeDeaths = storedLifetime;
                 if (map.get("chronicleEvents") == null) {
                     // Old save: only rows provable from retained records/counters (§3).
                     reconstructChronicle(data, lifetimeDeathsPresent, storedCategories);
@@ -648,7 +666,8 @@ public class CensusData extends SavedData {
                 new ChronicleRules.ReconstructionInput(data.snapshot(),
                         lifetimeDeathsPresent
                                 ? (int) Math.min(data.lifetimeDeaths, Integer.MAX_VALUE) : null,
-                        storedCategories.isEmpty() ? null : storedCategories));
+                        storedCategories.isEmpty() ? null : storedCategories),
+                Config.chronicleMaxEvents());
         ChronicleRules.CapResult capped = ChronicleRules.cap(
                 result.events(), Config.chronicleMaxEvents());
         if (!capped.events().isEmpty()) {
@@ -705,6 +724,11 @@ public class CensusData extends SavedData {
     /** Raw stored counter without vanilla baselines; used by the importer to avoid double counting. */
     public long storedLifetimeDeaths() {
         return lifetimeDeaths;
+    }
+
+    /** M2: true only when the loaded save actually carried a positive stored counter. */
+    public boolean lifetimeDeathsPresent() {
+        return lifetimeDeaths > 0L;
     }
 
     /** Imported pre-install baselines only (DESIGN 1.3.0 §9). */

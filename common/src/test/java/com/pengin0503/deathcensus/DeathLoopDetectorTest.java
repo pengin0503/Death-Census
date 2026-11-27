@@ -342,4 +342,21 @@ class DeathLoopDetectorTest {
         strict.observe(sample("u", T0 + 2 * MINUTE, 1, 0), 48, MINUTE, 3);
         assertTrue(strict.observe(sample("u", T0 + 4 * MINUTE, 2, 0), 48, MINUTE, 3).isEmpty());
     }
+
+    @Test
+    void ringEvictionUsesLeastRecentlyUsedPlayerNotInsertionOrder() {
+        // M7: the ring map is access-ordered; a touched old player must survive
+        // when a new player forces eviction at the 1000-player bound.
+        DeathLoopTracker tracker = new DeathLoopTracker();
+        for (int i = 0; i < DeathLoopTracker.MAX_TRACKED_PLAYERS; i++) {
+            tracker.observe(sample("p" + i, T0 + i, 0, 0));
+        }
+        assertEquals(DeathLoopTracker.MAX_TRACKED_PLAYERS, tracker.ringCount());
+        tracker.observe(sample("p0", T0 + 10_000L, 0, 0));
+        tracker.observe(sample("newcomer", T0 + 20_000L, 0, 0));
+        assertEquals(DeathLoopTracker.MAX_TRACKED_PLAYERS, tracker.ringCount());
+        assertEquals(2, tracker.ring("p0").size());
+        assertTrue(tracker.ring("p1").isEmpty());
+        assertEquals(1, tracker.ring("newcomer").size());
+    }
 }

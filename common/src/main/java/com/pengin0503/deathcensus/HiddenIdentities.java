@@ -3,10 +3,12 @@ package com.pengin0503.deathcensus;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,6 +49,7 @@ public final class HiddenIdentities {
             return EMPTY;
         }
         Map<String, String> byLowerName = new LinkedHashMap<>();
+        Set<String> secretUuids = new HashSet<>();
         for (PlayerDeaths player : fullSnapshot) {
             if (player == null) {
                 continue;
@@ -54,6 +57,9 @@ public final class HiddenIdentities {
             if (player.optOutPublic()) {
                 register(byLowerName, player.name());
                 register(byLowerName, player.uuid());
+                if (!lower(player.uuid()).isEmpty()) {
+                    secretUuids.add(lower(player.uuid()));
+                }
                 for (DeathEntry death : player.deaths()) {
                     if (death == null) {
                         continue;
@@ -69,6 +75,9 @@ public final class HiddenIdentities {
                     if (event != null) {
                         register(byLowerName, event.name());
                         register(byLowerName, event.uuid());
+                        if (!lower(event.uuid()).isEmpty()) {
+                            secretUuids.add(lower(event.uuid()));
+                        }
                     }
                 }
             }
@@ -78,6 +87,26 @@ public final class HiddenIdentities {
                 for (DeathEntry death : player.deaths()) {
                     if (death != null) {
                         register(byLowerName, death.killerName());
+                    }
+                }
+            }
+        }
+        // S7: a witness captured under an old name on SOMEBODY ELSE's death is
+        // still a secret once that witness opts out. The first pass collected
+        // the opted-out UUIDs; register every historical alias now.
+        if (!secretUuids.isEmpty()) {
+            for (PlayerDeaths player : fullSnapshot) {
+                if (player == null) {
+                    continue;
+                }
+                for (DeathEntry death : player.deaths()) {
+                    if (death == null) {
+                        continue;
+                    }
+                    for (WitnessRef witness : death.witnesses()) {
+                        if (witness != null && secretUuids.contains(lower(witness.uuid()))) {
+                            register(byLowerName, witness.nameAtDeath());
+                        }
                     }
                 }
             }
@@ -102,11 +131,15 @@ public final class HiddenIdentities {
         return new HiddenIdentities(pattern, Map.copyOf(byLowerName));
     }
 
+    private static String lower(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT).trim();
+    }
+
     private static void register(Map<String, String> byLowerName, String secret) {
         if (secret == null || secret.isBlank()) {
             return;
         }
-        byLowerName.putIfAbsent(secret.toLowerCase(Locale.ROOT).trim(), HIDDEN_MARKER);
+        byLowerName.putIfAbsent(lower(secret), HIDDEN_MARKER);
     }
 
     public boolean isEmpty() {

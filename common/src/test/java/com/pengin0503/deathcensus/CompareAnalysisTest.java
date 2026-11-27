@@ -316,6 +316,21 @@ class CompareAnalysisTest {
     }
 
     @Test
+    void aRealRivalNamedAnonymousIsNotTreatedAsRedacted() {
+        // M11: "Anonymous" is a legal rival name; only a change between the
+        // stored and rendered name may set opponentHidden.
+        List<PlayerDeaths> players = List.of(
+                player(A_ID, "Alice", false, false,
+                        death(A_ID, "Alice", NOW - 1000L, 300, "player", "Anonymous")),
+                player(B_ID, "Bob", false, false,
+                        death(B_ID, "Bob", NOW, 100, "fall", "")));
+        CompareResult result = compare(players, "Alice", "Bob", 0L, VIEWER, false);
+        assertTrue(result.ok());
+        assertEquals("Anonymous", result.a().topOpponent());
+        assertFalse(result.a().opponentHidden());
+    }
+
+    @Test
     void nameLongerThanTheBoundIsRejected() {
         List<PlayerDeaths> players = List.of(
                 player(A_ID, "Alice", false, false, death(A_ID, "Alice", NOW, 1, "fall", "")),

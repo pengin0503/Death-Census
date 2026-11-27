@@ -255,8 +255,11 @@ public final class DeathTracker {
                 context);
 
         // Lifetime counters/categories survive record trimming; retained lists do not.
-        // recordDeath increments the counter, so snapshot it first (same ordering as before).
+        // recordDeath increments the counter, so snapshot both first (same ordering as before).
+        // S2: chat milestones count anonymous vanilla baselines; the chronicle's
+        // stored-row counters must not, or imported baselines fake a milestone.
         int totalDeathsBefore = (int) Math.min(data.lifetimeDeaths(), (long) Integer.MAX_VALUE);
+        int storedLifetimeDeathsBefore = (int) Math.min(data.storedLifetimeDeaths(), (long) Integer.MAX_VALUE);
         int playerDeathsBefore = pc.deaths.size();
         int playerDistinctCategoriesBefore = pc.lifetimeCategories.size();
         boolean optedOut = pc.optOutPublic;
@@ -273,7 +276,10 @@ public final class DeathTracker {
                 DialogUi.sendDeathLine(viewer, player.getUUID(), deathEpochMillis, playerName);
             }
         }
-        if (!pc.optOutPublic) {
+        // M14: the snapshot-wide dictionary is expensive; build it only when a
+        // realtime death post can actually happen.
+        if (!pc.optOutPublic && Config.discordNotifyDeaths()
+                && DiscordNotifier.realtimeWebhookConfigured()) {
             DiscordNotifier.notifyDeath(entry, new PlayerPrivacy(
                     pc.optOutPublic, pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut),
                     HiddenIdentities.of(data.snapshot()));
@@ -295,7 +301,7 @@ public final class DeathTracker {
             boolean netherSeen = data.chronicleEvents().stream()
                     .anyMatch(e -> e.kind() == ChronicleEvent.Kind.NETHER_FIRST);
             List<ChronicleEvent> additions = ChronicleRules.eventsFor(entry,
-                    new ChronicleRules.Counters(totalDeathsBefore, netherSeen,
+                    new ChronicleRules.Counters(storedLifetimeDeathsBefore, netherSeen,
                             playerDistinctCategoriesBefore, pc.lifetimeCategories.size()));
             data.addChronicleEvents(additions);
         }
@@ -546,6 +552,10 @@ public final class DeathTracker {
     /** PR-11: the version's totem event is observed directly, never guessed. */
     @SubscribeEvent
     public static void onTotemUsed(net.neoforged.neoforge.event.entity.living.LivingUseTotemEvent event) {
+        // M6: a cancelled totem use is not a near-death save.
+        if (event.isCanceled()) {
+            return;
+        }
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }

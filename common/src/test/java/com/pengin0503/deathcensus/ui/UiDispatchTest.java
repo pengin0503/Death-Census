@@ -187,6 +187,24 @@ class UiDispatchTest {
     }
 
     @Test
+    void awardsRankingHonorsTheConfiguredMinimumCount() {
+        // S4: the GUI must use awardsMinCount, not a hard-coded 1.
+        DeathEntry shortLived = new DeathEntry(TestData.ALICE.toString(), "Alice", 1_000L, 1L,
+                100, 2, "minecraft:overworld", 1, 2, 3, "fall", "minecraft:fall",
+                "Alice fell", "", "", "survival", 5, "", "", 1,
+                List.of(), DeathContext.EMPTY);
+        List<PlayerDeaths> players = List.of(new PlayerDeaths(
+                TestData.ALICE.toString(), "Alice", false, List.of(shortLived)));
+        FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, players));
+        ctx.awardsMinCount = 100;
+        UiRequest request = new UiRequest(TestData.ALICE, "rankings", ctx.token(), 1, "", -1L,
+                Map.of("in_type", "awards", "in_period", "all"));
+        RankingView view = assertInstanceOf(RankingView.class, open(UiActions.handle(request, ctx)));
+        assertEquals("awards", view.type());
+        assertTrue(view.rows().isEmpty(), "rows=" + view.rows());
+    }
+
+    @Test
     void nemesisRankingShowsOwnMobAndPvpTables() {
         DeathEntry creeper = nemesisDeath("minecraft:creeper", "", false);
         DeathEntry steve = nemesisDeath("minecraft:player", "Steve", true);

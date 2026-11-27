@@ -427,7 +427,8 @@ public final class UiActions {
                 UiPrivacy.canEditExcuse(ctx.viewer(), rendered.playerUuid()),
                 UiPrivacy.canDelete(ctx.viewer(), rendered.playerUuid(), ctx.isAdmin()),
                 hidden,
-                WitnessRedactor.displayNames(rendered, ctx.snapshot(), privileged(ctx, death)),
+                WitnessRedactor.displayNames(rendered, ctx.snapshot(), privileged(ctx, death),
+                        ctx.label("command.deathcensus.witnesses.hidden")),
                 rendered.context()
         );
     }
@@ -610,8 +611,12 @@ public final class UiActions {
                 publicPlayers.add(player);
             }
         }
+        // S3: the RAREST_CAUSE input is period-scoped and includes opted-out
+        // deaths, exactly like chat/export/digest; S4: honor awardsMinCount.
         List<AwardResult> results = Awards.evaluate(
-                publicPlayers, 1, new Awards.Context(ctx.lifetimeCategories(), ""));
+                publicPlayers, ctx.awardsMinCount(),
+                new Awards.Context(ctx.lifetimeCategories(),
+                        CensusStats.rarestCause(filtered, true).orElse("")));
         String template = ctx.label("command.deathcensus.awards.row");
         List<String> rows = new ArrayList<>();
         for (AwardResult result : results) {
@@ -647,9 +652,18 @@ public final class UiActions {
                     : ChronicleRules.HIDDEN_NAME.equals(view.name())
                             ? ctx.label("command.deathcensus.chronicle.hidden")
                             : view.name();
-            String line = template.contains("%")
-                    ? String.format(Locale.ROOT, template, kind, detail, view.gameDay() + 1L)
-                    : kind + ": " + detail;
+            String line;
+            if (ChronicleRules.isUndated(view)) {
+                // M4: counter-derived rows have no provable day; never print one.
+                String undated = ctx.label("command.deathcensus.chronicle.row_undated");
+                line = undated.contains("%")
+                        ? String.format(Locale.ROOT, undated, kind, detail)
+                        : kind + ": " + detail;
+            } else {
+                line = template.contains("%")
+                        ? String.format(Locale.ROOT, template, kind, detail, view.gameDay() + 1L)
+                        : kind + ": " + detail;
+            }
             if (view.reconstructed()) {
                 line = line + " (" + ctx.label("command.deathcensus.chronicle.reconstructed") + ")";
             }
