@@ -127,8 +127,10 @@ class StorageSeamTest {
         assertTrue(backup.contains("\"reconstructed\": false"));
 
         String publicJson = ExportRenderers.toJson(List.of(pd), 2000L);
-        // PR-2 adds public witness names; near-death/context stay backup-only.
+        // PR-2 adds public witness names; PR-3 adds public context. Near-death
+        // and chronicle aggregates stay backup-only.
         assertTrue(publicJson.contains("\"witnesses\": [\"Alex\"]"));
+        assertTrue(publicJson.contains("\"mainHand\": \"minecraft:sword\""));
         assertFalse(publicJson.contains("nearDeaths"));
         assertFalse(publicJson.contains("chronicleEvents"));
         assertEquals(publicJson, ExportRenderers.toJson(List.of(pd), 2000L, false));
@@ -145,7 +147,9 @@ class StorageSeamTest {
 
         DeathEntry redacted = DeathRedactor.apply(death, PlayerPrivacy.of(pd), false);
         assertEquals(death.witnesses(), redacted.witnesses());
-        assertEquals(death.context(), redacted.context());
+        // hideCoordinates is set: items/effects/weather survive, biome is hidden.
+        assertEquals(death.context().withBiome(DeathRedactor.COORDINATE_MARKER), redacted.context());
+        assertEquals("biome", death.context().biome());
         assertTrue(Double.isNaN(redacted.x()));
         assertEquals(death.x(), death.x()); // original untouched
 

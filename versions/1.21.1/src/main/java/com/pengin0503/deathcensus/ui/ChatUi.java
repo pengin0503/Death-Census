@@ -1,5 +1,6 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.DeathContext;
 import com.pengin0503.deathcensus.ServerLang;
 import com.pengin0503.deathcensus.TimeFormat;
 import net.minecraft.network.chat.ClickEvent;
@@ -190,6 +191,34 @@ public final class ChatUi {
         line(player, ServerLang.tr(player, "command.deathcensus.ui.chat.filter_hint"));
     }
 
+    /** PR-3 context lines in the chat detail view (DESIGN 1.4.0 §11). */
+    private static void appendContextLines(ServerPlayer player, DeathContext context) {
+        if (context == null || context.isEmpty()) {
+            line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.context.empty"));
+            return;
+        }
+        if (!context.mainHand().isEmpty()) {
+            line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.context.main_hand",
+                    context.mainHand()));
+        }
+        if (!context.armor().isEmpty()) {
+            line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.context.armor",
+                    String.join(", ", context.armor())));
+        }
+        if (!context.effects().isEmpty()) {
+            line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.context.effects",
+                    String.join(", ", context.effects())));
+        }
+        if (!context.biome().isEmpty()) {
+            line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.context.biome",
+                    context.biome()));
+        }
+        if (!context.weather().isEmpty()) {
+            line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.context.weather",
+                    context.weather()));
+        }
+    }
+
     private static void renderDetail(ServerPlayer player, DeathDetailView view) {
         line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.title"));
         line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.date", view.dateTime()));
@@ -217,6 +246,7 @@ public final class ChatUi {
                 view.witnesses().isEmpty()
                         ? ServerLang.tr(player, "command.deathcensus.ui.none")
                         : String.join(", ", view.witnesses())));
+        appendContextLines(player, view.context());
 
         String token = ChatUiContext.currentToken(player);
         String target = view.targetUuid() + " " + view.epochMillis();

@@ -1,6 +1,8 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.DeathContext;
 import com.pengin0503.deathcensus.DeathEntry;
+import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import org.junit.jupiter.api.Test;
 
@@ -111,6 +113,29 @@ class UiDispatchTest {
         DeathDetailView asAdmin = assertInstanceOf(DeathDetailView.class, open(UiActions.handle(detail, admin)));
         assertFalse(asAdmin.canEditExcuse());
         assertTrue(asAdmin.canDelete());
+    }
+
+    @Test
+    void detailViewCarriesContextWithBiomeRedactedForPublicViewers() {
+        DeathContext context = new DeathContext("minecraft:sword", List.of("minecraft:helmet"),
+                List.of("minecraft:speed:1"), "minecraft:plains", "clear");
+        DeathEntry death = new DeathEntry(TestData.BOB.toString(), "Bob", 4_000L, 1L, 100, 100,
+                "minecraft:overworld", 1, 2, 3, "fall", "minecraft:fall", "Bob fell",
+                "", "", "survival", 1, "", "", 0, List.of(), context);
+        List<PlayerDeaths> players = List.of(new PlayerDeaths(TestData.BOB.toString(), "Bob",
+                false, true, false, false, List.of(death)));
+        UiRequest detail = new UiRequest(TestData.ALICE, "detail", "", 1,
+                TestData.BOB.toString(), 4_000L, Map.of());
+
+        FakeUiContext self = home(new FakeUiContext(TestData.BOB, players));
+        DeathDetailView own = assertInstanceOf(DeathDetailView.class, open(UiActions.handle(
+                detail.withTarget(TestData.BOB, 4_000L), self)));
+        assertEquals(context, own.context());
+
+        FakeUiContext other = home(new FakeUiContext(TestData.ALICE, players));
+        DeathDetailView publicView = assertInstanceOf(DeathDetailView.class, open(UiActions.handle(detail, other)));
+        assertEquals(context.withBiome(DeathRedactor.COORDINATE_MARKER), publicView.context());
+        assertEquals("minecraft:plains", death.context().biome());
     }
 
     @Test

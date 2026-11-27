@@ -14,10 +14,18 @@ public final class ExportRenderers {
                     + "dimension,x,y,z,cause_category,cause_id,killer_type,killer_name,"
                     + "game_mode,experience_level,death_message,excuse,last_words,f_count,witnesses";
 
+    /** 1.4.0 PR-3 context columns, appended without altering the 1.3.0 prefix. */
+    private static final String CSV_CONTEXT_HEADER =
+            ",context_main_hand,context_armor,context_effects,context_biome,context_weather";
+
     private ExportRenderers() {
     }
 
     public static String toCsv(List<PlayerDeaths> players) {
+        return renderCsv(players, true);
+    }
+
+    private static String renderCsv(List<PlayerDeaths> players, boolean includeContext) {
         List<DeathEntry> rows = new ArrayList<>();
         // Aggregates are never built from these copies; only the rendered rows are.
         List<PlayerDeaths> safe = safePlayerList(players);
@@ -29,7 +37,11 @@ public final class ExportRenderers {
         rows.sort(Comparator.comparingLong(DeathEntry::epochMillis));
 
         StringBuilder sb = new StringBuilder(CSV_HEADER.length() + 1 + rows.size() * 128);
-        sb.append(CSV_HEADER).append('\n');
+        sb.append(CSV_HEADER);
+        if (includeContext) {
+            sb.append(CSV_CONTEXT_HEADER);
+        }
+        sb.append('\n');
         for (DeathEntry d : rows) {
             String[] fields = {
                     d.playerUuid(),
@@ -56,6 +68,17 @@ public final class ExportRenderers {
                     WitnessRedactor.joinNames(WitnessRedactor.displayNames(
                             d, witnessNames, witnessPrivacy, false))
             };
+            if (includeContext) {
+                DeathContext c = d.context() == null ? DeathContext.EMPTY : d.context();
+                String[] withContext = new String[fields.length + 5];
+                System.arraycopy(fields, 0, withContext, 0, fields.length);
+                withContext[fields.length] = c.mainHand();
+                withContext[fields.length + 1] = String.join(", ", c.armor());
+                withContext[fields.length + 2] = String.join(", ", c.effects());
+                withContext[fields.length + 3] = c.biome();
+                withContext[fields.length + 4] = c.weather();
+                fields = withContext;
+            }
             for (int i = 0; i < fields.length; i++) {
                 if (i > 0) {
                     sb.append(',');
@@ -69,7 +92,12 @@ public final class ExportRenderers {
 
     /** As {@link #toCsv(List)}, but rendered from a redacted copy when requested. */
     public static String toCsv(List<PlayerDeaths> players, boolean anonymize) {
-        return toCsv(anonymize ? Anonymizer.apply(players) : players);
+        return toCsv(players, anonymize, true);
+    }
+
+    /** As above, honoring the {@code deathContextInExports} config switch. */
+    public static String toCsv(List<PlayerDeaths> players, boolean anonymize, boolean includeContext) {
+        return renderCsv(anonymize ? Anonymizer.apply(players) : players, includeContext);
     }
 
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
@@ -78,8 +106,14 @@ public final class ExportRenderers {
 
     /** As {@link #toJson(List, long)}, with anonymized metadata and a redacted copy when requested. */
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis, boolean anonymize) {
+        return toJson(players, generatedAtEpochMillis, anonymize, true);
+    }
+
+    /** As above, honoring the {@code deathContextInExports} config switch. */
+    public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                boolean anonymize, boolean includeContext) {
         return renderJson(anonymize ? Anonymizer.apply(players) : players,
-                generatedAtEpochMillis, anonymize, false);
+                generatedAtEpochMillis, anonymize, false, List.of(), includeContext);
     }
 
     /**
@@ -97,17 +131,17 @@ public final class ExportRenderers {
      */
     public static String toBackupJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
                                       List<ChronicleEvent> chronicleEvents) {
-        return renderJson(players, generatedAtEpochMillis, false, true, chronicleEvents);
+        return renderJson(players, generatedAtEpochMillis, false, true, chronicleEvents, true);
     }
 
     private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
                                      boolean anonymized, boolean includeBaselines) {
-        return renderJson(players, generatedAtEpochMillis, anonymized, includeBaselines, List.of());
+        return renderJson(players, generatedAtEpochMillis, anonymized, includeBaselines, List.of(), true);
     }
 
     private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
                                      boolean anonymized, boolean includeBaselines,
-                                     List<ChronicleEvent> chronicleEvents) {
+                                     List<ChronicleEvent> chronicleEvents, boolean includeContext) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
         // per-death rows use the public redaction view.
@@ -183,12 +217,19 @@ public final class ExportRenderers {
                             sb.append("          \"fCount\": ").append(d.fCount()).append(",\n");
                             appendWitnesses(sb, d.witnesses(), "          ");
                             sb.append(",\n");
-                            appendContext(sb, d.context(), "          ");
+                            // Backups are operator-only: preserve the stored biome even
+                            // when the public render view redacts it for hideCoordinates.
+                            DeathContext stored = safePlayers.get(i).deaths().get(j).context();
+                            appendContext(sb, stored, "          ");
                             sb.append('\n');
                         } else {
                             sb.append("          \"fCount\": ").append(d.fCount()).append(",\n");
                             appendWitnessNames(sb, WitnessRedactor.displayNames(
                                     d, witnessNames, witnessPrivacy, false), "          ");
+                            if (includeContext) {
+                                sb.append(",\n");
+                                appendContext(sb, d.context(), "          ");
+                            }
                             sb.append('\n');
                         }
                         sb.append("        }");
@@ -222,6 +263,25 @@ public final class ExportRenderers {
     }
 
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone) {
+        return renderHtml(players, generatedAtEpochMillis, zone, true, "Context");
+    }
+
+    /** As above, honoring the {@code deathContextInExports} config switch. */
+    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                boolean anonymize, boolean includeContext) {
+        return toHtml(players, generatedAtEpochMillis, zone, anonymize, includeContext, "Context");
+    }
+
+    /** As above with a caller-supplied (localized) column header. */
+    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                boolean anonymize, boolean includeContext, String contextHeader) {
+        List<PlayerDeaths> safePlayers = anonymize ? Anonymizer.apply(players) : safePlayerList(players);
+        return renderHtml(safePlayers, generatedAtEpochMillis, zone, includeContext,
+                contextHeader == null || contextHeader.isBlank() ? "Context" : contextHeader);
+    }
+
+    private static String renderHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                     boolean includeContext, String contextHeader) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         // Summaries and rankings stay unredacted (DESIGN §8); timelines render
         // the public redaction view of the same records.
@@ -307,7 +367,11 @@ public final class ExportRenderers {
             sb.append("<h3>").append(TextEscaping.html(player.name())).append("</h3>\n");
             sb.append("<p>Deaths: ").append(player.deaths().size()).append("</p>\n");
             sb.append("<table>\n");
-            sb.append("<thead><tr><th>Date/Time</th><th>Day</th><th>Dimension</th><th>Position</th><th>Cause</th><th>Death Message</th><th>Survived</th><th>Witnesses</th></tr></thead>\n");
+            sb.append("<thead><tr><th>Date/Time</th><th>Day</th><th>Dimension</th><th>Position</th><th>Cause</th><th>Death Message</th><th>Survived</th><th>Witnesses</th>");
+            if (includeContext) {
+                sb.append("<th>").append(TextEscaping.html(contextHeader)).append("</th>");
+            }
+            sb.append("</tr></thead>\n");
             sb.append("<tbody>\n");
             for (DeathEntry d : player.deaths()) {
                 String position = hiddenCoordinates(d)
@@ -344,7 +408,12 @@ public final class ExportRenderers {
                         .append("</td><td>")
                         .append(TextEscaping.html(WitnessRedactor.joinNames(WitnessRedactor.displayNames(
                                 d, witnessNames, witnessPrivacy, false))))
-                        .append("</td></tr>\n");
+                        .append("</td>");
+                if (includeContext) {
+                    DeathContext c = d.context() == null ? DeathContext.EMPTY : d.context();
+                    sb.append("<td>").append(TextEscaping.html(contextText(c))).append("</td>");
+                }
+                sb.append("</tr>\n");
             }
             sb.append("</tbody>\n");
             sb.append("</table>\n");
@@ -360,7 +429,7 @@ public final class ExportRenderers {
     /** As {@link #toHtml(List, long, ZoneId)}, but rendered from a redacted copy when requested. */
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
                                 boolean anonymize) {
-        return toHtml(anonymize ? Anonymizer.apply(players) : players, generatedAtEpochMillis, zone);
+        return toHtml(players, generatedAtEpochMillis, zone, anonymize, true);
     }
 
     private static List<PlayerDeaths> safePlayerList(List<PlayerDeaths> players) {
@@ -382,6 +451,31 @@ public final class ExportRenderers {
 
     private static boolean hiddenCoordinates(DeathEntry entry) {
         return DeathRedactor.isCoordinateHidden(entry);
+    }
+
+    /** Escaped-on-render, language-neutral context summary for HTML/surfaces. */
+    public static String contextText(DeathContext context) {
+        DeathContext c = context == null ? DeathContext.EMPTY : context;
+        if (c.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(96);
+        appendPart(sb, "Main hand", c.mainHand());
+        appendPart(sb, "Armor", String.join(", ", c.armor()));
+        appendPart(sb, "Effects", String.join(", ", c.effects()));
+        appendPart(sb, "Biome", c.biome());
+        appendPart(sb, "Weather", c.weather());
+        return sb.toString();
+    }
+
+    private static void appendPart(StringBuilder sb, String label, String value) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
+        if (sb.length() > 0) {
+            sb.append(" · ");
+        }
+        sb.append(label).append(": ").append(value);
     }
 
     private static String csvCoordinate(double value, boolean hidden) {

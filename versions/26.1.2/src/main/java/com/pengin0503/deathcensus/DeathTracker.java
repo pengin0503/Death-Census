@@ -219,6 +219,7 @@ public final class DeathTracker {
         long deathEpochMillis = System.currentTimeMillis();
         String lastWords = lastWordsFor(player.getUUID(), deathEpochMillis);
         List<WitnessRef> witnesses = captureWitnesses(server, player);
+        DeathContext context = captureContext(player);
         DeathEntry entry = new DeathEntry(
                 player.getUUID().toString(),
                 playerName,
@@ -238,7 +239,8 @@ public final class DeathTracker {
                 "",
                 lastWords,
                 0,
-                witnesses);
+                witnesses,
+                context);
 
         // Lifetime counters/categories survive record trimming; retained lists do not.
         // recordDeath increments the counter, so snapshot it first (same ordering as before).
@@ -338,6 +340,20 @@ public final class DeathTracker {
                     other.getUUID().toString(), name == null ? "" : name, distanceSquared));
         }
         return WitnessAnalysis.nearest(candidates, cap);
+    }
+
+    /**
+     * PR-3 bounded death-context capture (DESIGN 1.4.0 §11). The version-local
+     * helper reads only registry ids/level flags behind one config gate; common
+     * code does the normalization and bounding. No I/O happens here.
+     */
+    static DeathContext captureContext(ServerPlayer player) {
+        return DeathContextCapture.capture(player);
+    }
+
+    /** Optional server-aware overload for callers that already hold the server. */
+    static DeathContext captureContext(MinecraftServer server, ServerPlayer player) {
+        return captureContext(player);
     }
 
     private static String lastWordsFor(UUID player, long deathEpochMillis) {

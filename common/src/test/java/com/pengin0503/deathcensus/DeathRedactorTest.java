@@ -74,6 +74,33 @@ class DeathRedactorTest {
     }
 
     @Test
+    void hideCoordinatesRedactsOnlyTheBiomeOfDeathContext() {
+        DeathContext context = new DeathContext("minecraft:sword", List.of("minecraft:helmet"),
+                List.of("minecraft:speed:1"), "minecraft:plains", "rain");
+        DeathEntry original = new DeathEntry("u-Alex", "Alex", 1_000L, 3L, 900, 800,
+                "minecraft:overworld", 130.5, 64.0, -130.5,
+                "player", "minecraft:player", "Alex was slain by Steve",
+                "minecraft:player", "Steve", "survival", 7, "", "gg", 2,
+                List.of(), context);
+        PlayerPrivacy privacy = new PlayerPrivacy(false, true, false, false);
+
+        DeathEntry redacted = DeathRedactor.apply(original, privacy, false);
+        assertEquals(DeathRedactor.COORDINATE_MARKER, redacted.context().biome());
+        assertEquals(context.mainHand(), redacted.context().mainHand());
+        assertEquals(context.armor(), redacted.context().armor());
+        assertEquals(context.effects(), redacted.context().effects());
+        assertEquals(context.weather(), redacted.context().weather());
+        assertEquals("minecraft:plains", original.context().biome(), "source record untouched");
+
+        // Self/admin and players without hideCoordinates keep the stored biome.
+        assertSame(original, DeathRedactor.apply(original, privacy, true));
+        DeathEntry visible = DeathRedactor.apply(original, PlayerPrivacy.none(), false);
+        assertEquals("minecraft:plains", visible.context().biome());
+        assertEquals(context, DeathRedactor.contextView(original, privacy, true));
+        assertEquals(DeathContext.EMPTY, DeathRedactor.contextView(null, null, false));
+    }
+
+    @Test
     void nullBlankAndUnusualInputsAreSafe() {
         assertNull(DeathRedactor.apply(null, PlayerPrivacy.none(), false));
         DeathEntry original = entry();

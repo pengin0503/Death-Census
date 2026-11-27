@@ -41,6 +41,27 @@ public final class Config {
                     "A future digest section is the intended opt-in seam; this PR adds no Discord witness text.")
             .define("witnessesInDiscord", false);
 
+    public static final ModConfigSpec.BooleanValue CAPTURE_DEATH_CONTEXT = BUILDER
+            .comment("Capture registry-id death context at death time (DESIGN 1.4.0 §11): main hand, armor,",
+                    "active effects, biome and weather. Enabling later cannot backfill context for old deaths.",
+                    "Only ids are stored; item display names and NBT are never captured.")
+            .define("captureDeathContext", true);
+
+    public static final ModConfigSpec.IntValue DEATH_CONTEXT_MAX_EFFECTS = BUILDER
+            .comment("Maximum active effects stored per death (0-16). Zero stores no effects; the rest of the",
+                    "death context is unaffected. Effects are encoded as id:amplifier.")
+            .defineInRange("deathContextMaxEffects", 8, 0, 16);
+
+    public static final ModConfigSpec.BooleanValue DEATH_CONTEXT_IN_DISCORD = BUILDER
+            .comment("Include death context in realtime Discord death posts (default false).",
+                    "Realtime Discord content is unchanged by this PR; this is the opt-in seam for a later decision.")
+            .define("deathContextInDiscord", false);
+
+    public static final ModConfigSpec.BooleanValue DEATH_CONTEXT_IN_EXPORTS = BUILDER
+            .comment("Include death context fields in JSON/CSV/HTML exports (default true).",
+                    "Backups always keep it; turning this off only affects public export surfaces.")
+            .define("deathContextInExports", true);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -231,6 +252,42 @@ public final class Config {
             return WITNESSES_IN_DISCORD.get();
         } catch (IllegalStateException notLoaded) {
             return false;
+        }
+    }
+
+    /** Context capture is on by default: missing context can never be backfilled. */
+    public static boolean captureDeathContext() {
+        try {
+            return CAPTURE_DEATH_CONTEXT.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** Bounded effect list length (0-16); zero disables effect storage. */
+    public static int deathContextMaxEffects() {
+        try {
+            return DEATH_CONTEXT_MAX_EFFECTS.get();
+        } catch (IllegalStateException notLoaded) {
+            return 8;
+        }
+    }
+
+    /** Realtime Discord content stays unchanged; accessor is the opt-in seam. */
+    public static boolean deathContextInDiscord() {
+        try {
+            return DEATH_CONTEXT_IN_DISCORD.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    /** Public exports include context by default; backups always include it. */
+    public static boolean deathContextInExports() {
+        try {
+            return DEATH_CONTEXT_IN_EXPORTS.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
         }
     }
 

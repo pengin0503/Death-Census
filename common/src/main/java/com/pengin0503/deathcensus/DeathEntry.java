@@ -45,8 +45,9 @@ public record DeathEntry(
     }
 
     /**
-     * Convenience constructor for the 1.4.0 capture path: witnesses are stored,
-     * death context stays {@link DeathContext#EMPTY} until PR-3.
+     * Convenience constructor for the PR-2 capture path: witnesses are stored,
+     * death context stays {@link DeathContext#EMPTY}. PR-3 uses the canonical
+     * 22-component constructor to supply captured context as well.
      */
     public DeathEntry(
             String playerUuid, String playerName, long epochMillis, long gameDay,

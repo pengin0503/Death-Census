@@ -400,7 +400,8 @@ public final class UiActions {
                 UiPrivacy.canEditExcuse(ctx.viewer(), rendered.playerUuid()),
                 UiPrivacy.canDelete(ctx.viewer(), rendered.playerUuid(), ctx.isAdmin()),
                 hidden,
-                WitnessRedactor.displayNames(rendered, ctx.snapshot(), privileged(ctx, death))
+                WitnessRedactor.displayNames(rendered, ctx.snapshot(), privileged(ctx, death)),
+                rendered.context()
         );
     }
 
