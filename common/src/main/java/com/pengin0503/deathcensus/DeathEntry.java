@@ -44,6 +44,22 @@ public record DeathEntry(
                 List.of(), DeathContext.EMPTY);
     }
 
+    /**
+     * Convenience constructor for the 1.4.0 capture path: witnesses are stored,
+     * death context stays {@link DeathContext#EMPTY} until PR-3.
+     */
+    public DeathEntry(
+            String playerUuid, String playerName, long epochMillis, long gameDay,
+            int playTicks, int survivalTicks, String dimension, double x, double y, double z,
+            String causeCategory, String causeId, String deathMessage, String killerType,
+            String killerName, String gameMode, int experienceLevel, String excuse,
+            String lastWords, int fCount, List<WitnessRef> witnesses) {
+        this(playerUuid, playerName, epochMillis, gameDay, playTicks, survivalTicks,
+                dimension, x, y, z, causeCategory, causeId, deathMessage, killerType,
+                killerName, gameMode, experienceLevel, excuse, lastWords, fCount,
+                witnesses, DeathContext.EMPTY);
+    }
+
     public DeathEntry {
         playerUuid = playerUuid == null ? "" : playerUuid;
         playerName = playerName == null ? "" : playerName;

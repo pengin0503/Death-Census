@@ -68,7 +68,11 @@ class CensusCommandsUiTest {
                 "deathcensus history 2 fall",
                 "deathcensus stats server 7d",
                 "deathcensus leaderboard deaths 7d 2",
-                "deathcensus optout")) {
+                "deathcensus optout",
+                "deathcensus witnesses",
+                "deathcensus witnesses 2",
+                "deathcensus witnesses Steve 7d 2",
+                "deathcensus witnesses 7d 2")) {
             ParseResults<CommandSourceStack> result = dispatcher.parse(command, null);
             assertTrue(result.getExceptions().isEmpty(), command + " -> " + result.getExceptions());
             assertFalse(result.getReader().canRead(), command + " was not fully consumed");

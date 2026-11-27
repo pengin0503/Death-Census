@@ -104,7 +104,7 @@ class StorageSeamTest {
     }
 
     @Test
-    void backupJsonCarriesNewFieldsButPublicExportDoesNot() {
+    void backupJsonCarriesNewFieldsAndPublicExportShowsWitnessesOnly() {
         DeathEntry death = new DeathEntry("u", "Steve", 1000L, 1L, 10, 9,
                 "minecraft:overworld", 1.0, 2.0, 3.0, "fall", "minecraft:fall",
                 "Steve fell", "", "", "survival", 5, "", "", 0,
@@ -127,7 +127,8 @@ class StorageSeamTest {
         assertTrue(backup.contains("\"reconstructed\": false"));
 
         String publicJson = ExportRenderers.toJson(List.of(pd), 2000L);
-        assertFalse(publicJson.contains("witnesses"));
+        // PR-2 adds public witness names; near-death/context stay backup-only.
+        assertTrue(publicJson.contains("\"witnesses\": [\"Alex\"]"));
         assertFalse(publicJson.contains("nearDeaths"));
         assertFalse(publicJson.contains("chronicleEvents"));
         assertEquals(publicJson, ExportRenderers.toJson(List.of(pd), 2000L, false));

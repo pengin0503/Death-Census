@@ -18,6 +18,7 @@ import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 
 import com.pengin0503.deathcensus.ui.DialogUi;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -217,6 +218,7 @@ public final class DeathTracker {
         String playerName = player.getGameProfile().name() != null ? player.getGameProfile().name() : "";
         long deathEpochMillis = System.currentTimeMillis();
         String lastWords = lastWordsFor(player.getUUID(), deathEpochMillis);
+        List<WitnessRef> witnesses = captureWitnesses(server, player);
         DeathEntry entry = new DeathEntry(
                 player.getUUID().toString(),
                 playerName,
@@ -235,7 +237,8 @@ public final class DeathTracker {
                 player.experienceLevel,
                 "",
                 lastWords,
-                0);
+                0,
+                witnesses);
 
         // Lifetime counters/categories survive record trimming; retained lists do not.
         // recordDeath increments the counter, so snapshot it first (same ordering as before).
@@ -293,6 +296,48 @@ public final class DeathTracker {
             return;
         }
         DiscordNotifier.notifyMilestone(ServerLang.formatForLang(Config.discordLanguage(), key, arg));
+    }
+
+    /**
+     * PR-2 bounded witness scan (DESIGN 1.4.0 §1): one pass over the online
+     * list, squared-distance comparison, same dimension, no fake players, no
+     * chat/network/disk I/O. Both gates are checked before any allocation.
+     */
+    static List<WitnessRef> captureWitnesses(MinecraftServer server, ServerPlayer victim) {
+        if (server == null || victim == null || !Config.captureWitnesses()) {
+            return List.of();
+        }
+        int cap = Config.witnessMaxPerDeath();
+        if (cap <= 0) {
+            return List.of(); // escape hatch: no scan, no stored list
+        }
+        List<ServerPlayer> online = server.getPlayerList().getPlayers();
+        if (online.isEmpty()) {
+            return List.of();
+        }
+        double radius = (double) Config.witnessRadiusBlocks();
+        double radiusSquared = radius * radius;
+        String dimension = victim.level().dimension().identifier().toString();
+        List<WitnessAnalysis.Candidate> candidates = new ArrayList<>();
+        for (ServerPlayer other : online) {
+            if (other == victim || other instanceof FakePlayer || other.level() == null) {
+                continue;
+            }
+            if (!dimension.equals(other.level().dimension().identifier().toString())) {
+                continue;
+            }
+            double dx = other.getX() - victim.getX();
+            double dy = other.getY() - victim.getY();
+            double dz = other.getZ() - victim.getZ();
+            double distanceSquared = dx * dx + dy * dy + dz * dz;
+            if (distanceSquared > radiusSquared) {
+                continue;
+            }
+            String name = other.getGameProfile().name();
+            candidates.add(new WitnessAnalysis.Candidate(
+                    other.getUUID().toString(), name == null ? "" : name, distanceSquared));
+        }
+        return WitnessAnalysis.nearest(candidates, cap);
     }
 
     private static String lastWordsFor(UUID player, long deathEpochMillis) {

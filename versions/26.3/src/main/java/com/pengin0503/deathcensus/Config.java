@@ -22,6 +22,25 @@ public final class Config {
                     "a player's first death, and a player completing all 17 cause categories.")
             .define("milestoneAnnouncements", true);
 
+    public static final ModConfigSpec.BooleanValue CAPTURE_WITNESSES = BUILDER
+            .comment("Capture nearby online players as witnesses at death time (DESIGN 1.4.0 §1).",
+                    "Witnesses are captured only while the event fires; enabling later does not backfill old records.",
+                    "Witness names are filtered by each witness's own optOutPublic at render time.")
+            .define("captureWitnesses", true);
+
+    public static final ModConfigSpec.IntValue WITNESS_RADIUS_BLOCKS = BUILDER
+            .comment("Radius in blocks around the death position used by the witness scan (8-64).")
+            .defineInRange("witnessRadiusBlocks", 24, 8, 64);
+
+    public static final ModConfigSpec.IntValue WITNESS_MAX_PER_DEATH = BUILDER
+            .comment("Maximum witnesses stored per death, nearest first (0-16). Zero disables storage entirely.")
+            .defineInRange("witnessMaxPerDeath", 8, 0, 16);
+
+    public static final ModConfigSpec.BooleanValue WITNESSES_IN_DISCORD = BUILDER
+            .comment("Include witnesses in realtime Discord death posts (default false; the death line stays compact).",
+                    "A future digest section is the intended opt-in seam; this PR adds no Discord witness text.")
+            .define("witnessesInDiscord", false);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -177,6 +196,41 @@ public final class Config {
             return MILESTONE_ANNOUNCEMENTS.get();
         } catch (IllegalStateException notLoaded) {
             return true;
+        }
+    }
+
+    /** Witness capture is on by default: historical witnesses can never be backfilled. */
+    public static boolean captureWitnesses() {
+        try {
+            return CAPTURE_WITNESSES.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static int witnessRadiusBlocks() {
+        try {
+            return WITNESS_RADIUS_BLOCKS.get();
+        } catch (IllegalStateException notLoaded) {
+            return 24;
+        }
+    }
+
+    /** Zero is the escape hatch: no scan and no stored witness list. */
+    public static int witnessMaxPerDeath() {
+        try {
+            return WITNESS_MAX_PER_DEATH.get();
+        } catch (IllegalStateException notLoaded) {
+            return 8;
+        }
+    }
+
+    /** False before config load and by default; Discord content is unchanged by PR-2. */
+    public static boolean witnessesInDiscord() {
+        try {
+            return WITNESSES_IN_DISCORD.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
         }
     }
 

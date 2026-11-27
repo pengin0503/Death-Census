@@ -213,6 +213,10 @@ public final class ChatUi {
                 view.excuse().isEmpty()
                         ? ServerLang.tr(player, "command.deathcensus.ui.none") : truncate(view.excuse())));
         line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.f_count", view.fCount()));
+        line(player, ServerLang.tr(player, "command.deathcensus.ui.detail.witnesses",
+                view.witnesses().isEmpty()
+                        ? ServerLang.tr(player, "command.deathcensus.ui.none")
+                        : String.join(", ", view.witnesses())));
 
         String token = ChatUiContext.currentToken(player);
         String target = view.targetUuid() + " " + view.epochMillis();
