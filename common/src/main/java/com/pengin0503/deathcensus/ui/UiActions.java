@@ -8,6 +8,7 @@ import com.pengin0503.deathcensus.CensusStats;
 import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
 import com.pengin0503.deathcensus.DeathRedactor;
+import com.pengin0503.deathcensus.DistributionAnalysis;
 import com.pengin0503.deathcensus.HiddenIdentities;
 import com.pengin0503.deathcensus.Hotspot;
 import com.pengin0503.deathcensus.HotspotAnalysis;
@@ -16,8 +17,10 @@ import com.pengin0503.deathcensus.NemesisRow;
 import com.pengin0503.deathcensus.Pagination;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.PlayerPrivacy;
+import com.pengin0503.deathcensus.TimeBin;
 import com.pengin0503.deathcensus.TimeFormat;
 import com.pengin0503.deathcensus.WitnessRedactor;
+import com.pengin0503.deathcensus.YBand;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -453,6 +456,8 @@ public final class UiActions {
             case "chronicle" -> chronicleRows(ctx, since);
             case "nemesis" -> nemesisRows(ctx, filtered);
             case "hotspots" -> hotspotRows(ctx, filtered);
+            case "distribution_time" -> distributionTimeRows(ctx, filtered);
+            case "distribution_y" -> distributionYRows(ctx, filtered);
             case "survival" -> {
                 List<String> rows = new ArrayList<>();
                 for (DeathEntry death : CensusStats.leaderboardSurvival(filtered, false)) {
@@ -615,6 +620,44 @@ public final class UiActions {
             rows.add(line);
         }
         return rows;
+    }
+
+    /**
+     * 1.4.0 §7: time-of-day tab. Bins are anonymous and include opted-out deaths;
+     * the zone comes from the viewer's context, matching {@code Config.displayTimeZone()}.
+     */
+    private static List<String> distributionTimeRows(UiContext ctx, List<PlayerDeaths> filtered) {
+        if (!ctx.distributionsEnabled()) {
+            return List.of();
+        }
+        String template = ctx.label("command.deathcensus.distribution.row");
+        List<String> rows = new ArrayList<>();
+        for (TimeBin bin : DistributionAnalysis.timeOfDay(
+                filtered, ctx.distributionTimeBinHours(), ctx.zoneId())) {
+            String label = String.format(Locale.ROOT, "%02d:00", bin.hourStart());
+            rows.add(distributionLine(template, label, bin.count(), bin.topCause()));
+        }
+        return rows;
+    }
+
+    /** 1.4.0 §7: Y-band tab, excluding hidden-coordinate deaths inside the analyzer. */
+    private static List<String> distributionYRows(UiContext ctx, List<PlayerDeaths> filtered) {
+        if (!ctx.distributionsEnabled()) {
+            return List.of();
+        }
+        String template = ctx.label("command.deathcensus.distribution.row");
+        List<String> rows = new ArrayList<>();
+        for (YBand band : DistributionAnalysis.yBands(filtered, ctx.distributionYBandBlocks())) {
+            rows.add(distributionLine(template,
+                    "y " + band.minY() + ".." + band.maxY(), band.count(), band.topCause()));
+        }
+        return rows;
+    }
+
+    private static String distributionLine(String template, String label, int count, String cause) {
+        return template != null && template.contains("%")
+                ? String.format(Locale.ROOT, template, label, count, cause)
+                : label + " — " + count + " · " + cause;
     }
 
     /** Full literal keys keep the version-side lang-key scanner happy. */

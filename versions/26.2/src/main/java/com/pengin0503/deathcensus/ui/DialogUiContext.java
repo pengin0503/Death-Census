@@ -146,6 +146,21 @@ public final class DialogUiContext implements UiContext {
     }
 
     @Override
+    public boolean distributionsEnabled() {
+        return Config.distributionsEnabled();
+    }
+
+    @Override
+    public int distributionTimeBinHours() {
+        return Config.distributionTimeBinHours();
+    }
+
+    @Override
+    public int distributionYBandBlocks() {
+        return Config.distributionYBandBlocks();
+    }
+
+    @Override
     public List<ChronicleEvent> chronicleEvents() {
         MinecraftServer server = server();
         return server == null ? List.of() : CensusData.get(server).chronicleEvents();

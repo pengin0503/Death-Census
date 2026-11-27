@@ -90,6 +90,21 @@ public interface UiContext {
         return 16;
     }
 
+    /** 1.4.0 §7: the two read-only Distribution tabs hide when disabled. */
+    default boolean distributionsEnabled() {
+        return true;
+    }
+
+    /** Time bin edge length for the Distribution page (1/2/3/4/6/12 hours). */
+    default int distributionTimeBinHours() {
+        return 2;
+    }
+
+    /** Altitude band edge length for the Distribution page (8–64 blocks). */
+    default int distributionYBandBlocks() {
+        return 16;
+    }
+
     /** Resolves a bundled lang key for a language-neutral view row. */
     default String label(String key) {
         return key;

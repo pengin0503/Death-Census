@@ -307,6 +307,10 @@ public final class DialogUi {
             case "chronicle" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.chronicle");
             case "nemesis" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.nemesis");
             case "hotspots" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.hotspots");
+            case "distribution_time" -> ServerLang.formatForLang(language,
+                    "command.deathcensus.ui.ranking.distribution.time");
+            case "distribution_y" -> ServerLang.formatForLang(language,
+                    "command.deathcensus.ui.ranking.distribution.y");
             default -> view.type();
         };
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
@@ -342,6 +346,10 @@ public final class DialogUi {
         }
         if (Config.hotspotsEnabled()) {
             types.add("hotspots");
+        }
+        if (Config.distributionsEnabled()) {
+            types.add("distribution_time");
+            types.add("distribution_y");
         }
         List<Input> inputs = List.of(
                 choiceInput(player, "in_type", "command.deathcensus.ui.input.type",

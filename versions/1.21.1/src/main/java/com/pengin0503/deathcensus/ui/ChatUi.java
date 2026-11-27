@@ -278,6 +278,10 @@ public final class ChatUi {
             case "chronicle" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.chronicle");
             case "nemesis" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.nemesis");
             case "hotspots" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.hotspots");
+            case "distribution_time" -> ServerLang.formatForLang(language,
+                    "command.deathcensus.ui.ranking.distribution.time");
+            case "distribution_y" -> ServerLang.formatForLang(language,
+                    "command.deathcensus.ui.ranking.distribution.y");
             default -> view.type();
         };
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.title"));

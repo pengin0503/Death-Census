@@ -136,6 +136,25 @@ public final class Config {
             .comment("Opt-in seam for a future hotspot Discord section (default false; PR-7 adds no posts).")
             .define("hotspotsInDigest", false);
 
+    // 1.4.0 PR-8 (§7): distributions are derived from epoch/y; nothing new is stored.
+    public static final ModConfigSpec.BooleanValue DISTRIBUTIONS_ENABLED = BUILDER
+            .comment("Enable distributions: /dc distribution, the two Distribution tabs and export section.",
+                    "Bins are anonymous: time bins count opted-out deaths, Y bands exclude hidden-coordinate deaths.",
+                    "A displayTimeZone change re-buckets old records because the stored epoch is absolute.")
+            .define("distributionsEnabled", true);
+
+    public static final ModConfigSpec.IntValue DISTRIBUTION_TIME_BIN_HOURS = BUILDER
+            .comment("Time-of-day bin size in hours: 1, 2, 3, 4, 6 or 12 (default 2); other values use the default.")
+            .defineInRange("distributionTimeBinHours", 2, 1, 12);
+
+    public static final ModConfigSpec.IntValue DISTRIBUTION_Y_BAND_BLOCKS = BUILDER
+            .comment("Y-band edge length in blocks (8-64; default 16). Hidden-coordinate deaths are excluded.")
+            .defineInRange("distributionYBandBlocks", 16, 8, 64);
+
+    public static final ModConfigSpec.BooleanValue DISTRIBUTIONS_IN_DIGEST = BUILDER
+            .comment("Opt-in seam for a future distribution Discord section (default false; PR-8 adds no posts).")
+            .define("distributionsInDigest", false);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -500,6 +519,44 @@ public final class Config {
     public static boolean hotspotsInDigest() {
         try {
             return HOTSPOTS_IN_DIGEST.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    public static boolean distributionsEnabled() {
+        try {
+            return DISTRIBUTIONS_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** Only divisors of 24 are meaningful; anything else falls back to two hours. */
+    public static int distributionTimeBinHours() {
+        try {
+            int value = DISTRIBUTION_TIME_BIN_HOURS.get();
+            return value == 1 || value == 2 || value == 3 || value == 4
+                    || value == 6 || value == 12
+                    ? value : DistributionAnalysis.DEFAULT_BIN_HOURS;
+        } catch (IllegalStateException notLoaded) {
+            return DistributionAnalysis.DEFAULT_BIN_HOURS;
+        }
+    }
+
+    public static int distributionYBandBlocks() {
+        try {
+            return Math.max(DistributionAnalysis.MIN_BAND_BLOCKS,
+                    Math.min(DistributionAnalysis.MAX_BAND_BLOCKS, DISTRIBUTION_Y_BAND_BLOCKS.get()));
+        } catch (IllegalStateException notLoaded) {
+            return DistributionAnalysis.DEFAULT_BAND_BLOCKS;
+        }
+    }
+
+    /** No new Discord posts in PR-8; this accessor is the opt-in seam. */
+    public static boolean distributionsInDigest() {
+        try {
+            return DISTRIBUTIONS_IN_DIGEST.get();
         } catch (IllegalStateException notLoaded) {
             return false;
         }
