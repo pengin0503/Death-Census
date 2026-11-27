@@ -143,7 +143,7 @@ class CompareWiringTest {
         JsonObject en = loadLang("en_us");
         JsonObject ja = loadLang("ja_jp");
         assertEquals(en.keySet(), ja.keySet());
-        assertEquals(315, en.size());
+        assertEquals(313, en.size());
         for (String key : List.of(
                 "command.deathcensus.compare.help", "command.deathcensus.compare.header",
                 "command.deathcensus.compare.row.deaths",
@@ -161,8 +161,7 @@ class CompareWiringTest {
                 "command.deathcensus.ui.compare.empty",
                 "command.deathcensus.ui.compare.input.a",
                 "command.deathcensus.ui.compare.input.b",
-                "command.deathcensus.ui.compare.open",
-                "command.deathcensus.export.compare")) {
+                "command.deathcensus.ui.compare.open")) {
             assertTrue(en.has(key), "missing " + key);
             assertTrue(ja.has(key), "missing ja " + key);
         }

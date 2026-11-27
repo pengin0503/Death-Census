@@ -10,8 +10,8 @@ timelines, server-wide leaderboards, and cause-of-death statistics.
 It runs **entirely on the server**. Players join with a plain vanilla
 client; nothing needs to be installed on the client side.
 
-> **Status: 1.0.0.** See [CHANGELOG.md](CHANGELOG.md) for the release notes
-> and [docs/DESIGN.md](docs/DESIGN.md) for the design.
+> **Status: 1.4.0 feature set.** See [CHANGELOG.md](CHANGELOG.md) for the
+> release notes and [docs/DESIGN.md](docs/DESIGN.md) for the design.
 
 ## Why another death log?
 
@@ -82,6 +82,49 @@ Fabric/Quilt only. Death Census takes the opposite angle:
   as a lifetime baseline for milestones without inventing history records
 - Admin checks now use a permission-node bridge with names reserved for a
   future provider, but still use vanilla OP level 2 exactly as before
+
+## 1.4.0 additions
+
+The 1.4.0 pack adds public commands for witnesses (`/dc witnesses`), awards
+(`/dc awards`), the world chronicle (`/dc chronicle`), nemeses (`/dc nemesis`),
+hotspots (`/dc hotspots`), distributions (`/dc distribution`), death loops
+(`/dc loops`), near-death saves (`/dc neardeath`) and two-player comparison
+(`/dc compare <playerA> <playerB> [period] [--html]`). `/dc help` lists the
+commands enabled by the config; the in-game Home → Rankings screen reaches
+the same views, including the two-column compare view.
+
+- Witnesses and per-death context (equipment, effects, biome, weather) are
+  captured at death time; both are redacted with the existing privacy flags.
+- Awards, chronicle, nemesis, hotspots, distributions and loops are derived
+  from retained records. No award-winner history or longest-loop record is
+  persisted; old saves and backups load with empty new fields.
+- After death, a self-only return guide shows direction, distance, height
+  difference and the item despawn countdown toward the death location.
+- Near-death (totem/cancel) saves are bounded per player and server-wide.
+- HTML/JSON/CSV exports gain opt-in chronicle and loop sections; a standalone
+  compare HTML report can be written with `/dc compare ... --html`.
+
+New config keys, all with safe defaults: `captureWitnesses` (true),
+`witnessRadiusBlocks` (24), `witnessMaxPerDeath` (8), `witnessesInDiscord`
+(false); `captureDeathContext` (true), `deathContextMaxEffects` (8),
+`deathContextInDiscord` (false), `deathContextInExports` (true);
+`awardsEnabled` (true), `awardsDefaultPeriod` (all), `awardsInDigest` (true),
+`awardsMinCount` (1); `chronicleEnabled` (true), `chronicleMaxEvents` (200),
+`chronicleInExport` (true), `chronicleInDiscord` (false); `nemesisEnabled`
+(true), `nemesisMinMobCount` (3), `nemesisMinNamedCount` (2),
+`nemesisInDigest` (false); `hotspotsEnabled` (true), `hotspotMinDeaths` (3),
+`hotspotChunkSize` (16), `hotspotsInDigest` (false); `compareEnabled` (true),
+`compareDefaultPeriod` (all), `compareInDiscord` (false); `distributionsEnabled`
+(true), `distributionTimeBinHours` (2), `distributionYBandBlocks` (16),
+`distributionsInDigest` (false); `deathLoopEnabled` (true),
+`deathLoopMinDeaths` (3), `deathLoopWindowMinutes` (10),
+`deathLoopRadiusBlocks` (48), `deathLoopNotifyVictim` (true), `loopsInExport`
+(false), `loopsInDiscord` (false); `respawnGuideEnabled` (true),
+`respawnGuideMaxTicks` (6000), `respawnGuideArrivalBlocks` (16),
+`respawnGuideRefreshTicks` (20); `nearDeathCaptureEnabled` (true),
+`nearDeathDedupWindowMillis` (2000), `nearDeathMaxPerPlayer` (50),
+`nearDeathInDiscord` (false). `/dc doctor` reports the 1.4.0 feature and
+seam states plus aggregate counts — never the webhook URL.
 
 ## GUI (`/dc`)
 

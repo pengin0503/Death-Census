@@ -1056,8 +1056,9 @@ public final class CensusCommands {
             return help(ctx);
         }
         ChatUi.openHome(self);
-        ChatUi.sendHelpLines(self);
-        return 1;
+        // PR-13: bare /dc must show the same complete, config-gated help as
+        // /dc help; the old abbreviated chat help predates every 1.4.0 command.
+        return help(ctx);
     }
 
     /**
@@ -1144,9 +1145,15 @@ public final class CensusCommands {
         if (Config.deathLoopEnabled()) {
             send(ctx, "command.deathcensus.loops.help");
         }
+        if (Config.compareEnabled()) {
+            send(ctx, "command.deathcensus.compare.help");
+        }
         send(ctx, "command.deathcensus.help.stats");
         if (Config.nearDeathCaptureEnabled()) {
             send(ctx, "command.deathcensus.neardeath.help");
+        }
+        if (Config.respawnGuideEnabled()) {
+            send(ctx, "command.deathcensus.help.respawn");
         }
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
@@ -2532,6 +2539,7 @@ public final class CensusCommands {
         int players = 0;
         int optedOut = 0;
         int total = 0;
+        int nearDeaths = 0;
         long oldest = Long.MAX_VALUE;
         long newest = Long.MIN_VALUE;
         for (CensusData.PlayerCensus pc : data.allPlayers().values()) {
@@ -2539,6 +2547,7 @@ public final class CensusCommands {
             if (pc.optOutPublic) {
                 optedOut++;
             }
+            nearDeaths += pc.nearDeaths.size();
             for (DeathEntry e : pc.deaths) {
                 total++;
                 oldest = Math.min(oldest, e.epochMillis());
@@ -2580,6 +2589,30 @@ public final class CensusCommands {
         sendLiteral(ctx, "Backups: " + backups.size() + " (newest: " + newestBackup + ")");
         sendLiteral(ctx, "Languages: " + ServerLang.BUNDLED_LANGUAGES.size()
                 + ", en keys: " + ServerLang.fallbacks().size());
+        // 1.4.0 PR-13: report feature/config state and aggregate sizes. Values
+        // are booleans/counts/status words only — never a webhook URL or name.
+        sendLiteral(ctx, "1.4.0 features: witnesses=" + Config.captureWitnesses()
+                + " context=" + Config.captureDeathContext() + " awards=" + Config.awardsEnabled()
+                + " chronicle=" + Config.chronicleEnabled() + " nemesis=" + Config.nemesisEnabled()
+                + " hotspots=" + Config.hotspotsEnabled() + " distributions=" + Config.distributionsEnabled()
+                + " loops=" + Config.deathLoopEnabled() + " compare=" + Config.compareEnabled()
+                + " respawnGuide=" + Config.respawnGuideEnabled()
+                + " nearDeath=" + Config.nearDeathCaptureEnabled());
+        sendLiteral(ctx, "1.4.0 seams: awards(digest)=" + Config.awardsInDigest()
+                + " chronicle(export)=" + Config.chronicleInExport()
+                + " chronicle(discord)=" + Config.chronicleInDiscord()
+                + " nemesis(digest)=" + Config.nemesisInDigest()
+                + " hotspots(digest)=" + Config.hotspotsInDigest()
+                + " distributions(digest)=" + Config.distributionsInDigest()
+                + " compare(discord)=" + Config.compareInDiscord()
+                + " loops(export)=" + Config.loopsInExport() + " loops(discord)=" + Config.loopsInDiscord()
+                + " witnesses(discord)=" + Config.witnessesInDiscord()
+                + " nearDeath(discord)=" + Config.nearDeathInDiscord()
+                + " context(discord)=" + Config.deathContextInDiscord()
+                + " context(export)=" + Config.deathContextInExports());
+        sendLiteral(ctx, "1.4.0 aggregates: chronicleEvents=" + data.chronicleEvents().size()
+                + " nearDeathSaves=" + nearDeaths + " (per-player cap " + Config.nearDeathMaxPerPlayer()
+                + ", server cap " + NearDeathAnalysis.SERVER_CAP + ")");
         // §10: node integration is deferred (NeoForge has no built-in node API).
         // Status words only — no webhook URL or other secret is ever printed.
         sendLiteral(ctx, "Permissions: OP level 2 (node integration deferred)");

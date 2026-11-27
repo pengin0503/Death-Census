@@ -66,6 +66,46 @@ client; nothing needs to be installed on the client side.
   reserved for a future provider, but still use vanilla OP level 2 exactly
   as before
 
+## 1.4.0 additions
+
+New public commands: `/dc witnesses`, `/dc awards`, `/dc chronicle`,
+`/dc nemesis`, `/dc hotspots`, `/dc distribution`, `/dc loops`,
+`/dc neardeath` and `/dc compare <playerA> <playerB> [period] [--html]`.
+`/dc help` lists the enabled commands, and the GUI Home → Rankings screen
+reaches every new ranking plus the two-column compare view.
+
+- Witnesses and death context (equipment, effects, biome, weather) are
+  captured at death time and redacted for public viewers with the existing
+  privacy flags; old saves and backups still load.
+- Awards, chronicle, nemesis, hotspots, distributions and loops are derived
+  from retained records — no persisted winners or loop records.
+- A self-only respawn guide points back to your dropped items; near-death
+  (totem/cancel) saves are capped per player and server-wide.
+- HTML/JSON/CSV exports include the same 1.4.0 sections in the same order;
+  `/dc compare ... --html` writes a standalone comparison report.
+
+New config keys (defaults): `captureWitnesses` (true), `witnessRadiusBlocks`
+(24), `witnessMaxPerDeath` (8), `witnessesInDiscord` (false);
+`captureDeathContext` (true), `deathContextMaxEffects` (8),
+`deathContextInDiscord` (false), `deathContextInExports` (true);
+`awardsEnabled` (true), `awardsDefaultPeriod` (all), `awardsInDigest` (true),
+`awardsMinCount` (1); `chronicleEnabled` (true), `chronicleMaxEvents` (200),
+`chronicleInExport` (true), `chronicleInDiscord` (false); `nemesisEnabled`
+(true), `nemesisMinMobCount` (3), `nemesisMinNamedCount` (2),
+`nemesisInDigest` (false); `hotspotsEnabled` (true), `hotspotMinDeaths` (3),
+`hotspotChunkSize` (16), `hotspotsInDigest` (false); `compareEnabled` (true),
+`compareDefaultPeriod` (all), `compareInDiscord` (false);
+`distributionsEnabled` (true), `distributionTimeBinHours` (2),
+`distributionYBandBlocks` (16), `distributionsInDigest` (false);
+`deathLoopEnabled` (true), `deathLoopMinDeaths` (3),
+`deathLoopWindowMinutes` (10), `deathLoopRadiusBlocks` (48),
+`deathLoopNotifyVictim` (true), `loopsInExport` (false), `loopsInDiscord`
+(false); `respawnGuideEnabled` (true), `respawnGuideMaxTicks` (6000),
+`respawnGuideArrivalBlocks` (16), `respawnGuideRefreshTicks` (20);
+`nearDeathCaptureEnabled` (true), `nearDeathDedupWindowMillis` (2000),
+`nearDeathMaxPerPlayer` (50), `nearDeathInDiscord` (false). `/dc doctor`
+shows the feature/seam states and aggregate counts, never the webhook URL.
+
 ## Commands
 
 All commands work under `/deathcensus` and the short alias `/dc`.
@@ -111,7 +151,9 @@ version) lets you toggle recording, cap the records kept per player
 (default 10,000), set the Discord webhook URL and digest interval, choose
 the display timezone, and control whether opted-out players appear in
 operator exports. The webhook URL can also be read from an environment
-variable with `env:VAR_NAME` and is never printed to logs or chat.
+variable with `env:VAR_NAME` and is never printed to logs or chat. The 1.4.0
+keys listed above are grouped by feature in the same file; `/dc doctor`
+reports each feature and seam as an on/off state.
 
 ## Versions
 
@@ -180,6 +222,46 @@ vanilla clients can join.
 - 権限ノードの準備：管理者チェックは将来の権限プロバイダー用の橋渡しを
   経由するようになりましたが、1.3.0 では従来どおりバニラの権限レベル2を
   使用し、動作は変わりません
+
+## 1.4.0 の追加機能
+
+新しい公開コマンド：`/dc witnesses`、`/dc awards`、`/dc chronicle`、
+`/dc nemesis`、`/dc hotspots`、`/dc distribution`、`/dc loops`、
+`/dc neardeath`、`/dc compare <playerA> <playerB> [period] [--html]`。
+`/dc help` は有効なコマンドだけを表示し、GUI のホーム → ランキングから
+すべての新しいランキングと2列の比較画面に移動できます。
+
+- 証言者と死亡時の状況（装備、エフェクト、バイオーム、天候）は死亡時に記録され、
+  公開画面では既存のプライバシー設定で隠されます。古いセーブデータや
+  バックアップもそのまま読み込めます
+- 称号、年代記、宿敵、ホットスポット、分布、死亡ループは保持された記録から
+  導出され、過去の受賞履歴やループ記録は保存されません
+- 死亡後、落としたアイテムへの自宅用の帰還ガイドを表示します。
+  トーテム／ニアデス（瀕死）の保存数はプレイヤーごととサーバー全体で上限があります
+- HTML/JSON/CSV エクスポートは同じ順番で 1.4.0 のセクションを含み、
+  `/dc compare ... --html` は比較用の単体 HTML レポートを出力します
+
+新しい設定キー（既定値）：`captureWitnesses` (true)、`witnessRadiusBlocks` (24)、
+`witnessMaxPerDeath` (8)、`witnessesInDiscord` (false)、`captureDeathContext` (true)、
+`deathContextMaxEffects` (8)、`deathContextInDiscord` (false)、
+`deathContextInExports` (true)、`awardsEnabled` (true)、`awardsDefaultPeriod` (all)、
+`awardsInDigest` (true)、`awardsMinCount` (1)、`chronicleEnabled` (true)、
+`chronicleMaxEvents` (200)、`chronicleInExport` (true)、`chronicleInDiscord` (false)、
+`nemesisEnabled` (true)、`nemesisMinMobCount` (3)、`nemesisMinNamedCount` (2)、
+`nemesisInDigest` (false)、`hotspotsEnabled` (true)、`hotspotMinDeaths` (3)、
+`hotspotChunkSize` (16)、`hotspotsInDigest` (false)、`compareEnabled` (true)、
+`compareDefaultPeriod` (all)、`compareInDiscord` (false)、
+`distributionsEnabled` (true)、`distributionTimeBinHours` (2)、
+`distributionYBandBlocks` (16)、`distributionsInDigest` (false)、
+`deathLoopEnabled` (true)、`deathLoopMinDeaths` (3)、
+`deathLoopWindowMinutes` (10)、`deathLoopRadiusBlocks` (48)、
+`deathLoopNotifyVictim` (true)、`loopsInExport` (false)、`loopsInDiscord` (false)、
+`respawnGuideEnabled` (true)、`respawnGuideMaxTicks` (6000)、
+`respawnGuideArrivalBlocks` (16)、`respawnGuideRefreshTicks` (20)、
+`nearDeathCaptureEnabled` (true)、`nearDeathDedupWindowMillis` (2000)、
+`nearDeathMaxPerPlayer` (50)、`nearDeathInDiscord` (false)。
+`/dc doctor` は機能と接続ポイントの状態と集計値を表示しますが、Webhook URL は
+表示しません。
 
 ## ゲーム内 GUI（`/dc`）
 
