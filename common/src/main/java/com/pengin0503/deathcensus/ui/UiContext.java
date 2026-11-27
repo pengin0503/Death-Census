@@ -5,6 +5,8 @@ import com.pengin0503.deathcensus.PlayerPrivacy;
 
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -35,6 +37,21 @@ public interface UiContext {
      */
     default boolean canManagePrivacy(UUID targetUuid) {
         return UiPrivacy.canManagePrivacy(viewer(), targetUuid, isSelf(targetUuid) || isAdmin());
+    }
+
+    /** 1.4.0 §2: the awards page is hidden when the server disables awards. */
+    default boolean awardsEnabled() {
+        return true;
+    }
+
+    /** Lifetime category completion (1.4.0 §2 CATEGORY_COMPLETE), keyed by UUID. */
+    default Map<String, Set<String>> lifetimeCategories() {
+        return Map.of();
+    }
+
+    /** Resolves a bundled lang key for a language-neutral view row. */
+    default String label(String key) {
+        return key;
     }
 
     /** Live four-flag snapshot; adapters may override with a direct storage read. */

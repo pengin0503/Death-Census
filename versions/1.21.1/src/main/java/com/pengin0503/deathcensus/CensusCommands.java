@@ -8,6 +8,8 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.pengin0503.deathcensus.AwardResult;
+import com.pengin0503.deathcensus.Awards;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonAwards;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonLabels;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonSection;
@@ -32,8 +34,10 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 
@@ -247,6 +251,25 @@ public final class CensusCommands {
         }
         witnesses.then(witnessPlayer);
         root.then(witnesses);
+
+        // 1.4.0 PR-4: /dc awards [today|7d|30d|all] [page] (§2), hidden when disabled.
+        if (Config.awardsEnabled()) {
+            LiteralArgumentBuilder<CommandSourceStack> awards = literal("awards")
+                    .executes(ctx -> awards(ctx, Config.awardsDefaultPeriod(), 1))
+                    .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> awards(ctx, Config.awardsDefaultPeriod(),
+                                    IntegerArgumentType.getInteger(ctx, "page"))));
+            for (String period : PERIODS) {
+                awards.then(literal(period)
+                        .executes(ctx -> awards(ctx, period, 1))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> awards(ctx, period,
+                                        IntegerArgumentType.getInteger(ctx, "page")))));
+            }
+            root.then(awards);
+        }
 
         LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
                 .executes(CensusCommands::serverStats);
@@ -899,6 +922,9 @@ public final class CensusCommands {
         send(ctx, "command.deathcensus.help.excuse");
         send(ctx, "command.deathcensus.help.history");
         send(ctx, "command.deathcensus.help.witnesses");
+        if (Config.awardsEnabled()) {
+            send(ctx, "command.deathcensus.awards.help");
+        }
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
@@ -1159,6 +1185,88 @@ public final class CensusCommands {
         return 1;
     }
 
+    // --------------------------------------------------------------- awards (§2)
+
+    private static int awards(CommandContext<CommandSourceStack> ctx, String period, int page) {
+        MinecraftServer server = server(ctx);
+        if (server == null || !Config.awardsEnabled()) {
+            return 0;
+        }
+        List<PlayerDeaths> snapshot = CensusData.get(server).snapshot();
+        List<PlayerDeaths> inPeriod = CensusStats.filterSince(snapshot, sinceMillis(period));
+        List<PlayerDeaths> publicPlayers = new ArrayList<>();
+        for (PlayerDeaths player : inPeriod) {
+            if (player != null && !player.optOutPublic()) {
+                publicPlayers.add(player);
+            }
+        }
+        List<AwardResult> results = computeAwards(server, publicPlayers, false);
+        Pagination.Page<AwardResult> p = Pagination.of(results, page, PAGE_SIZE);
+        send(ctx, "command.deathcensus.awards.header", period, results.size(), p.page(), p.pageCount());
+        if (p.items().isEmpty()) {
+            send(ctx, "command.deathcensus.awards.empty");
+        }
+        for (String line : awardLines(p.items(), languageOf(ctx))) {
+            sendLiteral(ctx, line);
+        }
+        send(ctx, "command.deathcensus.awards.retained");
+        if (p.pageCount() > 1) {
+            send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+        }
+        return 1;
+    }
+
+    /** Shared by chat, exports and digests: recomputed, never stored. */
+    static List<AwardResult> computeAwards(MinecraftServer server, List<PlayerDeaths> publicSnapshot,
+                                           boolean discord) {
+        if (server == null || !Config.awardsEnabled() || (discord && !Config.awardsInDigest())) {
+            return List.of();
+        }
+        CensusData data = CensusData.get(server);
+        Map<String, Set<String>> categories = new LinkedHashMap<>();
+        for (Map.Entry<UUID, CensusData.PlayerCensus> entry : data.allPlayers().entrySet()) {
+            if (!entry.getValue().optOutPublic) {
+                categories.put(entry.getKey().toString(), entry.getValue().lifetimeCategories());
+            }
+        }
+        String rarest = CensusStats.rarestCause(data.snapshot(), true).orElse("");
+        List<PlayerDeaths> eligible = new ArrayList<>();
+        for (PlayerDeaths player : publicSnapshot) {
+            if (player == null || player.optOutPublic() || (discord && player.discordOptOut())) {
+                continue;
+            }
+            eligible.add(player);
+        }
+        return Awards.evaluate(eligible, Config.awardsMinCount(),
+                new Awards.Context(categories, rarest));
+    }
+
+    /** Lines are built from bundled lang keys; anonymous totals are added by the caller. */
+    static List<String> awardLines(List<AwardResult> results, String language) {
+        List<String> lines = new ArrayList<>();
+        for (AwardResult result : results) {
+            String title = ServerLang.formatForLang(language, awardTitleKey(result.rule()));
+            lines.add(ServerLang.formatForLang(language, "command.deathcensus.awards.row",
+                    title, result.name(), result.count()));
+        }
+        return lines;
+    }
+
+    /** Full literal keys avoid dynamically constructed translation keys. */
+    private static String awardTitleKey(Awards.Rule rule) {
+        return switch (rule) {
+            case MOST_DEATHS -> "command.deathcensus.awards.title.most_deaths";
+            case LONGEST_SURVIVAL -> "command.deathcensus.awards.title.longest_survival";
+            case MOST_FALLS -> "command.deathcensus.awards.title.most_falls";
+            case MOST_LAVA -> "command.deathcensus.awards.title.most_lava";
+            case MOST_LIGHTNING -> "command.deathcensus.awards.title.most_lightning";
+            case MOST_RESPECTED -> "command.deathcensus.awards.title.most_respected";
+            case CATEGORY_COMPLETE -> "command.deathcensus.awards.title.category_complete";
+            case RAREST_CAUSE -> "command.deathcensus.awards.title.rarest_cause";
+            case WITNESS_FAMOUS -> "command.deathcensus.awards.title.witness_famous";
+        };
+    }
+
     private record PrivacyTarget(UUID uuid, String name) {
     }
 
@@ -1410,6 +1518,17 @@ public final class CensusCommands {
         DiscordLogic.DigestLabels digestLabels = DiscordLogic.labelsFor(lang);
         SeasonLabels seasonLabels = seasonLabels(lang);
         SeasonAwards awards = seasonAwards(data, snapshot, inRange);
+        if (Config.awardsEnabled() && Config.awardsInDigest()) {
+            List<PlayerDeaths> publicInRange = new ArrayList<>();
+            for (PlayerDeaths player : inRange) {
+                if (!player.optOutPublic()) {
+                    publicInRange.add(player);
+                }
+            }
+            List<String> lines = awardLines(computeAwards(server, publicInRange, true), lang);
+            awards = awards.withAwards(lines,
+                    ServerLang.formatForLang(lang, "discord.deathcensus.awards.section"));
+        }
         List<SeasonSection> sections = DiscordLogic.seasonSections(
                 snapshot, range, zone, digestLabels, awards, seasonLabels);
         String content = DiscordLogic.seasonContent(

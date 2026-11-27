@@ -78,7 +78,18 @@ public final class DiscordLogic {
      * {@code PlayerCensus.lifetimeCategories}; the other two are derived from
      * the deaths in the requested range (public players only for named awards).
      */
-    public record SeasonAwards(List<String> allCategoryCompleters, DeathEntry longestSurvival, String rarestCause) {
+    public record SeasonAwards(
+            List<String> allCategoryCompleters,
+            DeathEntry longestSurvival,
+            String rarestCause,
+            List<String> awardLines,
+            String awardSectionLabel
+    ) {
+        /** 1.3.0 shape: no 1.4.0 award section. */
+        public SeasonAwards(List<String> allCategoryCompleters, DeathEntry longestSurvival, String rarestCause) {
+            this(allCategoryCompleters, longestSurvival, rarestCause, List.of(), "");
+        }
+
         public SeasonAwards {
             allCategoryCompleters = allCategoryCompleters == null
                     ? List.of()
@@ -86,10 +97,19 @@ public final class DiscordLogic {
                             .filter(name -> name != null && !name.isBlank())
                             .toList();
             rarestCause = rarestCause == null ? "" : rarestCause;
+            awardLines = awardLines == null
+                    ? List.of()
+                    : awardLines.stream().filter(line -> line != null && !line.isBlank()).toList();
+            awardSectionLabel = awardSectionLabel == null ? "" : awardSectionLabel;
         }
 
         public static SeasonAwards none() {
             return new SeasonAwards(List.of(), null, "");
+        }
+
+        /** 1.4.0 §2: attach pre-localized award lines plus the localized section label. */
+        public SeasonAwards withAwards(List<String> lines, String label) {
+            return new SeasonAwards(allCategoryCompleters, longestSurvival, rarestCause, lines, label);
         }
     }
 
@@ -216,6 +236,22 @@ public final class DiscordLogic {
             ZoneId zone,
             DigestLabels labels
     ) {
+        return digestContent(players, sinceEpochMillis, zone, labels, List.of(), "");
+    }
+
+    /**
+     * 1.4.0 §2: optional awards section for the periodic digest. Winner lines
+     * are pre-localized by version code; a null or empty list leaves the 1.3.0
+     * digest byte-for-byte unchanged.
+     */
+    public static String digestContent(
+            List<PlayerDeaths> players,
+            long sinceEpochMillis,
+            ZoneId zone,
+            DigestLabels labels,
+            List<String> awardLines,
+            String awardSectionLabel
+    ) {
         if (players == null || players.isEmpty()) {
             return "";
         }
@@ -262,6 +298,16 @@ public final class DiscordLogic {
                     .map(summary -> summary.name() + " (" + summary.deaths() + ")")
                     .collect(Collectors.joining(", "));
             result.append('\n').append(labels.mostDeaths()).append(": ").append(mostDeaths);
+        }
+        if (awardLines != null && !awardLines.isEmpty()) {
+            String line = awardLines.stream()
+                    .filter(value -> value != null && !value.isBlank())
+                    .collect(Collectors.joining("; "));
+            if (!line.isEmpty()) {
+                String label = awardSectionLabel == null || awardSectionLabel.isBlank()
+                        ? "Awards" : awardSectionLabel;
+                result.append('\n').append(label).append(": ").append(line);
+            }
         }
         return result.toString();
     }
@@ -388,6 +434,15 @@ public final class DiscordLogic {
         awardLines.add(format(season.rarestCause(), rarest.isEmpty() ? season.none() : rarest));
         sections.add(new SeasonSection(season.awards(),
                 scrub(String.join("; ", awardLines), hiddenNames)));
+        // 1.4.0 §2: the derived award titles are a separate, opt-in section.
+        if (!effectiveAwards.awardLines().isEmpty()) {
+            String label = effectiveAwards.awardSectionLabel().isBlank()
+                    ? season.awards() : effectiveAwards.awardSectionLabel();
+            String value = scrub(String.join("; ", effectiveAwards.awardLines()), hiddenNames);
+            if (!value.isBlank()) {
+                sections.add(new SeasonSection(label, value));
+            }
+        }
 
         return List.copyOf(sections);
     }

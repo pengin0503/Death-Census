@@ -16,7 +16,10 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.stats.Stats;
 
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -97,6 +100,33 @@ public final class ChatUiContext implements UiContext {
         CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
         return pc == null ? PlayerPrivacy.none() : new PlayerPrivacy(
                 pc.optOutPublic, pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut);
+    }
+
+    @Override
+    public boolean awardsEnabled() {
+        return Config.awardsEnabled();
+    }
+
+    @Override
+    public Map<String, Set<String>> lifetimeCategories() {
+        MinecraftServer server = server();
+        if (server == null) {
+            return Map.of();
+        }
+        Map<String, Set<String>> categories = new LinkedHashMap<>();
+        for (Map.Entry<UUID, CensusData.PlayerCensus> entry
+                : CensusData.get(server).allPlayers().entrySet()) {
+            if (!entry.getValue().optOutPublic) {
+                categories.put(entry.getKey().toString(), entry.getValue().lifetimeCategories());
+            }
+        }
+        return categories;
+    }
+
+    @Override
+    public String label(String key) {
+        return ServerLang.formatForLang(player != null && player.clientInformation() != null
+                ? player.clientInformation().language() : ServerLang.DEFAULT_LANG, key);
     }
 
     @Override

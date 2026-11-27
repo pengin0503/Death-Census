@@ -62,6 +62,25 @@ public final class Config {
                     "Backups always keep it; turning this off only affects public export surfaces.")
             .define("deathContextInExports", true);
 
+    // 1.4.0 PR-4 (§2): derived awards are read-only; no stored winner history.
+    public static final ModConfigSpec.BooleanValue AWARDS_ENABLED = BUILDER
+            .comment("Enable derived awards/titles: /dc awards, the awards ranking page, export and digest sections.",
+                    "Awards are recomputed from retained records; disabling them hides every award surface.")
+            .define("awardsEnabled", true);
+
+    public static final ModConfigSpec.ConfigValue<String> AWARDS_DEFAULT_PERIOD = BUILDER
+            .comment("Default period for /dc awards and the awards ranking page (today|7d|30d|all).")
+            .define("awardsDefaultPeriod", "all", Config::validateAwardsPeriod);
+
+    public static final ModConfigSpec.BooleanValue AWARDS_IN_DIGEST = BUILDER
+            .comment("Include the derived awards section in periodic digests and /dc digest season.",
+                    "Realtime Discord death lines stay compact and never carry awards.")
+            .define("awardsInDigest", true);
+
+    public static final ModConfigSpec.IntValue AWARDS_MIN_COUNT = BUILDER
+            .comment("A named award winner must beat this count (1-100); lower counts stay anonymous.")
+            .defineInRange("awardsMinCount", 1, 1, 100);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -184,6 +203,11 @@ public final class Config {
         return obj instanceof String s && DiscordLogic.PvpFilterMode.fromConfigValue(s) != null;
     }
 
+    static boolean validateAwardsPeriod(Object obj) {
+        return obj instanceof String s && (s.equals("today") || s.equals("7d")
+                || s.equals("30d") || s.equals("all"));
+    }
+
     public static ZoneId displayTimeZone() {
         try {
             String v = DISPLAY_TIME_ZONE.get();
@@ -288,6 +312,41 @@ public final class Config {
             return DEATH_CONTEXT_IN_EXPORTS.get();
         } catch (IllegalStateException notLoaded) {
             return true;
+        }
+    }
+
+    /** Awards default on; every surface re-checks this accessor at use time. */
+    public static boolean awardsEnabled() {
+        try {
+            return AWARDS_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** Validated period literal, defaulting to the §15 Q6 recommendation. */
+    public static String awardsDefaultPeriod() {
+        try {
+            String value = AWARDS_DEFAULT_PERIOD.get();
+            return validateAwardsPeriod(value) ? value : "all";
+        } catch (IllegalStateException notLoaded) {
+            return "all";
+        }
+    }
+
+    public static boolean awardsInDigest() {
+        try {
+            return AWARDS_IN_DIGEST.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static int awardsMinCount() {
+        try {
+            return Math.max(1, Math.min(100, AWARDS_MIN_COUNT.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 1;
         }
     }
 

@@ -93,11 +93,17 @@ public final class CensusExport {
         boolean includeContext = Config.deathContextInExports();
         String contextHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
                 "command.deathcensus.export.context");
+        String awardsHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                "command.deathcensus.export.awards");
+        List<String> awardLines = CensusCommands.awardLines(
+                CensusCommands.computeAwards(server, players, false), ServerLang.DEFAULT_LANG);
         String content = switch (format) {
-            case "json" -> ExportRenderers.toJson(players, now, anonymize, includeContext, allPlayers);
-            case "csv" -> ExportRenderers.toCsv(players, anonymize, includeContext, allPlayers);
+            case "json" -> ExportRenderers.toJson(players, now, anonymize, includeContext, allPlayers,
+                    awardLines, awardsHeader);
+            case "csv" -> ExportRenderers.toCsv(players, anonymize, includeContext, allPlayers,
+                    awardLines, awardsHeader);
             default -> ExportRenderers.toHtml(players, now, zone, anonymize, includeContext,
-                    contextHeader, allPlayers);
+                    contextHeader, allPlayers, awardLines, awardsHeader);
         };
         String playerName = onlyPlayer != null && !players.isEmpty() ? players.get(0).name() : null;
         Path file = exportsDir(server).resolve(exportFileName(format, playerName, anonymize, zone));
@@ -133,9 +139,12 @@ public final class CensusExport {
             }
         }
         ZoneId zone = Config.displayTimeZone();
+        List<String> awardLines = CensusCommands.awardLines(
+                CensusCommands.computeAwards(server, players, false), ServerLang.DEFAULT_LANG);
         String content = ExportRenderers.toHtml(players, System.currentTimeMillis(), zone, false,
                 Config.deathContextInExports(), ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
-                        "command.deathcensus.export.context"), allPlayers);
+                        "command.deathcensus.export.context"), allPlayers, awardLines,
+                ServerLang.formatForLang(ServerLang.DEFAULT_LANG, "command.deathcensus.export.awards"));
         Path file = exportsDir(server).resolve("season-" + range.fileNameStamp(zone) + ".html");
         try {
             Files.createDirectories(file.getParent());

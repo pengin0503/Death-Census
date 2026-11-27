@@ -1,5 +1,6 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.Config;
 import com.pengin0503.deathcensus.DeathContext;
 import com.pengin0503.deathcensus.ServerLang;
 import com.pengin0503.deathcensus.TimeFormat;
@@ -270,9 +271,14 @@ public final class ChatUi {
     }
 
     private static void renderRankings(ServerPlayer player, RankingView view) {
+        String typeLabel = "awards".equals(view.type())
+                ? ServerLang.formatForLang(player.clientInformation() != null
+                        ? player.clientInformation().language() : ServerLang.DEFAULT_LANG,
+                        "command.deathcensus.ui.ranking.awards")
+                : view.type();
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.title"));
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.header",
-                view.type(), view.period(), view.page(), view.pageCount()));
+                typeLabel, view.period(), view.page(), view.pageCount()));
         if (view.rows().isEmpty()) {
             line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.empty"));
         }
@@ -294,7 +300,9 @@ public final class ChatUi {
                 + Math.min(Math.max(1, view.pageCount()), view.page() + 1) + " " + token, null));
         buttons.add(backButton(player));
         buttonRows(player, buttons);
-        line(player, ServerLang.tr(player, "command.deathcensus.ui.chat.ranking_hint"));
+        line(player, ServerLang.tr(player, Config.awardsEnabled()
+                ? "command.deathcensus.ui.chat.ranking_hint"
+                : "command.deathcensus.ui.chat.ranking_hint_no_awards"));
     }
 
     private static void renderPrivacy(ServerPlayer player, PrivacyView view) {

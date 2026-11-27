@@ -1,5 +1,7 @@
 package com.pengin0503.deathcensus.ui;
 
+import com.pengin0503.deathcensus.AwardResult;
+import com.pengin0503.deathcensus.Awards;
 import com.pengin0503.deathcensus.CensusStats;
 import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
@@ -18,6 +20,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -440,6 +443,7 @@ public final class UiActions {
                 .sinceMillis(ctx.nowMillis(), ctx.zoneId());
         List<PlayerDeaths> filtered = CensusStats.filterSince(ctx.snapshot(), since);
         List<String> entries = switch (selection.type()) {
+            case "awards" -> awardRows(ctx, filtered);
             case "survival" -> {
                 List<String> rows = new ArrayList<>();
                 for (DeathEntry death : CensusStats.leaderboardSurvival(filtered, false)) {
@@ -476,6 +480,46 @@ public final class UiActions {
                 selection.type(), selection.period(), page.page(), page.pageCount(),
                 page.items(), truncate(UiPrivacy.anonymousTotalsLine(filtered))
         );
+    }
+
+    /** 1.4.0 §2: awards are computed from the same period-scoped public view. */
+    private static List<String> awardRows(UiContext ctx, List<PlayerDeaths> filtered) {
+        if (!ctx.awardsEnabled()) {
+            return List.of();
+        }
+        List<PlayerDeaths> publicPlayers = new ArrayList<>();
+        for (PlayerDeaths player : filtered) {
+            if (player != null && !player.optOutPublic()) {
+                publicPlayers.add(player);
+            }
+        }
+        List<AwardResult> results = Awards.evaluate(
+                publicPlayers, 1, new Awards.Context(ctx.lifetimeCategories(), ""));
+        String template = ctx.label("command.deathcensus.awards.row");
+        List<String> rows = new ArrayList<>();
+        for (AwardResult result : results) {
+            String title = ctx.label(awardTitleKey(result.rule()));
+            String line = template.contains("%")
+                    ? String.format(Locale.ROOT, template, title, result.name(), result.count())
+                    : title + ": " + result.name() + " — " + result.count();
+            rows.add(line);
+        }
+        return rows;
+    }
+
+    /** Full literal keys keep the version-side lang-key scanner happy. */
+    private static String awardTitleKey(Awards.Rule rule) {
+        return switch (rule) {
+            case MOST_DEATHS -> "command.deathcensus.awards.title.most_deaths";
+            case LONGEST_SURVIVAL -> "command.deathcensus.awards.title.longest_survival";
+            case MOST_FALLS -> "command.deathcensus.awards.title.most_falls";
+            case MOST_LAVA -> "command.deathcensus.awards.title.most_lava";
+            case MOST_LIGHTNING -> "command.deathcensus.awards.title.most_lightning";
+            case MOST_RESPECTED -> "command.deathcensus.awards.title.most_respected";
+            case CATEGORY_COMPLETE -> "command.deathcensus.awards.title.category_complete";
+            case RAREST_CAUSE -> "command.deathcensus.awards.title.rarest_cause";
+            case WITNESS_FAMOUS -> "command.deathcensus.awards.title.witness_famous";
+        };
     }
 
     private static UiResult openPrivacy(UiRequest request, UiContext ctx) {
