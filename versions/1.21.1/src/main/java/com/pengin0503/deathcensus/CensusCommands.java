@@ -406,6 +406,25 @@ public final class CensusCommands {
             root.then(distribution);
         }
 
+        // 1.4.0 PR-9: /dc loops [player] [page] (§8), public ranking of derived loops.
+        if (Config.deathLoopEnabled()) {
+            LiteralArgumentBuilder<CommandSourceStack> loops = literal("loops")
+                    .executes(ctx -> loops(ctx, null, 1))
+                    .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> loops(ctx, null,
+                                    IntegerArgumentType.getInteger(ctx, "page"))));
+            loops.then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                    .<CommandSourceStack, String>argument("player", StringArgumentType.word())
+                    .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
+                    .executes(ctx -> loops(ctx, StringArgumentType.getString(ctx, "player"), 1))
+                    .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> loops(ctx, StringArgumentType.getString(ctx, "player"),
+                                    IntegerArgumentType.getInteger(ctx, "page")))));
+            root.then(loops);
+        }
+
         LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
                 .executes(CensusCommands::serverStats);
         for (String period : PERIODS) {
@@ -1072,6 +1091,9 @@ public final class CensusCommands {
         if (Config.distributionsEnabled()) {
             send(ctx, "command.deathcensus.distribution.help");
         }
+        if (Config.deathLoopEnabled()) {
+            send(ctx, "command.deathcensus.loops.help");
+        }
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
@@ -1709,6 +1731,75 @@ public final class CensusCommands {
         lines.add(ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
                 "command.deathcensus.ui.ranking.distribution.y"));
         lines.addAll(distributionLines(snapshot, "y", ServerLang.DEFAULT_LANG));
+        return lines;
+    }
+
+    // --------------------------------------------------------------- loops (§8)
+
+    /**
+     * Public loop ranking. The detector excludes opted-out and hidden-coordinate
+     * deaths; only the viewer themself or an admin may include their own flagged
+     * retained deaths. Nothing is broadcast and no aggregate is persisted.
+     */
+    private static int loops(CommandContext<CommandSourceStack> ctx, @Nullable String target, int page) {
+        MinecraftServer server = server(ctx);
+        if (server == null || !Config.deathLoopEnabled()) {
+            return 0;
+        }
+        List<PlayerDeaths> snapshot = CensusData.get(server).snapshot();
+        UUID uuid = null;
+        String displayName = "*";
+        if (target != null && !target.isBlank()) {
+            String query = target.trim();
+            uuid = resolvePlayer(server, query);
+            if (uuid == null) {
+                fail(ctx, "command.deathcensus.player_not_found", query);
+                return 0;
+            }
+            displayName = query;
+        }
+        List<PlayerDeaths> scope = new ArrayList<>();
+        for (PlayerDeaths player : snapshot) {
+            if (player == null) {
+                continue;
+            }
+            if (uuid != null && !uuid.toString().equalsIgnoreCase(player.uuid())) {
+                continue;
+            }
+            scope.add(player);
+        }
+        boolean privileged = isAdmin(ctx) || (uuid != null && uuid.equals(selfUuid(ctx)));
+        List<DeathLoop> rows = DeathLoopDetector.findLoops(scope,
+                Config.deathLoopRadiusBlocks(), Config.deathLoopWindowMillis(),
+                Config.deathLoopMinDeaths(), privileged);
+        Pagination.Page<DeathLoop> p = Pagination.of(rows, page, PAGE_SIZE);
+        send(ctx, "command.deathcensus.loops.header", displayName, rows.size(), p.page(), p.pageCount());
+        if (p.items().isEmpty()) {
+            send(ctx, "command.deathcensus.loops.empty");
+        }
+        for (DeathLoop loop : p.items()) {
+            sendLiteral(ctx, ServerLang.formatForLang(languageOf(ctx), "command.deathcensus.loops.row",
+                    loop.name(), loop.count(), loop.dimension(), loop.positionLabel(), loop.topCause()));
+        }
+        if (p.pageCount() > 1) {
+            send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+        }
+        return 1;
+    }
+
+    /** Export projection: public-only rows with whole-block centre labels. */
+    static List<String> publicLoopLines(List<PlayerDeaths> snapshot) {
+        if (!Config.loopsInExport()) {
+            return List.of();
+        }
+        List<DeathLoop> rows = DeathLoopDetector.findLoops(snapshot,
+                Config.deathLoopRadiusBlocks(), Config.deathLoopWindowMillis(),
+                Config.deathLoopMinDeaths());
+        List<String> lines = new ArrayList<>();
+        for (DeathLoop loop : rows) {
+            lines.add(ServerLang.formatForLang(ServerLang.DEFAULT_LANG, "command.deathcensus.loops.row",
+                    loop.name(), loop.count(), loop.dimension(), loop.positionLabel(), loop.topCause()));
+        }
         return lines;
     }
 

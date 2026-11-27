@@ -282,6 +282,7 @@ public final class ChatUi {
                     "command.deathcensus.ui.ranking.distribution.time");
             case "distribution_y" -> ServerLang.formatForLang(language,
                     "command.deathcensus.ui.ranking.distribution.y");
+            case "loops" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.loops");
             default -> view.type();
         };
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.title"));

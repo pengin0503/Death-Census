@@ -105,6 +105,26 @@ public interface UiContext {
         return 16;
     }
 
+    /** 1.4.0 §8: the read-only Loops ranking page hides when disabled. */
+    default boolean loopsEnabled() {
+        return true;
+    }
+
+    /** Minimum consecutive nearby deaths before the Loops page lists a run. */
+    default int deathLoopMinDeaths() {
+        return 3;
+    }
+
+    /** Maximum gap in minutes between consecutive deaths in a loop. */
+    default int deathLoopWindowMinutes() {
+        return 10;
+    }
+
+    /** Maximum distance in blocks from the first death of a loop. */
+    default int deathLoopRadiusBlocks() {
+        return 48;
+    }
+
     /** Resolves a bundled lang key for a language-neutral view row. */
     default String label(String key) {
         return key;

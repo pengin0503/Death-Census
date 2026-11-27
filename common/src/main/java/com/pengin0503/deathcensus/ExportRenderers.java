@@ -65,7 +65,7 @@ public final class ExportRenderers {
                                     List<String> hotspotLines, String hotspotLabel) {
         return renderCsv(players, includeContext, allPlayers, awardLines, awardLabel,
                 chronicleLines, chronicleLabel, nemesisLines, nemesisLabel,
-                hotspotLines, hotspotLabel, List.of(), "");
+                hotspotLines, hotspotLabel, List.of(), "", List.of(), "");
     }
 
     /** 1.4.0 §7: as above, with an opt-in distribution section (both tables). */
@@ -75,7 +75,8 @@ public final class ExportRenderers {
                                     List<String> chronicleLines, String chronicleLabel,
                                     List<String> nemesisLines, String nemesisLabel,
                                     List<String> hotspotLines, String hotspotLabel,
-                                    List<String> distributionLines, String distributionLabel) {
+                                    List<String> distributionLines, String distributionLabel,
+                                    List<String> loopLines, String loopLabel) {
         List<DeathEntry> rows = new ArrayList<>();
         // Aggregates are never built from these copies; only the rendered rows are.
         List<PlayerDeaths> safe = safePlayerList(players);
@@ -143,6 +144,7 @@ public final class ExportRenderers {
         appendNemesisCsv(sb, nemesisLines, nemesisLabel);
         appendHotspotsCsv(sb, hotspotLines, hotspotLabel);
         appendDistributionsCsv(sb, distributionLines, distributionLabel);
+        appendLoopsCsv(sb, loopLines, loopLabel);
         return sb.toString();
     }
 
@@ -183,6 +185,21 @@ public final class ExportRenderers {
         for (String line : nemesisLines) {
             if (line != null && !line.isBlank()) {
                 sb.append(TextEscaping.csvField(nemesisLabel)).append(',')
+                        .append(TextEscaping.csvField(line)).append('\n');
+            }
+        }
+    }
+
+    /** 1.4.0 §8: loop rows are already privacy-projected by the caller. */
+    private static void appendLoopsCsv(StringBuilder sb, List<String> loopLines, String loopLabel) {
+        if (loopLines == null || loopLines.isEmpty()) {
+            return;
+        }
+        sb.append("\nloop_section,loop_line\n");
+        String label = loopLabel == null || loopLabel.isBlank() ? "Death loops" : loopLabel;
+        for (String line : loopLines) {
+            if (line != null && !line.isBlank()) {
+                sb.append(TextEscaping.csvField(label)).append(',')
                         .append(TextEscaping.csvField(line)).append('\n');
             }
         }
@@ -313,7 +330,37 @@ public final class ExportRenderers {
         return renderCsv(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
                 includeContext, fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
                 nemesisLines, nemesisLabel, hotspotLines, hotspotLabel,
-                distributionLines, distributionLabel);
+                distributionLines, distributionLabel, List.of(), "");
+    }
+
+    /** 1.4.0 §8: as above, with an opt-in derived death-loop section. */
+    public static String toCsvWithLoops(List<PlayerDeaths> players, boolean anonymize,
+                                        boolean includeContext, Collection<PlayerDeaths> fullSnapshot,
+                                        List<String> awardLines, String awardLabel,
+                                        List<String> chronicleLines, String chronicleLabel,
+                                        List<String> nemesisLines, String nemesisLabel,
+                                        List<String> hotspotLines, String hotspotLabel,
+                                        List<String> distributionLines, String distributionLabel,
+                                        List<String> loopLines, String loopLabel) {
+        return renderCsv(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                includeContext, fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel, hotspotLines, hotspotLabel,
+                distributionLines, distributionLabel, loopLines, loopLabel);
+    }
+
+    /** Backward-compatible name kept for the version wiring; adds the loop section. */
+    public static String toCsvWithChronicle(List<PlayerDeaths> players, boolean anonymize,
+                                            boolean includeContext, Collection<PlayerDeaths> fullSnapshot,
+                                            List<String> awardLines, String awardLabel,
+                                            List<String> chronicleLines, String chronicleLabel,
+                                            List<String> nemesisLines, String nemesisLabel,
+                                            List<String> hotspotLines, String hotspotLabel,
+                                            List<String> distributionLines, String distributionLabel,
+                                            List<String> loopLines, String loopLabel) {
+        return toCsvWithLoops(players, anonymize, includeContext, fullSnapshot,
+                awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel, hotspotLines, hotspotLabel,
+                distributionLines, distributionLabel, loopLines, loopLabel);
     }
 
     /** Backward-compatible name kept for the version wiring; adds the distribution section. */
@@ -446,7 +493,39 @@ public final class ExportRenderers {
         return renderJson(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
                 generatedAtEpochMillis, anonymize, false, List.of(), includeContext, fullSnapshot,
                 awardLines, awardLabel, chronicleLines, chronicleLabel, nemesisLines, nemesisLabel,
-                hotspotLines, hotspotLabel, distributionLines, distributionLabel);
+                hotspotLines, hotspotLabel, distributionLines, distributionLabel, List.of(), "");
+    }
+
+    /** 1.4.0 §8: as above, with an opt-in derived death-loop section. */
+    public static String toJsonWithLoops(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                         boolean anonymize, boolean includeContext,
+                                         Collection<PlayerDeaths> fullSnapshot,
+                                         List<String> awardLines, String awardLabel,
+                                         List<String> chronicleLines, String chronicleLabel,
+                                         List<String> nemesisLines, String nemesisLabel,
+                                         List<String> hotspotLines, String hotspotLabel,
+                                         List<String> distributionLines, String distributionLabel,
+                                         List<String> loopLines, String loopLabel) {
+        return renderJson(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                generatedAtEpochMillis, anonymize, false, List.of(), includeContext, fullSnapshot,
+                awardLines, awardLabel, chronicleLines, chronicleLabel, nemesisLines, nemesisLabel,
+                hotspotLines, hotspotLabel, distributionLines, distributionLabel, loopLines, loopLabel);
+    }
+
+    /** Backward-compatible name kept for the version wiring; adds the loop section. */
+    public static String toJsonWithChronicle(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                             boolean anonymize, boolean includeContext,
+                                             Collection<PlayerDeaths> fullSnapshot,
+                                             List<String> awardLines, String awardLabel,
+                                             List<String> chronicleLines, String chronicleLabel,
+                                             List<String> nemesisLines, String nemesisLabel,
+                                             List<String> hotspotLines, String hotspotLabel,
+                                             List<String> distributionLines, String distributionLabel,
+                                             List<String> loopLines, String loopLabel) {
+        return toJsonWithLoops(players, generatedAtEpochMillis, anonymize, includeContext,
+                fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel, hotspotLines, hotspotLabel,
+                distributionLines, distributionLabel, loopLines, loopLabel);
     }
 
     /** Backward-compatible name kept for the version wiring; adds the distribution section. */
@@ -537,7 +616,7 @@ public final class ExportRenderers {
         return renderJson(players, generatedAtEpochMillis, anonymized, includeBaselines,
                 chronicleEvents, includeContext, allPlayers, awardLines, awardLabel,
                 chronicleLines, chronicleLabel, nemesisLines, nemesisLabel,
-                hotspotLines, hotspotLabel, List.of(), "");
+                hotspotLines, hotspotLabel, List.of(), "", List.of(), "");
     }
 
     /** 1.4.0 §7: as above, with an opt-in anonymous distribution section. */
@@ -549,7 +628,8 @@ public final class ExportRenderers {
                                      List<String> chronicleLines, String chronicleLabel,
                                      List<String> nemesisLines, String nemesisLabel,
                                      List<String> hotspotLines, String hotspotLabel,
-                                     List<String> distributionLines, String distributionLabel) {
+                                     List<String> distributionLines, String distributionLabel,
+                                     List<String> loopLines, String loopLabel) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
@@ -579,6 +659,7 @@ public final class ExportRenderers {
         appendNemesisJson(sb, nemesisLines, nemesisLabel);
         appendHotspotsJson(sb, hotspotLines, hotspotLabel);
         appendDistributionsJson(sb, distributionLines, distributionLabel);
+        appendLoopsJson(sb, loopLines, loopLabel);
         sb.append("  \"players\": [");
         if (!safePlayers.isEmpty()) {
             sb.append('\n');
@@ -797,7 +878,43 @@ public final class ExportRenderers {
                 contextHeader == null || contextHeader.isBlank() ? "Context" : contextHeader,
                 fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
                 nemesisLines, nemesisLabel, hotspotLines, hotspotLabel,
-                distributionLines, distributionLabel);
+                distributionLines, distributionLabel, List.of(), "");
+    }
+
+    /** 1.4.0 §8: as above, with an opt-in derived death-loop section. */
+    public static String toHtmlWithLoops(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                         ZoneId zone, boolean anonymize, boolean includeContext,
+                                         String contextHeader, Collection<PlayerDeaths> fullSnapshot,
+                                         List<String> awardLines, String awardLabel,
+                                         List<String> chronicleLines, String chronicleLabel,
+                                         List<String> nemesisLines, String nemesisLabel,
+                                         List<String> hotspotLines, String hotspotLabel,
+                                         List<String> distributionLines, String distributionLabel,
+                                         List<String> loopLines, String loopLabel) {
+        List<PlayerDeaths> safePlayers = anonymize
+                ? Anonymizer.apply(players, fullSnapshot)
+                : safePlayerList(players);
+        return renderHtml(safePlayers, generatedAtEpochMillis, zone, includeContext,
+                contextHeader == null || contextHeader.isBlank() ? "Context" : contextHeader,
+                fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel, hotspotLines, hotspotLabel,
+                distributionLines, distributionLabel, loopLines, loopLabel);
+    }
+
+    /** Backward-compatible name kept for the version wiring; adds the loop section. */
+    public static String toHtmlWithChronicle(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                             boolean anonymize, boolean includeContext, String contextHeader,
+                                             Collection<PlayerDeaths> fullSnapshot,
+                                             List<String> awardLines, String awardLabel,
+                                             List<String> chronicleLines, String chronicleLabel,
+                                             List<String> nemesisLines, String nemesisLabel,
+                                             List<String> hotspotLines, String hotspotLabel,
+                                             List<String> distributionLines, String distributionLabel,
+                                             List<String> loopLines, String loopLabel) {
+        return toHtmlWithLoops(players, generatedAtEpochMillis, zone, anonymize, includeContext,
+                contextHeader, fullSnapshot, awardLines, awardLabel, chronicleLines, chronicleLabel,
+                nemesisLines, nemesisLabel, hotspotLines, hotspotLabel,
+                distributionLines, distributionLabel, loopLines, loopLabel);
     }
 
     /** Backward-compatible name kept for the version wiring; adds the distribution section. */
@@ -875,7 +992,8 @@ public final class ExportRenderers {
                                      List<String> hotspotLines, String hotspotLabel) {
         return renderHtml(players, generatedAtEpochMillis, zone, includeContext, contextHeader,
                 allPlayers, awardLines, awardLabel, chronicleLines, chronicleLabel,
-                nemesisLines, nemesisLabel, hotspotLines, hotspotLabel, List.of(), "");
+                nemesisLines, nemesisLabel, hotspotLines, hotspotLabel,
+                List.of(), "", List.of(), "");
     }
 
     /** 1.4.0 §7: as above, with an opt-in anonymous distribution section. */
@@ -886,7 +1004,8 @@ public final class ExportRenderers {
                                      List<String> chronicleLines, String chronicleLabel,
                                      List<String> nemesisLines, String nemesisLabel,
                                      List<String> hotspotLines, String hotspotLabel,
-                                     List<String> distributionLines, String distributionLabel) {
+                                     List<String> distributionLines, String distributionLabel,
+                                     List<String> loopLines, String loopLabel) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
         List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Summaries and rankings stay unredacted (DESIGN §8); timelines render
@@ -1013,6 +1132,25 @@ public final class ExportRenderers {
                     .append("</th></tr></thead>\n");
             sb.append("<tbody>\n");
             for (String line : distributionLines) {
+                if (line != null && !line.isBlank()) {
+                    sb.append("<tr><td>").append(TextEscaping.html(line)).append("</td></tr>\n");
+                }
+            }
+            sb.append("</tbody>\n");
+            sb.append("</table>\n");
+            sb.append("</section>\n");
+        }
+
+        if (loopLines != null && !loopLines.isEmpty()) {
+            String label = loopLabel == null || loopLabel.isBlank()
+                    ? "Death loops" : loopLabel;
+            sb.append("<section>\n");
+            sb.append("<h2>").append(TextEscaping.html(label)).append("</h2>\n");
+            sb.append("<table>\n");
+            sb.append("<thead><tr><th>").append(TextEscaping.html(label))
+                    .append("</th></tr></thead>\n");
+            sb.append("<tbody>\n");
+            for (String line : loopLines) {
                 if (line != null && !line.isBlank()) {
                     sb.append("<tr><td>").append(TextEscaping.html(line)).append("</td></tr>\n");
                 }
@@ -1255,6 +1393,32 @@ public final class ExportRenderers {
         sb.append("    \"lines\": [");
         boolean first = true;
         for (String line : distributionLines) {
+            if (line == null || line.isBlank()) {
+                continue;
+            }
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append("\n      \"").append(TextEscaping.jsonString(line)).append('"');
+        }
+        if (!first) {
+            sb.append('\n');
+        }
+        sb.append("    ]\n  },\n");
+    }
+
+    /** 1.4.0 §8: public loop lines are already privacy-projected by the caller. */
+    private static void appendLoopsJson(StringBuilder sb, List<String> loopLines, String loopLabel) {
+        if (loopLines == null || loopLines.isEmpty()) {
+            return;
+        }
+        sb.append("  \"loops\": {\n");
+        sb.append("    \"section\": \"").append(TextEscaping.jsonString(
+                loopLabel == null || loopLabel.isBlank() ? "Death loops" : loopLabel)).append("\",\n");
+        sb.append("    \"lines\": [");
+        boolean first = true;
+        for (String line : loopLines) {
             if (line == null || line.isBlank()) {
                 continue;
             }

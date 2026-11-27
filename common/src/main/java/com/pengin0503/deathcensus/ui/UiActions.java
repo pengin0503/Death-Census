@@ -7,6 +7,8 @@ import com.pengin0503.deathcensus.ChronicleRules;
 import com.pengin0503.deathcensus.CensusStats;
 import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
+import com.pengin0503.deathcensus.DeathLoop;
+import com.pengin0503.deathcensus.DeathLoopDetector;
 import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.DistributionAnalysis;
 import com.pengin0503.deathcensus.HiddenIdentities;
@@ -458,6 +460,7 @@ public final class UiActions {
             case "hotspots" -> hotspotRows(ctx, filtered);
             case "distribution_time" -> distributionTimeRows(ctx, filtered);
             case "distribution_y" -> distributionYRows(ctx, filtered);
+            case "loops" -> loopRows(ctx, filtered);
             case "survival" -> {
                 List<String> rows = new ArrayList<>();
                 for (DeathEntry death : CensusStats.leaderboardSurvival(filtered, false)) {
@@ -650,6 +653,28 @@ public final class UiActions {
         for (YBand band : DistributionAnalysis.yBands(filtered, ctx.distributionYBandBlocks())) {
             rows.add(distributionLine(template,
                     "y " + band.minY() + ".." + band.maxY(), band.count(), band.topCause()));
+        }
+        return rows;
+    }
+
+    /**
+     * 1.4.0 §8: derived loops from public-location deaths only. The centre is a
+     * whole-block label; no hidden player is named or located by these rows.
+     */
+    private static List<String> loopRows(UiContext ctx, List<PlayerDeaths> filtered) {
+        if (!ctx.loopsEnabled()) {
+            return List.of();
+        }
+        String template = ctx.label("command.deathcensus.loops.row");
+        List<String> rows = new ArrayList<>();
+        for (DeathLoop loop : DeathLoopDetector.findLoops(filtered,
+                ctx.deathLoopRadiusBlocks(), ctx.deathLoopWindowMinutes() * 60_000L,
+                ctx.deathLoopMinDeaths())) {
+            rows.add(template != null && template.contains("%")
+                    ? String.format(Locale.ROOT, template, loop.name(), loop.count(),
+                            loop.dimension(), loop.positionLabel(), loop.topCause())
+                    : loop.name() + ": " + loop.count() + " deaths in " + loop.dimension()
+                            + " near " + loop.positionLabel() + " · top: " + loop.topCause());
         }
         return rows;
     }
