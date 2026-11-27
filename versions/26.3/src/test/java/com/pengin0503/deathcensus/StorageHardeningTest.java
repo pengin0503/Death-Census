@@ -107,20 +107,21 @@ class StorageHardeningTest {
     }
 
     @Test
-    void epochZeroAndNegativeSurviveCodecRoundTrip() {
+    void epochZeroAndNegativeAreSkippedByCodec() {
         CensusData data = new CensusData();
-        data.recordDeath(death(PLAYER, 0L, "fall"), 100);
+        data.recordDeath(death(PLAYER, 1000L, "fall"), 100);
         Tag encoded = CensusData.CODEC.encodeStart(OPS, data).getOrThrow();
-        CensusData loaded = CensusData.CODEC.parse(OPS, encoded).getOrThrow();
-        assertEquals(1, loaded.player(PLAYER).deaths.size());
-        assertEquals(0L, loaded.player(PLAYER).deaths.get(0).epochMillis());
+        CompoundTag zero = ((CompoundTag) encoded).copy();
+        zero.getCompoundOrEmpty("players").getCompoundOrEmpty(PLAYER.toString())
+                .getListOrEmpty("deaths").getCompoundOrEmpty(0).putLong("epochMillis", 0L);
+        CensusData loaded = CensusData.CODEC.parse(OPS, zero).getOrThrow();
+        assertEquals(0, loaded.player(PLAYER).deaths.size(), "epoch 0 is unknown time");
 
-        CompoundTag edited = (CompoundTag) encoded;
-        edited.getCompoundOrEmpty("players").getCompoundOrEmpty(PLAYER.toString())
+        CompoundTag negative = ((CompoundTag) encoded).copy();
+        negative.getCompoundOrEmpty("players").getCompoundOrEmpty(PLAYER.toString())
                 .getListOrEmpty("deaths").getCompoundOrEmpty(0).putLong("epochMillis", -5L);
-        CensusData negative = CensusData.CODEC.parse(OPS, edited).getOrThrow();
-        assertEquals(1, negative.player(PLAYER).deaths.size());
-        assertEquals(-5L, negative.player(PLAYER).deaths.get(0).epochMillis());
+        CensusData negativeData = CensusData.CODEC.parse(OPS, negative).getOrThrow();
+        assertEquals(0, negativeData.player(PLAYER).deaths.size(), "negative epoch is unknown time");
     }
 
     @Test

@@ -143,7 +143,7 @@ class CompareWiringTest {
         JsonObject en = loadLang("en_us");
         JsonObject ja = loadLang("ja_jp");
         assertEquals(en.keySet(), ja.keySet());
-        assertEquals(313, en.size());
+        assertEquals(314, en.size());
         for (String key : List.of(
                 "command.deathcensus.compare.help", "command.deathcensus.compare.header",
                 "command.deathcensus.compare.row.deaths",

@@ -111,6 +111,11 @@ public final class DialogUiContext implements UiContext {
     }
 
     @Override
+    public int awardsMinCount() {
+        return Config.awardsMinCount();
+    }
+
+    @Override
     public boolean chronicleEnabled() {
         return Config.chronicleEnabled();
     }

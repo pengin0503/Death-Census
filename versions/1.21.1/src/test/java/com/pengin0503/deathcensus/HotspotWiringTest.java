@@ -62,7 +62,7 @@ class HotspotWiringTest {
         // harness intentionally does not start.
         String commands = source("CensusCommands.java");
         assertTrue(commands.contains("literal(\"hotspots\")"), commands);
-        assertTrue(commands.contains("argument(\"dimension\", StringArgumentType.word())"), commands);
+        assertTrue(commands.contains("argument(\"dimension\", dimensionArgument())"), commands);
         assertTrue(commands.contains("argument(\"page\", IntegerArgumentType.integer(1))"), commands);
         assertTrue(commands.contains("for (String period : PERIODS)"), commands);
         assertTrue(commands.contains("command.deathcensus.hotspots.bad_dimension"), commands);

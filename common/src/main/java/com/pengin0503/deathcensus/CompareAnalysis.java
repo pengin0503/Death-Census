@@ -206,9 +206,13 @@ public final class CompareAnalysis {
             DeathEntry rendered = DeathRedactor.apply(sample, privacy, admin || self, hidden);
             String raw = sample.killerName();
             String shown = rendered.killerName();
-            boolean scrubbedElsewhere = !admin && HiddenIdentities.HIDDEN_MARKER.equals(optOuts.scrub(raw));
+            // M11: detect a redaction by comparing before/after, never by
+            // comparing a display string: a real rival named "Anonymous" must
+            // not be misclassified as hidden.
+            String scrubbed = optOuts.scrub(raw);
+            boolean scrubbedElsewhere = !admin && !scrubbed.equals(raw);
             boolean hiddenByVictim = !admin && !self && privacy.hidePvpOpponent();
-            opponentHidden = shown.isBlank() || HiddenIdentities.HIDDEN_MARKER.equals(shown)
+            opponentHidden = shown.isBlank() || !shown.equals(raw)
                     || scrubbedElsewhere || hiddenByVictim;
             topOpponent = opponentHidden ? HiddenIdentities.HIDDEN_MARKER : raw;
         }

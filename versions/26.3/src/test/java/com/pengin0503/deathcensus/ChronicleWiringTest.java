@@ -65,6 +65,11 @@ class ChronicleWiringTest {
         assertTrue(data.contains("addChronicleEvents(Collection<ChronicleEvent> additions)"), data);
         assertTrue(data.contains("ChronicleRules.cap"), data);
         assertTrue(data.contains("reconstructChronicle(data, lifetimeDeathsPresent, storedCategories)"), data);
+        // M1: reconstruction must honor the configured retention cap.
+        assertTrue(data.contains("storedCategories),\n                Config.chronicleMaxEvents());"), data);
+        // M4: undated reconstructed rows use the dedicated lang key.
+        assertTrue(source("CensusCommands.java").contains(
+                "command.deathcensus.chronicle.row_undated"), "chat chronicle rows must use row_undated");
         assertTrue(data.contains("e.reconstructed()"), data);
     }
 

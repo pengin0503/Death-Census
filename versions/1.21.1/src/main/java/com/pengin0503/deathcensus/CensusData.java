@@ -116,7 +116,8 @@ public class CensusData extends SavedData {
                 new ChronicleRules.ReconstructionInput(data.snapshot(),
                         lifetimeDeathsPresent
                                 ? (int) Math.min(data.lifetimeDeaths, Integer.MAX_VALUE) : null,
-                        storedCategories.isEmpty() ? null : storedCategories));
+                        storedCategories.isEmpty() ? null : storedCategories),
+                Config.chronicleMaxEvents());
         ChronicleRules.CapResult capped = ChronicleRules.cap(
                 result.events(), Config.chronicleMaxEvents());
         if (!capped.events().isEmpty()) {
@@ -291,7 +292,7 @@ public class CensusData extends SavedData {
         for (int i = pc.deaths.size() - 1; i >= 0; i--) {
             DeathEntry e = pc.deaths.get(i);
             if (e.epochMillis() == epochMillis) {
-                pc.deaths.set(i, copyWithStory(e, e.excuse(), e.lastWords(), e.fCount() + 1));
+                pc.deaths.set(i, copyWithStory(e, e.excuse(), e.lastWords(), e.fCount() + 1, e.witnesses(), e.context()));
                 setDirty();
                 return true;
             }
@@ -315,7 +316,7 @@ public class CensusData extends SavedData {
         for (int i = pc.deaths.size() - 1; i >= 0; i--) {
             DeathEntry e = pc.deaths.get(i);
             if (e.epochMillis() == epochMillis) {
-                pc.deaths.set(i, copyWithStory(e, excuse, e.lastWords(), e.fCount()));
+                pc.deaths.set(i, copyWithStory(e, excuse, e.lastWords(), e.fCount(), e.witnesses(), e.context()));
                 setDirty();
                 return true;
             }
@@ -336,7 +337,7 @@ public class CensusData extends SavedData {
         }
         int last = pc.deaths.size() - 1;
         DeathEntry e = pc.deaths.get(last);
-        pc.deaths.set(last, copyWithStory(e, excuse, e.lastWords(), e.fCount()));
+        pc.deaths.set(last, copyWithStory(e, excuse, e.lastWords(), e.fCount(), e.witnesses(), e.context()));
         setDirty();
         return true;
     }
@@ -438,7 +439,14 @@ public class CensusData extends SavedData {
         return excess;
     }
 
+    /** Story-only edits keep the recorded witnesses and context (S1). */
     private static DeathEntry copyWithStory(DeathEntry e, String excuse, String lastWords, int fCount) {
+        return copyWithStory(e, excuse, lastWords, fCount, e.witnesses(), e.context());
+    }
+
+    /** Canonical copy: every recorded field survives a redaction edit. */
+    private static DeathEntry copyWithStory(DeathEntry e, String excuse, String lastWords, int fCount,
+                                            List<WitnessRef> witnesses, DeathContext context) {
         return new DeathEntry(
                 e.playerUuid(),
                 e.playerName(),
@@ -459,7 +467,9 @@ public class CensusData extends SavedData {
                 e.experienceLevel(),
                 excuse,
                 lastWords,
-                fCount);
+                fCount,
+                witnesses,
+                context);
     }
 
     /** Snapshot of all players as common-model {@link PlayerDeaths}. */
@@ -577,15 +587,25 @@ public class CensusData extends SavedData {
         return t;
     }
 
+    /** A counter stored as zero is absent for reconstruction purposes (M2). */
+    private static boolean lifetimeDeathsPresent(CompoundTag tag) {
+        return tag.contains("lifetimeDeaths", Tag.TAG_ANY_NUMERIC)
+                && tag.getLong("lifetimeDeaths") > 0L;
+    }
+
     @Nullable
     private static DeathEntry entryFromTag(String uuid, CompoundTag t) {
         if (!t.contains("epoch", Tag.TAG_ANY_NUMERIC)) {
             return null;
         }
+        long epochMillis = t.getLong("epoch");
+        if (!ChronicleRules.isValidEpoch(epochMillis)) {
+            return null;
+        }
         return new DeathEntry(
                 uuid,
                 t.getString("name"),
-                t.getLong("epoch"),
+                epochMillis,
                 t.contains("day", Tag.TAG_ANY_NUMERIC) ? t.getLong("day") : 0L,
                 t.contains("play", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("play")) : 0,
                 t.contains("surv", Tag.TAG_ANY_NUMERIC) ? Math.max(0, t.getInt("surv")) : 0,
@@ -637,7 +657,11 @@ public class CensusData extends SavedData {
                 DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed witness in SavedData");
             }
         }
-        return out;
+        if (out.size() > DeathEntry.MAX_WITNESSES) {
+            DeathCensus.LOGGER.warn("[DeathCensus] Clamping decoded witness list to {} entries in SavedData",
+                    DeathEntry.MAX_WITNESSES);
+        }
+        return WitnessRef.clamp(out, DeathEntry.MAX_WITNESSES);
     }
 
     private static CompoundTag contextToTag(DeathContext c) {
@@ -770,7 +794,7 @@ public class CensusData extends SavedData {
     public static CensusData load(CompoundTag tag, HolderLookup.Provider provider) {
         CensusData data = new CensusData();
         boolean chronicleAbsent = !tag.contains("chronicleEvents", Tag.TAG_LIST);
-        boolean lifetimeDeathsPresent = tag.contains("lifetimeDeaths", Tag.TAG_ANY_NUMERIC);
+        boolean lifetimeDeathsPresent = lifetimeDeathsPresent(tag);
         Map<String, Set<String>> storedCategories = new LinkedHashMap<>();
         // A present-but-wrong-typed container is corruption, not an old save:
         // never replace it with players:{} on the next autosave (B1).

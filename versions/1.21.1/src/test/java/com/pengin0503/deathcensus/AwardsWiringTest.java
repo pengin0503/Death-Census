@@ -2,6 +2,7 @@ package com.pengin0503.deathcensus;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.pengin0503.deathcensus.ui.ChatUiContext;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -74,6 +75,27 @@ class AwardsWiringTest {
     }
 
     @Test
+    void rarestCauseIsPeriodScopedAndEvaluationHasAPureSeam() throws IOException {
+        String commands = source("CensusCommands.java");
+        assertTrue(commands.contains("static List<AwardResult> computeAwardsFrom("), commands);
+        assertTrue(commands.contains("CensusStats.rarestCause(fullPeriodSnapshot, true)"), commands);
+        assertFalse(commands.contains("CensusStats.rarestCause(data.snapshot(), true)"), commands);
+        assertTrue(commands.contains("computeAwards(server, publicPlayers, inPeriod, false)"), commands);
+    }
+
+    @Test
+    void uiAdapterHonorsConfiguredAwardsMinCount() throws IOException {
+        String dir = System.getProperty("deathcensus.mainSourceDir");
+        assertNotNull(dir);
+        String file = Files.exists(Path.of(dir, "com", "pengin0503", "deathcensus",
+                "ui", "DialogUiContext.java")) ? "ui/DialogUiContext.java" : "ui/ChatUiContext.java";
+        String src = source(file);
+        assertTrue(src.contains("public int awardsMinCount()"), src);
+        assertTrue(src.contains("return Config.awardsMinCount();"), src);
+        assertEquals(Config.awardsMinCount(), new ChatUiContext(null).awardsMinCount());
+    }
+
+    @Test
     void namedLinesUseAllNineRuleTitlesAndTheSharedRowTemplate() throws IOException {
         String commands = source("CensusCommands.java");
         for (String rule : List.of("most_deaths", "longest_survival", "most_falls", "most_lava",
@@ -82,7 +104,8 @@ class AwardsWiringTest {
             assertTrue(commands.contains("command.deathcensus.awards.title." + rule), rule);
         }
         assertTrue(commands.contains("command.deathcensus.awards.row"), commands);
-        assertTrue(commands.contains("Awards.evaluate(eligible, Config.awardsMinCount(),"), commands);
+        assertTrue(commands.contains("Awards.evaluate(publicSnapshot, minCount,"), commands);
+        assertTrue(commands.contains("computeAwardsFrom(eligible, fullPeriodSnapshot, categories,"), commands);
         assertTrue(commands.contains("ServerLang.formatForLang(language,"), commands);
     }
 
@@ -94,13 +117,14 @@ class AwardsWiringTest {
         assertTrue(commands.contains("!entry.getValue().optOutPublic"), commands);
 
         String export = source("CensusExport.java");
-        assertTrue(export.contains("CensusCommands.computeAwards(server, players, false)"), export);
+        assertTrue(export.contains("CensusCommands.computeAwards(server, players, allPlayers, false)"), export);
+        assertTrue(export.contains("CensusCommands.computeAwards(server, players, inPeriod, false)"), export);
         assertTrue(export.contains("CensusCommands.awardLines("), export);
         assertTrue(export.contains("command.deathcensus.export.awards"), export);
 
         String discord = source("DiscordNotifier.java");
         assertTrue(discord.contains("Config.awardsInDigest()"), discord);
-        assertTrue(discord.contains("CensusCommands.computeAwards(server, publicRecent, true)"), discord);
+        assertTrue(discord.contains("CensusCommands.computeAwards(server, publicRecent, fullRecent, true)"), discord);
         assertTrue(discord.contains("discord.deathcensus.awards.section"), discord);
 
         String dir = System.getProperty("deathcensus.mainSourceDir");

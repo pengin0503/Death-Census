@@ -127,8 +127,8 @@ class RespawnGuideWiringTest {
             assertFalse(ja.get(key).getAsString().isBlank(), "blank ja_jp entry for " + key);
         }
         assertEquals(4, keys.size());
-        assertEquals(313, en.size());
-        assertEquals(313, ja.size());
+        assertEquals(314, en.size());
+        assertEquals(314, ja.size());
         assertEquals(en.keySet(), ja.keySet());
     }
 }

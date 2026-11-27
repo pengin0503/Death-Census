@@ -128,7 +128,7 @@ class DemoCommandsTest {
             for (String key : keys) {
                 assertTrue(table.has(key), lang + " missing " + key);
             }
-            assertEquals(313, table.size());
+            assertEquals(314, table.size());
         }
     }
 

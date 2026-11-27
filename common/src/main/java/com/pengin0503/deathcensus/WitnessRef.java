@@ -1,5 +1,6 @@
 package com.pengin0503.deathcensus;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -24,8 +25,19 @@ public record WitnessRef(String uuid, String nameAtDeath) {
     }
 
     /** Immutable, null-free copy of a stored witness list. */
-    public static java.util.List<WitnessRef> copyOf(java.util.List<WitnessRef> refs) {
-        return refs == null ? java.util.List.of()
+    public static List<WitnessRef> copyOf(List<WitnessRef> refs) {
+        return refs == null ? List.of()
                 : refs.stream().filter(Objects::nonNull).toList();
+    }
+
+    /**
+     * Bounds a decoded witness list to the §13.2 storage ceiling. Callers that
+     * read untrusted storage use this helper and warn once when a list is
+     * truncated; the canonical record constructor applies the same bound.
+     */
+    public static List<WitnessRef> clamp(List<WitnessRef> refs, int max) {
+        List<WitnessRef> copy = copyOf(refs);
+        int limit = Math.max(0, max);
+        return copy.size() <= limit ? copy : List.copyOf(copy.subList(0, limit));
     }
 }

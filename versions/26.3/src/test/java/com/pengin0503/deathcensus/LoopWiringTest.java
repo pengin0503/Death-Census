@@ -52,7 +52,7 @@ class LoopWiringTest {
     void configDeclaresAllSevenKeysWithTheSpecifiedClamps() throws IOException {
         String config = source("Config.java");
         assertTrue(config.contains("define(\"deathLoopEnabled\", true)"), config);
-        assertTrue(config.contains("defineInRange(\"deathLoopMinDeaths\", 3, 1, 100)"), config);
+        assertTrue(config.contains("defineInRange(\"deathLoopMinDeaths\", 3, 2, 100)"), config);
         assertTrue(config.contains("defineInRange(\"deathLoopWindowMinutes\", 10, 1, 60)"), config);
         assertTrue(config.contains("defineInRange(\"deathLoopRadiusBlocks\", 48, 8, 256)"), config);
         assertTrue(config.contains("define(\"deathLoopNotifyVictim\", true)"), config);
@@ -131,8 +131,8 @@ class LoopWiringTest {
             assertFalse(ja.get(key).getAsString().isBlank(), "blank ja_jp entry for " + key);
         }
         assertEquals(7, keys.size());
-        assertEquals(313, en.size());
-        assertEquals(313, ja.size());
+        assertEquals(314, en.size());
+        assertEquals(314, ja.size());
         assertTrue(en.get("command.deathcensus.ui.chat.ranking_hint").getAsString().contains("loops"));
         assertTrue(ja.get("command.deathcensus.ui.chat.ranking_hint_no_awards").getAsString().contains("loops"));
     }

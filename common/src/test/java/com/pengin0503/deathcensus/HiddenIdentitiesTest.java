@@ -79,4 +79,25 @@ class HiddenIdentitiesTest {
         assertEquals(original, HiddenIdentities.empty().scrub(original));
         assertEquals("", HiddenIdentities.empty().scrub((String) null));
     }
+
+    @Test
+    void witnessAliasesOnOtherPlayersDeathsAreSecretToo() {
+        // S7: Alice is opted out; Bob's death still names her as "Ally" in a
+        // witness ref captured before her rename/opt-out.
+        DeathEntry aliceDeath = death(HIDDEN_UUID, "Alice", "Alice fell", "", "", "");
+        PlayerDeaths alice = new PlayerDeaths(HIDDEN_UUID, "Alice", true, List.of(aliceDeath));
+        DeathEntry bobDeath = new DeathEntry(PUBLIC_UUID, "Bob", 2_000L, 3L, 900, 800,
+                "minecraft:overworld", 1, 2, 3, "player", "minecraft:player", "Bob fell",
+                "", "", "survival", 7, "", "", 0,
+                List.of(new WitnessRef(HIDDEN_UUID, "Ally")), DeathContext.EMPTY);
+        PlayerDeaths bob = new PlayerDeaths(PUBLIC_UUID, "Bob", false, List.of(bobDeath));
+        DeathEntry carolDeath = death(THIRD_UUID, "Carol",
+                "Carol saw ALLY here", "", "", "");
+
+        HiddenIdentities dictionary = HiddenIdentities.of(List.of(alice, bob));
+        assertFalse(dictionary.isEmpty());
+        assertFalse(dictionary.scrub(carolDeath).deathMessage().toLowerCase().contains("ally"));
+        // Self/admin views keep the truth.
+        assertTrue(carolDeath.deathMessage().contains("ALLY"));
+    }
 }

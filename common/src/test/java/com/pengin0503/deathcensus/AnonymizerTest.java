@@ -258,4 +258,28 @@ class AnonymizerTest {
         assertEquals("Player C", Anonymizer.apply(all).get(2).name(),
                 "the full snapshot keeps deterministic pseudonym numbering");
     }
+
+    @Test
+    void witnessAliasOfAKnownPlayerIsScrubbedFromFreeText() {
+        String a = "00000000-0000-0000-0000-00000000000a";
+        String b = "00000000-0000-0000-0000-00000000000b";
+        // S7: "Bobby" is A's historical name on a witness ref. A is already in
+        // the pseudonym map, but B's export must not print that alias.
+        DeathEntry aDeath = new DeathEntry(a, "Alice", T, 3L, 100, 90,
+                "minecraft:overworld", 1, 2, 3, "player", "minecraft:player",
+                "Alice fell", "", "", "survival", 0, "", "", 0,
+                List.of(new WitnessRef(a, "Bobby")), DeathContext.EMPTY);
+        DeathEntry bDeath = death(b, "Bob", 1, 2, 3,
+                "Bob saw Bobby and " + a, "", "Bobby did it", "Bye Bobby");
+        PlayerDeaths first = new PlayerDeaths(a, "Alice", false, List.of(aDeath));
+        PlayerDeaths second = new PlayerDeaths(b, "Bob", false, List.of(bDeath));
+        List<PlayerDeaths> all = List.of(first, second);
+
+        List<PlayerDeaths> redacted = Anonymizer.apply(List.of(second), all);
+        DeathEntry rendered = redacted.get(0).deaths().get(0);
+        assertNoLeaks(rendered.deathMessage(), "Bobby", a);
+        assertNoLeaks(rendered.excuse(), "Bobby");
+        assertNoLeaks(rendered.lastWords(), "Bobby");
+        assertEquals("Player B", redacted.get(0).name(), "only B is in the rendered export subset");
+    }
 }

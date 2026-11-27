@@ -9,6 +9,8 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** DESIGN 1.4.0 §2: deterministic derived awards over a public snapshot. */
@@ -179,5 +181,26 @@ class AwardsTest {
         Awards.evaluate(players, 1, new Awards.Context(categories, "fall"));
         assertEquals(1, players.get(0).deaths().size());
         assertEquals(1, categories.get("u-a").size());
+    }
+
+    @Test
+    void aRealWitnessNamedAnonymousIsStillEligibleForWitnessFamous() {
+        // M11: hidden rows are keyed by an empty UUID, not by the public marker
+        // string; a real witness called "Anonymous" must not be filtered out.
+        DeathEntry witnessed = death("u-victim", "Victim", 10L, 5, "fall", 0,
+                new WitnessRef("u-anon", "Anonymous"));
+        PlayerDeaths witness = player("u-anon", "Anonymous", false);
+        PlayerDeaths victim = player("u-victim", "Victim", false, witnessed);
+        AwardResult row = find(Awards.evaluate(List.of(victim, witness)),
+                Awards.Rule.WITNESS_FAMOUS);
+        assertNotNull(row);
+        assertEquals("Anonymous", row.name());
+        assertEquals(1, row.count());
+
+        // An opted-out witness still produces a hidden (empty-key) row and is
+        // excluded from the named title.
+        PlayerDeaths optedOut = player("u-anon", "Anonymous", true);
+        assertNull(find(Awards.evaluate(List.of(victim, optedOut)),
+                Awards.Rule.WITNESS_FAMOUS));
     }
 }

@@ -184,6 +184,16 @@ public final class DiscordNotifier {
         return webhookUri(channel, Config.discordWebhookUrl(), Config.discordDigestWebhookUrl());
     }
 
+    /** M14: cheap gate before building the snapshot-wide hidden-identity dictionary. */
+    static boolean realtimeWebhookConfigured() {
+        return realtimeWebhookConfigured(Config.discordWebhookUrl(), Config.discordDigestWebhookUrl());
+    }
+
+    /** Package-visible seam for tests: no config load and no network access. */
+    static boolean realtimeWebhookConfigured(String primaryConfigured, String digestConfigured) {
+        return webhookUri(WebhookChannel.REALTIME, primaryConfigured, digestConfigured) != null;
+    }
+
     /** Package-visible seam for tests: resolves either channel from explicit values. */
     @Nullable
     static URI webhookUri(WebhookChannel channel, String primaryConfigured, String digestConfigured) {
@@ -808,14 +818,15 @@ public final class DiscordNotifier {
         List<String> awardLines = List.of();
         String discordLang = Config.discordLanguage();
         if (Config.awardsEnabled() && Config.awardsInDigest()) {
+            List<PlayerDeaths> fullRecent = CensusStats.filterSince(data.snapshot(), last);
             List<PlayerDeaths> publicRecent = new ArrayList<>();
-            for (PlayerDeaths player : CensusStats.filterSince(data.snapshot(), last)) {
+            for (PlayerDeaths player : fullRecent) {
                 if (player != null && !player.optOutPublic()) {
                     publicRecent.add(player);
                 }
             }
             awardLines = CensusCommands.awardLines(
-                    CensusCommands.computeAwards(server, publicRecent, true), discordLang);
+                    CensusCommands.computeAwards(server, publicRecent, fullRecent, true), discordLang);
         }
         String content = DiscordLogic.digestContent(
                 data.snapshot(),

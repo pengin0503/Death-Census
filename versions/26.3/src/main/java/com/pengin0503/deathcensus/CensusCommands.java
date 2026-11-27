@@ -1,12 +1,15 @@
 package com.pengin0503.deathcensus;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.StringReader;
 import com.mojang.brigadier.arguments.ArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
@@ -252,7 +255,7 @@ public final class CensusCommands {
             }
             com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, String> hotspotDimension =
                     com.mojang.brigadier.builder.RequiredArgumentBuilder
-                            .<CommandSourceStack, String>argument("dimension", StringArgumentType.word())
+                            .<CommandSourceStack, String>argument("dimension", DimensionArgumentType.dimension())
                             .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(
                                     dimensionSuggestions(ctx), builder))
                             .executes(ctx -> hotspots(ctx,
@@ -862,12 +865,15 @@ public final class CensusCommands {
     private static String witnessSuffix(DeathEntry raw, Map<String, String> names,
                                         Map<String, PlayerPrivacy> privacyById, boolean privileged,
                                         String language) {
-        List<String> witnesses = WitnessRedactor.displayNames(raw, names, privacyById, privileged);
+        // M11: resolve the localized hidden label inside the shared redactor;
+        // a real witness actually named "Anonymous" must not be mistaken for it.
+        List<String> witnesses = WitnessRedactor.displayNames(raw, names, privacyById, privileged,
+                ServerLang.formatForLang(language, "command.deathcensus.witnesses.hidden"));
         if (witnesses.isEmpty()) {
             return "";
         }
         return " · " + ServerLang.formatForLang(language, "command.deathcensus.witnesses.detail",
-                WitnessRedactor.joinNames(localizeWitnessNames(witnesses, language)));
+                WitnessRedactor.joinNames(witnesses));
     }
 
     /** The common marker is language-neutral; chat surfaces use its bundled translation. */
@@ -1137,7 +1143,10 @@ public final class CensusCommands {
         }
         CensusData data = CensusData.get(server);
         CensusData.PlayerCensus pc = data.playerOrNull(self.getUUID());
-        if (pc == null || (pc.deaths.isEmpty() && pc.nearDeaths.isEmpty())) {
+        // S5: existence is the gate, not the retained record count. A known
+        // player with no deaths (for example only near-death saves) still gets
+        // their own stats; only an unknown player is reported as missing.
+        if (pc == null) {
             send(ctx, "command.deathcensus.history.empty", self.getGameProfile().name());
             return 0;
         }
@@ -1146,16 +1155,18 @@ public final class CensusCommands {
                 pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths,
                 0, java.util.Map.of(), pc.nearDeaths);
         List<CensusStats.PlayerSummary> summaries = CensusStats.summaries(List.of(selfDeaths), true);
-        CensusStats.PlayerSummary s = summaries.get(0);
-        send(ctx, "command.deathcensus.stats.header", s.name());
-        send(ctx, "command.deathcensus.stats.deaths", s.deaths());
+        send(ctx, "command.deathcensus.stats.header", self.getGameProfile().name());
+        send(ctx, "command.deathcensus.stats.deaths", summaries.isEmpty() ? 0 : summaries.get(0).deaths());
         if (Config.nearDeathCaptureEnabled()) {
             send(ctx, "command.deathcensus.neardeath.stats", NearDeathAnalysis.countFor(selfDeaths));
         }
-        send(ctx, "command.deathcensus.stats.top_cause", s.topCategory());
-        send(ctx, "command.deathcensus.stats.longest", TimeFormat.formatDuration(s.longestSurvivalTicks()));
-        send(ctx, "command.deathcensus.stats.shortest",
-                s.shortestSurvivalTicks() >= 0 ? TimeFormat.formatDuration(s.shortestSurvivalTicks()) : "-");
+        if (!summaries.isEmpty()) {
+            CensusStats.PlayerSummary s = summaries.get(0);
+            send(ctx, "command.deathcensus.stats.top_cause", s.topCategory());
+            send(ctx, "command.deathcensus.stats.longest", TimeFormat.formatDuration(s.longestSurvivalTicks()));
+            send(ctx, "command.deathcensus.stats.shortest",
+                    s.shortestSurvivalTicks() >= 0 ? TimeFormat.formatDuration(s.shortestSurvivalTicks()) : "-");
+        }
         return 1;
     }
 
@@ -1361,8 +1372,14 @@ public final class CensusCommands {
                     : ChronicleRules.HIDDEN_NAME.equals(row.name())
                             ? ServerLang.formatForLang(language, "command.deathcensus.chronicle.hidden")
                             : row.name();
-            String line = ServerLang.formatForLang(language, "command.deathcensus.chronicle.row",
-                    kind, detail, row.gameDay() + 1L);
+            // M4: reconstructed counter rows have no provable day; the undated
+            // template never prints a misleading "day 1" label.
+            boolean undated = ChronicleRules.isUndated(row);
+            String line = undated
+                    ? ServerLang.formatForLang(language, "command.deathcensus.chronicle.row_undated",
+                            kind, detail)
+                    : ServerLang.formatForLang(language, "command.deathcensus.chronicle.row",
+                            kind, detail, row.gameDay() + 1L);
             if (row.reconstructed()) {
                 line = line + " (" + ServerLang.formatForLang(language,
                         "command.deathcensus.chronicle.reconstructed") + ")";
@@ -1904,7 +1921,7 @@ public final class CensusCommands {
                 publicPlayers.add(player);
             }
         }
-        List<AwardResult> results = computeAwards(server, publicPlayers, false);
+        List<AwardResult> results = computeAwards(server, publicPlayers, inPeriod, false);
         Pagination.Page<AwardResult> p = Pagination.of(results, page, PAGE_SIZE);
         send(ctx, "command.deathcensus.awards.header", period, results.size(), p.page(), p.pageCount());
         if (p.items().isEmpty()) {
@@ -1920,9 +1937,13 @@ public final class CensusCommands {
         return 1;
     }
 
-    /** Shared by chat, exports and digests: recomputed, never stored. */
+    /**
+     * Shared by chat, exports and digests: recomputed, never stored. S3: the
+     * rarest cause is scoped to the selected period (including opted-out
+     * players), not to the all-time snapshot.
+     */
     static List<AwardResult> computeAwards(MinecraftServer server, List<PlayerDeaths> publicSnapshot,
-                                           boolean discord) {
+                                           List<PlayerDeaths> fullPeriodSnapshot, boolean discord) {
         if (server == null || !Config.awardsEnabled() || (discord && !Config.awardsInDigest())) {
             return List.of();
         }
@@ -1933,16 +1954,36 @@ public final class CensusCommands {
                 categories.put(entry.getKey().toString(), entry.getValue().lifetimeCategories());
             }
         }
-        String rarest = CensusStats.rarestCause(data.snapshot(), true).orElse("");
-        List<PlayerDeaths> eligible = new ArrayList<>();
+        List<PlayerDeaths> eligiblePublic = new ArrayList<>();
         for (PlayerDeaths player : publicSnapshot) {
             if (player == null || player.optOutPublic() || (discord && player.discordOptOut())) {
                 continue;
             }
-            eligible.add(player);
+            eligiblePublic.add(player);
         }
-        return Awards.evaluate(eligible, Config.awardsMinCount(),
-                new Awards.Context(categories, rarest));
+        return computeAwardsFrom(eligiblePublic, fullPeriodSnapshot, categories, Config.awardsMinCount());
+    }
+
+    /**
+     * S3: pure award evaluation seam. The period snapshot (which includes
+     * opted-out players) supplies the rarest cause; only the already-filtered
+     * public snapshot supplies the winner rows.
+     */
+    static List<AwardResult> computeAwardsFrom(List<PlayerDeaths> publicSnapshot,
+                                               List<PlayerDeaths> fullPeriodSnapshot,
+                                               Map<String, Set<String>> categories,
+                                               int minCount) {
+        String rarest = CensusStats.rarestCause(
+                fullPeriodSnapshot == null ? List.of() : fullPeriodSnapshot, true).orElse("");
+        List<PlayerDeaths> eligible = new ArrayList<>();
+        if (publicSnapshot != null) {
+            for (PlayerDeaths player : publicSnapshot) {
+                if (player != null && !player.optOutPublic()) {
+                    eligible.add(player);
+                }
+            }
+        }
+        return Awards.evaluate(eligible, minCount, new Awards.Context(categories, rarest));
     }
 
     /** Lines are built from bundled lang keys; anonymous totals are added by the caller. */
@@ -1969,6 +2010,33 @@ public final class CensusCommands {
             case RAREST_CAUSE -> "command.deathcensus.awards.title.rarest_cause";
             case WITNESS_FAMOUS -> "command.deathcensus.awards.title.witness_famous";
         };
+    }
+
+    /**
+     * S6: Brigadier's {@code word()} rejects ':' so a namespaced id such as
+     * {@code minecraft:the_nether} cannot be typed. This one accepts any
+     * non-whitespace token, never only part of an id.
+     */
+    static final class DimensionArgumentType implements ArgumentType<String> {
+        private static final DimensionArgumentType INSTANCE = new DimensionArgumentType();
+        private static final SimpleCommandExceptionType MISSING =
+                new SimpleCommandExceptionType(Component.literal("Missing dimension id"));
+
+        static DimensionArgumentType dimension() {
+            return INSTANCE;
+        }
+
+        @Override
+        public String parse(StringReader reader) throws CommandSyntaxException {
+            int start = reader.getCursor();
+            while (reader.canRead() && !Character.isWhitespace(reader.peek())) {
+                reader.skip();
+            }
+            if (reader.getCursor() == start) {
+                throw MISSING.create();
+            }
+            return reader.getString().substring(start, reader.getCursor());
+        }
     }
 
     private record PrivacyTarget(UUID uuid, String name) {
@@ -2229,7 +2297,7 @@ public final class CensusCommands {
                     publicInRange.add(player);
                 }
             }
-            List<String> lines = awardLines(computeAwards(server, publicInRange, true), lang);
+            List<String> lines = awardLines(computeAwards(server, publicInRange, inRange, true), lang);
             awards = awards.withAwards(lines,
                     ServerLang.formatForLang(lang, "discord.deathcensus.awards.section"));
         }

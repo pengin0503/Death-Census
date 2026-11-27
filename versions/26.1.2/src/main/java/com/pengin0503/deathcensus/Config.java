@@ -164,7 +164,7 @@ public final class Config {
 
     public static final ModConfigSpec.IntValue DEATH_LOOP_MIN_DEATHS = BUILDER
             .comment("Minimum consecutive nearby deaths before a loop is reported (1-100; default 3).")
-            .defineInRange("deathLoopMinDeaths", 3, 1, 100);
+            .defineInRange("deathLoopMinDeaths", 3, 2, 100);
 
     public static final ModConfigSpec.IntValue DEATH_LOOP_WINDOW_MINUTES = BUILDER
             .comment("Maximum gap in minutes between consecutive deaths in a loop (1-60; default 10).")

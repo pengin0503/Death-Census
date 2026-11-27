@@ -41,8 +41,8 @@ class IntegrationSweepTest {
         JsonObject en = loadLang("en_us");
         JsonObject ja = loadLang("ja_jp");
         assertEquals(en.keySet(), ja.keySet());
-        assertEquals(313, en.size());
-        assertEquals(313, ja.size());
+        assertEquals(314, en.size());
+        assertEquals(314, ja.size());
     }
 
     @Test
@@ -71,6 +71,21 @@ class IntegrationSweepTest {
             assertEquals(withoutAwards,
                     hintTypes(lang, "command.deathcensus.ui.chat.ranking_hint_no_awards"), name);
         }
+    }
+
+    @Test
+    void decodedWitnessListsAreBoundedToTheStorageCeiling() {
+        List<WitnessRef> oversized = new ArrayList<>();
+        for (int i = 0; i < DeathEntry.MAX_WITNESSES + 12; i++) {
+            oversized.add(new WitnessRef("uuid-" + i, "Witness " + i));
+        }
+        DeathEntry entry = new DeathEntry("u", "Victim", 1L, 1L, 1, 1, "dim", 0, 0, 0,
+                "fall", "minecraft:fall", "fell", "", "", "survival", 0, "", "", 0,
+                oversized, DeathContext.EMPTY);
+        assertEquals(DeathEntry.MAX_WITNESSES, entry.witnesses().size());
+        assertEquals("uuid-0", entry.witnesses().get(0).uuid());
+        assertEquals(oversized.size(), WitnessRef.clamp(oversized, 1000).size());
+        assertTrue(WitnessRef.clamp(null, 0).isEmpty());
     }
 
     /** The hint values end in "type: a/b/c"; compare is a UI action, never a type. */

@@ -377,6 +377,22 @@ public final class DialogUi {
                 actions, Optional.of(backButton(player)), COLUMNS);
     }
 
+    /** M10: pairs of already localized rows in ChatUi's {@code left | right} shape. */
+    public static List<String> compareRowPairs(CompareView view) {
+        if (view == null) {
+            return List.of();
+        }
+        List<String> left = view.rowsA();
+        List<String> right = view.rowsB();
+        List<String> pairs = new ArrayList<>(Math.max(left.size(), right.size()));
+        for (int i = 0; i < Math.max(left.size(), right.size()); i++) {
+            String leftText = i < left.size() ? left.get(i) : "";
+            String rightText = i < right.size() ? right.get(i) : "";
+            pairs.add(leftText + " | " + rightText);
+        }
+        return List.copyOf(pairs);
+    }
+
     /** §6: two columns of identical metric rows, projected by the common dispatcher. */
     private static Dialog compareDialog(ServerPlayer player, CompareView view) {
         List<DialogBody> body = new ArrayList<>();
@@ -389,10 +405,8 @@ public final class DialogUi {
         if (view.rowsA().isEmpty() && view.rowsB().isEmpty() && view.message().isEmpty()) {
             body.add(line(ServerLang.tr(player, "command.deathcensus.ui.compare.empty")));
         }
-        for (String row : view.rowsA()) {
-            body.add(line(Component.literal(truncate(row))));
-        }
-        for (String row : view.rowsB()) {
+        // M10: render aligned pairs like ChatUi, not two separate stacks of rows.
+        for (String row : compareRowPairs(view)) {
             body.add(line(Component.literal(truncate(row))));
         }
         String token = view.sessionToken().isEmpty() ? sessionToken(player) : view.sessionToken();

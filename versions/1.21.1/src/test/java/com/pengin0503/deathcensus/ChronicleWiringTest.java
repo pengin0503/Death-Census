@@ -66,6 +66,12 @@ class ChronicleWiringTest {
         assertTrue(data.contains("ChronicleRules.cap"), data);
         assertTrue(data.contains("reconstructChronicle(data, lifetimeDeathsPresent, storedCategories)"), data);
         assertTrue(data.contains("e.reconstructed()"), data);
+        // M1: the configured cap, not the common default, bounds reconstruction.
+        assertTrue(data.contains("Config.chronicleMaxEvents())"), data);
+        // M2: a stored zero counter is "absent"; M3: epochless records are skipped.
+        assertTrue(data.contains("private static boolean lifetimeDeathsPresent(CompoundTag tag)"), data);
+        assertTrue(data.contains("tag.getLong(\"lifetimeDeaths\") > 0L"), data);
+        assertTrue(data.contains("ChronicleRules.isValidEpoch(epochMillis)"), data);
     }
 
     @Test

@@ -29,7 +29,8 @@ public final class DeathLoopTracker {
     /** Same bound for the player-keyed rings, so a long-lived server stays bounded. */
     public static final int MAX_TRACKED_PLAYERS = 1000;
 
-    private final Map<String, Deque<DeathLoopSample>> rings = new LinkedHashMap<>();
+    /** Access-ordered: a read of an existing ring marks it recently used (M7). */
+    private final Map<String, Deque<DeathLoopSample>> rings = new LinkedHashMap<>(16, 0.75f, true);
     private final Set<String> announced = new LinkedHashSet<>();
 
     /**

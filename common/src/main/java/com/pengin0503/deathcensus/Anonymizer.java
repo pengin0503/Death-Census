@@ -81,8 +81,15 @@ public final class Anonymizer {
         for (PlayerDeaths player : basis) {
             for (DeathEntry death : player.deaths()) {
                 for (WitnessRef ref : death.witnesses()) {
-                    if (ref == null || ref.isEmpty() || ref.uuid().isEmpty()
-                            || pseudoByUuid.containsKey(ref.uuid())) {
+                    if (ref == null || ref.isEmpty() || ref.uuid().isEmpty()) {
+                        continue;
+                    }
+                    if (pseudoByUuid.containsKey(ref.uuid())) {
+                        // S7: keep the UUID skip for pseudonym assignment, but a
+                        // recorded alias of a known (possibly opted-out) witness
+                        // must still become a scrub secret in free text.
+                        registerSecret(secrets, secretReplacements, ref.nameAtDeath(),
+                                pseudoByUuid.get(ref.uuid()));
                         continue;
                     }
                     WitnessRef first = witnessOnlyByUuid.putIfAbsent(ref.uuid(), ref);
