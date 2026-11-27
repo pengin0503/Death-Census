@@ -631,13 +631,15 @@ public final class UiActions {
         if (consume(request, ctx) == null) {
             return expired(ctx);
         }
+        // DESIGN §6: confirm with player name, 1-based index and date. Capture
+        // the index before the delete: the record is removed from the live
+        // snapshot by deleteAfterBackup, so a later lookup always yields #1.
+        int index = Math.max(1, indexOfDeath(ctx.snapshot(), death.playerUuid(), death.epochMillis()));
         if (!ctx.deleteAfterBackup(parseUuidOrNull(death.playerUuid()), death.epochMillis())) {
             return new UiResult.Open(new NoticeView(
                     UiText.of("command.deathcensus.delete.backup_failed"), "ui/detail"));
         }
-        // DESIGN §6: confirm with player name, 1-based index and date. Build the
-        // descriptor here so both adapters render the same localized message.
-        int index = Math.max(1, indexOfDeath(ctx.snapshot(), death.playerUuid(), death.epochMillis()));
+        // Build the descriptor here so both adapters render the same localized message.
         UiText feedback = UiText.of("command.deathcensus.delete.done",
                 UiPrivacy.displayName(ctx.snapshot(), death.playerUuid()), index,
                 TimeFormat.formatDateTime(death.epochMillis(), ctx.zoneId()));
