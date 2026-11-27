@@ -4,6 +4,7 @@ import com.pengin0503.deathcensus.CensusStats;
 import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
 import com.pengin0503.deathcensus.DeathRedactor;
+import com.pengin0503.deathcensus.HiddenIdentities;
 import com.pengin0503.deathcensus.Pagination;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.PlayerPrivacy;
@@ -764,7 +765,8 @@ public final class UiActions {
         }
         UUID owner = parseUuidOrNull(death.playerUuid());
         boolean privileged = ctx.isAdmin() || (owner != null && ctx.isSelf(owner));
-        return DeathRedactor.apply(death, UiPrivacy.privacyFor(ctx.snapshot(), death.playerUuid()), privileged);
+        return DeathRedactor.apply(death, UiPrivacy.privacyFor(ctx.snapshot(), death.playerUuid()),
+                privileged, HiddenIdentities.of(ctx.snapshot()));
     }
 
     private static String formatDeath(UiContext ctx, DeathEntry raw) {

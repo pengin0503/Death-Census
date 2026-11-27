@@ -3,6 +3,7 @@ package com.pengin0503.deathcensus;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -22,16 +23,18 @@ public final class ExportRenderers {
     }
 
     public static String toCsv(List<PlayerDeaths> players) {
-        return renderCsv(players, true);
+        return renderCsv(players, true, null);
     }
 
-    private static String renderCsv(List<PlayerDeaths> players, boolean includeContext) {
+    private static String renderCsv(List<PlayerDeaths> players, boolean includeContext,
+                                    Collection<PlayerDeaths> allPlayers) {
         List<DeathEntry> rows = new ArrayList<>();
         // Aggregates are never built from these copies; only the rendered rows are.
         List<PlayerDeaths> safe = safePlayerList(players);
-        Map<String, String> witnessNames = WitnessRedactor.namesById(safe);
-        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(safe);
-        for (PlayerDeaths player : DeathRedactor.publicView(safe)) {
+        List<PlayerDeaths> all = allPlayers == null ? safe : safePlayerList(allPlayers);
+        Map<String, String> witnessNames = WitnessRedactor.namesById(all);
+        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(all);
+        for (PlayerDeaths player : DeathRedactor.publicView(safe, all)) {
             rows.addAll(player.deaths());
         }
         rows.sort(Comparator.comparingLong(DeathEntry::epochMillis));
@@ -97,7 +100,18 @@ public final class ExportRenderers {
 
     /** As above, honoring the {@code deathContextInExports} config switch. */
     public static String toCsv(List<PlayerDeaths> players, boolean anonymize, boolean includeContext) {
-        return renderCsv(anonymize ? Anonymizer.apply(players) : players, includeContext);
+        return toCsv(players, anonymize, includeContext, null);
+    }
+
+    /**
+     * As above, with the full snapshot used to build the hidden-identity and
+     * anonymization dictionaries while {@code players} remains the record filter
+     * (reviews S3/S4).
+     */
+    public static String toCsv(List<PlayerDeaths> players, boolean anonymize, boolean includeContext,
+                               Collection<PlayerDeaths> fullSnapshot) {
+        return renderCsv(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                includeContext, fullSnapshot);
     }
 
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis) {
@@ -112,8 +126,19 @@ public final class ExportRenderers {
     /** As above, honoring the {@code deathContextInExports} config switch. */
     public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
                                 boolean anonymize, boolean includeContext) {
-        return renderJson(anonymize ? Anonymizer.apply(players) : players,
-                generatedAtEpochMillis, anonymize, false, List.of(), includeContext);
+        return toJson(players, generatedAtEpochMillis, anonymize, includeContext, null);
+    }
+
+    /**
+     * As above, with the full snapshot used to build the hidden-identity and
+     * anonymization dictionaries while {@code players} stays the record filter
+     * (reviews S3/S4).
+     */
+    public static String toJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
+                                boolean anonymize, boolean includeContext,
+                                Collection<PlayerDeaths> fullSnapshot) {
+        return renderJson(anonymize ? Anonymizer.apply(players, fullSnapshot) : players,
+                generatedAtEpochMillis, anonymize, false, List.of(), includeContext, fullSnapshot);
     }
 
     /**
@@ -131,24 +156,31 @@ public final class ExportRenderers {
      */
     public static String toBackupJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
                                       List<ChronicleEvent> chronicleEvents) {
-        return renderJson(players, generatedAtEpochMillis, false, true, chronicleEvents, true);
+        return renderJson(players, generatedAtEpochMillis, false, true, chronicleEvents, true, null);
     }
 
     private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
                                      boolean anonymized, boolean includeBaselines) {
-        return renderJson(players, generatedAtEpochMillis, anonymized, includeBaselines, List.of(), true);
+        return renderJson(players, generatedAtEpochMillis, anonymized, includeBaselines,
+                List.of(), true, null);
     }
 
     private static String renderJson(List<PlayerDeaths> players, long generatedAtEpochMillis,
                                      boolean anonymized, boolean includeBaselines,
-                                     List<ChronicleEvent> chronicleEvents, boolean includeContext) {
+                                     List<ChronicleEvent> chronicleEvents, boolean includeContext,
+                                     Collection<PlayerDeaths> allPlayers) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
+        List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Totals below keep using safePlayers (unredacted, DESIGN §8); only the
-        // per-death rows use the public redaction view.
-        List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers);
+        // per-death rows use the public redaction view. Backups keep their
+        // deliberate redaction (S2, out of scope for this fix wave); public
+        // exports additionally scrub every hidden identity in the full snapshot.
+        List<PlayerDeaths> renderPlayers = includeBaselines
+                ? DeathRedactor.publicView(safePlayers)
+                : DeathRedactor.publicView(safePlayers, all);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
-        Map<String, String> witnessNames = WitnessRedactor.namesById(safePlayers);
-        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(safePlayers);
+        Map<String, String> witnessNames = WitnessRedactor.namesById(all);
+        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(all);
 
         StringBuilder sb = new StringBuilder(256 + totalDeaths * 256);
         sb.append("{\n");
@@ -263,7 +295,7 @@ public final class ExportRenderers {
     }
 
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone) {
-        return renderHtml(players, generatedAtEpochMillis, zone, true, "Context");
+        return renderHtml(players, generatedAtEpochMillis, zone, true, "Context", null);
     }
 
     /** As above, honoring the {@code deathContextInExports} config switch. */
@@ -275,20 +307,37 @@ public final class ExportRenderers {
     /** As above with a caller-supplied (localized) column header. */
     public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
                                 boolean anonymize, boolean includeContext, String contextHeader) {
-        List<PlayerDeaths> safePlayers = anonymize ? Anonymizer.apply(players) : safePlayerList(players);
+        return toHtml(players, generatedAtEpochMillis, zone, anonymize, includeContext,
+                contextHeader, null);
+    }
+
+    /**
+     * As above, with the full snapshot used to build the hidden-identity and
+     * anonymization dictionaries while {@code players} stays the record filter
+     * (reviews S3/S4). Also used for the season HTML report.
+     */
+    public static String toHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
+                                boolean anonymize, boolean includeContext, String contextHeader,
+                                Collection<PlayerDeaths> fullSnapshot) {
+        List<PlayerDeaths> safePlayers = anonymize
+                ? Anonymizer.apply(players, fullSnapshot)
+                : safePlayerList(players);
         return renderHtml(safePlayers, generatedAtEpochMillis, zone, includeContext,
-                contextHeader == null || contextHeader.isBlank() ? "Context" : contextHeader);
+                contextHeader == null || contextHeader.isBlank() ? "Context" : contextHeader,
+                fullSnapshot);
     }
 
     private static String renderHtml(List<PlayerDeaths> players, long generatedAtEpochMillis, ZoneId zone,
-                                     boolean includeContext, String contextHeader) {
+                                     boolean includeContext, String contextHeader,
+                                     Collection<PlayerDeaths> allPlayers) {
         List<PlayerDeaths> safePlayers = safePlayerList(players);
+        List<PlayerDeaths> all = allPlayers == null ? safePlayers : safePlayerList(allPlayers);
         // Summaries and rankings stay unredacted (DESIGN §8); timelines render
         // the public redaction view of the same records.
-        List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers);
+        List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers, all);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
-        Map<String, String> witnessNames = WitnessRedactor.namesById(safePlayers);
-        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(safePlayers);
+        Map<String, String> witnessNames = WitnessRedactor.namesById(all);
+        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(all);
         List<Map.Entry<String, Integer>> causes = CensusStats.causeCounts(safePlayers, true);
         List<CensusStats.PlayerSummary> leaderboard = CensusStats.leaderboardDeaths(safePlayers, true);
         int topLimit = Math.min(10, leaderboard.size());
@@ -432,7 +481,7 @@ public final class ExportRenderers {
         return toHtml(players, generatedAtEpochMillis, zone, anonymize, true);
     }
 
-    private static List<PlayerDeaths> safePlayerList(List<PlayerDeaths> players) {
+    private static List<PlayerDeaths> safePlayerList(Collection<PlayerDeaths> players) {
         if (players == null) {
             return List.of();
         }

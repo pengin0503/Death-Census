@@ -6,6 +6,7 @@ import com.mojang.serialization.DataResult;
 import com.mojang.serialization.DynamicOps;
 import com.mojang.serialization.MapLike;
 import com.mojang.serialization.RecordBuilder;
+import net.minecraft.nbt.Tag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
@@ -54,6 +55,8 @@ public class CensusData extends SavedData {
         public int lastDeathPlayTicks = -1;
         /** Vanilla pre-install death baseline (DESIGN 1.3.0 §9); never includes deaths recorded by this mod. */
         public int vanillaDeathsBaseline = 0;
+        /** Lifetime deaths recorded by this mod for this player; survives trimming/deletion. */
+        public long lifetimeRecorded = 0L;
         /** Mapped vanilla killed_by categories; diagnostic only, never merged into live cause percentages. */
         public Map<String, Integer> vanillaBaselineCauses = new LinkedHashMap<>();
 
@@ -273,6 +276,13 @@ public class CensusData extends SavedData {
         return (int) longValue(ops, map, key);
     }
 
+    /** Explicit fallback for fields where -1 means "not set" (M2). */
+    private static <T> int intValueOr(DynamicOps<T> ops, MapLike<T> map, String key, int fallback) {
+        T v = map.get(key);
+        return v == null ? fallback
+                : ops.getNumberValue(v).result().map(n -> (int) n.longValue()).orElse(fallback);
+    }
+
     private static <T> boolean booleanValue(DynamicOps<T> ops, MapLike<T> map, String key) {
         T v = map.get(key);
         return v != null && ops.getBooleanValue(v).result().orElse(false);
@@ -382,6 +392,7 @@ public class CensusData extends SavedData {
         b.add("baselinePlayTicks", ops.createInt(pc.baselinePlayTicks));
         b.add("lastDeathPlayTicks", ops.createInt(pc.lastDeathPlayTicks));
         b.add("vanillaDeathsBaseline", ops.createInt(pc.vanillaDeathsBaseline));
+        b.add("lifetimeRecorded", ops.createLong(pc.lifetimeRecorded));
         RecordBuilder<T> causesBuilder = ops.mapBuilder();
         for (Map.Entry<String, Integer> cause : pc.vanillaBaselineCauses.entrySet()) {
             causesBuilder.add(cause.getKey(), ops.createInt(cause.getValue()));
@@ -411,8 +422,8 @@ public class CensusData extends SavedData {
         pc.hideCoordinates = booleanValue(ops, map, "hideCoordinates");
         pc.hidePvpOpponent = booleanValue(ops, map, "hidePvpOpponent");
         pc.discordOptOut = booleanValue(ops, map, "discordOptOut");
-        pc.baselinePlayTicks = intValue(ops, map, "baselinePlayTicks");
-        pc.lastDeathPlayTicks = intValue(ops, map, "lastDeathPlayTicks");
+        pc.baselinePlayTicks = intValueOr(ops, map, "baselinePlayTicks", -1);
+        pc.lastDeathPlayTicks = intValueOr(ops, map, "lastDeathPlayTicks", -1);
         pc.vanillaDeathsBaseline = Math.max(0, intValue(ops, map, "vanillaDeathsBaseline"));
         T causesValue = map.get("vanillaBaselineCauses");
         if (causesValue != null) {
@@ -440,10 +451,6 @@ public class CensusData extends SavedData {
                         return;
                     }
                     DeathEntry death = parsed.result().get();
-                    if (death.epochMillis() <= 0L) {
-                        DeathCensus.LOGGER.warn("[DeathCensus] Skipping death entry without a valid epoch for '{}' in SavedData", uuidKey);
-                        return;
-                    }
                     if (death.playerUuid().isBlank()) {
                         death = withPlayerUuid(death, uuidKey);
                     }
@@ -453,35 +460,62 @@ public class CensusData extends SavedData {
                 DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed death list for '{}' in SavedData", uuidKey);
             }
         }
+        T recordedValue = map.get("lifetimeRecorded");
+        if (recordedValue == null) {
+            // Old saves carry no per-player counter: retained deaths are the
+            // best available approximation (DESIGN §3.3).
+            pc.lifetimeRecorded = pc.deaths.size();
+        } else {
+            pc.lifetimeRecorded = Math.max(0L, ops.getNumberValue(recordedValue).result()
+                    .map(Number::longValue).orElse((long) pc.deaths.size()));
+        }
         // §10: absent or corrupt near-death history never drops the player.
         pc.nearDeaths.addAll(decodeList(ops, map, "nearDeaths", NEAR_DEATH_CODEC, "near-death event"));
 
+        // A list with no usable string categories is equivalent to a missing one (M1).
+        List<String> usableCategories = new ArrayList<>();
         T categoriesValue = map.get("lifetimeCategories");
-        if (categoriesValue == null) {
-            initializeCategoriesFromDeaths(pc);
-        } else {
+        if (categoriesValue != null) {
             DataResult<Consumer<Consumer<T>>> categoriesResult = ops.getList(categoriesValue);
             if (categoriesResult.result().isPresent()) {
                 categoriesResult.result().get().accept(element -> {
                     String category = ops.getStringValue(element).result().orElse("");
                     if (CauseClassifier.isKnownCategory(category)) {
-                        pc.lifetimeCategories.add(category);
+                        usableCategories.add(category);
                     }
                 });
-            } else {
-                initializeCategoriesFromDeaths(pc);
             }
         }
+        if (usableCategories.isEmpty()) {
+            initializeCategoriesFromDeaths(pc);
+        } else {
+            pc.lifetimeCategories.addAll(usableCategories);
+        }
         return pc;
+    }
+
+    /** NBT values are copied so later mutations of a parsed input cannot change preserved data. */
+    private static Object preservedCopy(Object value) {
+        return value instanceof Tag tag ? tag.copy() : value;
     }
 
     public static final Codec<CensusData> CODEC = new Codec<>() {
         @Override
         public <T> DataResult<T> encode(CensusData data, DynamicOps<T> ops, T prefix) {
+            if (data.doNotSave && data.preservedRawInput != null) {
+                @SuppressWarnings("unchecked") T raw = (T) data.preservedRawInput;
+                return DataResult.success(raw);
+            }
             RecordBuilder<T> b = ops.mapBuilder();
             RecordBuilder<T> playersBuilder = ops.mapBuilder();
             for (Map.Entry<UUID, PlayerCensus> e : data.players.entrySet()) {
                 playersBuilder.add(e.getKey().toString(), encodePlayer(ops, e.getValue()));
+            }
+            for (Map.Entry<String, Object> e : data.preservedPlayerValues.entrySet()) {
+                if (data.players.keySet().stream().noneMatch(u -> u.toString().equals(e.getKey()))) {
+                    @SuppressWarnings("unchecked") T raw = (T) e.getValue();
+                    playersBuilder.add(e.getKey(), raw);
+                }
             }
             b.add("players", playersBuilder.build(ops.empty()));
             b.add("lastDigestEpoch", ops.createLong(data.lastDigestEpochMillis));
@@ -509,13 +543,21 @@ public class CensusData extends SavedData {
                                     data.players.put(uuid, pc);
                                 } else {
                                     DeathCensus.LOGGER.warn("[DeathCensus] Skipping corrupt player entry with key '{}' in SavedData", key);
+                                    data.preservedPlayerValues.put(key, preservedCopy(entry.getSecond()));
                                 }
                             } catch (IllegalArgumentException e) {
                                 DeathCensus.LOGGER.warn("[DeathCensus] Skipping player entry with invalid UUID '{}' in SavedData", key);
+                                data.preservedPlayerValues.put(key, preservedCopy(entry.getSecond()));
                             }
                         });
                     } else {
-                        DeathCensus.LOGGER.warn("[DeathCensus] Skipping malformed players map in SavedData");
+                        // A present-but-wrong-typed container is corruption, not an
+                        // old save: keep the raw input and refuse to overwrite it (B1).
+                        DeathCensus.LOGGER.error("[DeathCensus] Malformed 'players' map in SavedData: "
+                                + "preserving the original data and disabling saves until an operator backs it up");
+                        data.doNotSave = true;
+                        data.preservedRawInput = preservedCopy(input);
+                        return Pair.of(data, input);
                     }
                 }
                 data.lastDigestEpochMillis = Math.max(0L, longValue(ops, map, "lastDigestEpoch"));
@@ -545,6 +587,12 @@ public class CensusData extends SavedData {
     private long lastDigestEpochMillis = 0L;
     /** Lifetime deaths across all players; survives trimming of retained records. */
     private long lifetimeDeaths = 0L;
+    /** Raw values dropped during load, written back verbatim so operators can back them up (§3.3). */
+    private final Map<String, Object> preservedPlayerValues = new LinkedHashMap<>();
+    /** A malformed top-level players container must never be silently overwritten on encode (B1). */
+    private boolean doNotSave = false;
+    @Nullable
+    private Object preservedRawInput = null;
 
     /** Immutable view of the persisted chronicle aggregate. */
     public List<ChronicleEvent> chronicleEvents() {
@@ -606,7 +654,7 @@ public class CensusData extends SavedData {
                     skipped++;
                     continue;
                 }
-                long preinstall = Math.max(0L, (long) vanillaDeaths - pc.deaths.size());
+                long preinstall = Math.max(0L, (long) vanillaDeaths - pc.lifetimeRecorded);
                 int candidate = (int) Math.min(Integer.MAX_VALUE, preinstall);
                 int baseline = Math.max(pc.vanillaDeathsBaseline, candidate);
                 if (baseline <= 0) {
@@ -680,6 +728,7 @@ public class CensusData extends SavedData {
         }
         PlayerCensus pc = player(uuid);
         pc.deaths.add(entry);
+        pc.lifetimeRecorded++;
         lifetimeDeaths++;
         if (CauseClassifier.isKnownCategory(entry.causeCategory())) {
             pc.lifetimeCategories.add(entry.causeCategory());
@@ -859,6 +908,7 @@ public class CensusData extends SavedData {
             pc.vanillaDeathsBaseline = Math.max(0, pd.vanillaDeathsBaseline());
             pc.vanillaBaselineCauses.putAll(pd.vanillaBaselineCauses());
             pc.deaths.addAll(pd.deaths());
+            pc.lifetimeRecorded = pd.deaths().size();
             pc.nearDeaths.addAll(pd.nearDeaths());
             for (DeathEntry death : pd.deaths()) {
                 if (CauseClassifier.isKnownCategory(death.causeCategory())) {

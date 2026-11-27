@@ -389,14 +389,15 @@ public final class DiscordNotifier {
     }
 
     /** Renders one death line in the configured language before it is buffered (§2). */
-    private static String renderDeath(DeathEntry entry) {
-        return ServerLang.formatForLang(Config.discordLanguage(), "discord.deathcensus.death",
+    private static String renderDeath(DeathEntry entry, HiddenIdentities hidden) {
+        HiddenIdentities secrets = hidden == null ? HiddenIdentities.empty() : hidden;
+        return secrets.scrub(ServerLang.formatForLang(Config.discordLanguage(), "discord.deathcensus.death",
                 entry.deathMessage().isEmpty()
                         ? entry.playerName() + " died (" + entry.causeCategory() + ")"
                         : entry.deathMessage(),
                 entry.gameDay() + 1,
                 entry.dimension(),
-                TimeFormat.formatDuration(entry.survivalTicks()));
+                TimeFormat.formatDuration(entry.survivalTicks())));
     }
 
     /**
@@ -415,13 +416,22 @@ public final class DiscordNotifier {
      * suppressed here, and coordinates/opponent names are redacted in the post.
      */
     public static void notifyDeath(DeathEntry entry, PlayerPrivacy privacy) {
+        notifyDeath(entry, privacy, HiddenIdentities.empty());
+    }
+
+    /**
+     * As above, with the snapshot-wide hidden-identity dictionary (S3). Realtime
+     * Discord is a public viewer even when the death belongs to a different
+     * player, so every hidden name must be scrubbed before the line is queued.
+     */
+    public static void notifyDeath(DeathEntry entry, PlayerPrivacy privacy, HiddenIdentities hidden) {
         if (privacy != null && privacy.suppressesRealtimeDiscord()) {
             return;
         }
         if (!Config.discordNotifyDeaths()) {
             return;
         }
-        DeathEntry rendered = DeathRedactor.apply(entry, privacy, false);
+        DeathEntry rendered = DeathRedactor.apply(entry, privacy, false, hidden);
         if (!DiscordLogic.shouldNotify(rendered, Config.discordNotifyDimensions(),
                 Config.discordNotifyPvpMode())) {
             return;
@@ -431,12 +441,12 @@ public final class DiscordNotifier {
             // Escape hatch (§12 Q4): exactly today's one POST per death.
             URI uri = webhookUri(WebhookChannel.REALTIME);
             if (uri != null) {
-                enqueue(uri, renderDeath(rendered));
+                enqueue(uri, renderDeath(rendered, hidden));
             }
             return;
         }
 
-        String line = renderDeath(rendered);
+        String line = renderDeath(rendered, hidden);
         boolean schedule;
         synchronized (DiscordNotifier.class) {
             if (BATCH_BUFFER.size() >= BATCH_BUFFER_CAPACITY) {

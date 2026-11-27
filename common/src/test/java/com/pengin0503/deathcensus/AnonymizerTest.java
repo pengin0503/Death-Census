@@ -219,4 +219,43 @@ class AnonymizerTest {
         assertEquals("minecraft:plains", original.get(0).deaths().get(0).context().biome());
         assertNoLeaks(ExportRenderers.toJson(original, T, true), "minecraft:plains");
     }
+
+    @Test
+    void dictionaryUsesFullSnapshotNotTheFilteredExport() {
+        // Review S4: Ghost opted out and is excluded from the export, and Bobby
+        // is only a recorded alias. Neither may survive in Alice's public text.
+        String alice = "00000000-0000-0000-0000-000000000001";
+        String bob = "00000000-0000-0000-0000-000000000002";
+        String ghost = "00000000-0000-0000-0000-000000000003";
+        DeathEntry aliceDeath = death(alice, "Alice", 0, 0, 0,
+                "Alice was slain by GHOST and bobby and BOB near " + ghost,
+                "gHoSt", "BOBBY did it", "Bye aLiCe");
+        PlayerDeaths ghostPlayer = new PlayerDeaths(ghost, "Ghost", true,
+                List.of(death(ghost, "Bobby", 0, 0, 0, "Bobby fell", "", "", "")));
+        List<PlayerDeaths> all = List.of(
+                new PlayerDeaths(alice, "Alice", false, List.of(aliceDeath)),
+                new PlayerDeaths(bob, "Bob", false, List.of()),
+                ghostPlayer);
+        List<PlayerDeaths> exported = List.of(all.get(0), all.get(1));
+
+        List<PlayerDeaths> redacted = Anonymizer.apply(exported, all);
+        assertEquals(2, redacted.size());
+        assertEquals("Player A", redacted.get(0).name());
+        assertEquals("Player B", redacted.get(1).name());
+        DeathEntry clean = redacted.get(0).deaths().get(0);
+        assertNoLeaks(clean.deathMessage(), "Ghost", "Bobby", "Bob", ghost);
+        assertNoLeaks(clean.killerName(), "Ghost");
+        assertNoLeaks(clean.excuse(), "Bobby");
+        assertEquals("Bye Player A", clean.lastWords(), "review M5: case-insensitive scrubbing");
+
+        for (String rendered : List.of(
+                ExportRenderers.toCsv(exported, true, true, all),
+                ExportRenderers.toJson(exported, T, true, true, all),
+                ExportRenderers.toHtml(exported, T, ZoneOffset.UTC, true, true, "Context", all))) {
+            assertNoLeaks(rendered, "Ghost", "Bobby", "Bob", ghost);
+            assertTrue(rendered.contains("Player A"));
+        }
+        assertEquals("Player C", Anonymizer.apply(all).get(2).name(),
+                "the full snapshot keeps deterministic pseudonym numbering");
+    }
 }
