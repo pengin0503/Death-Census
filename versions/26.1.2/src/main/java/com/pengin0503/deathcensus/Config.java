@@ -187,6 +187,25 @@ public final class Config {
             .comment("Opt-in seam for a future loop Discord section (default false; PR-9 adds no posts).")
             .define("loopsInDiscord", false);
 
+    // 1.4.0 PR-10 (§9): self-only, transient respawn return guide. Nothing is persisted.
+    public static final ModConfigSpec.BooleanValue RESPAWN_GUIDE_ENABLED = BUILDER
+            .comment("Show a self-only return guide after death (DESIGN 1.4.0 §9).",
+                    "The guide is transient: it is discarded on respawn completion, second death, logout,",
+                    "server stop or timeout. It never exposes another player's data, even with hideCoordinates.")
+            .define("respawnGuideEnabled", true);
+
+    public static final ModConfigSpec.IntValue RESPAWN_GUIDE_MAX_TICKS = BUILDER
+            .comment("Maximum guide lifetime in ticks after death (0-12000; default 6000 = 5 minutes of despawn time).")
+            .defineInRange("respawnGuideMaxTicks", 6000, 0, 12000);
+
+    public static final ModConfigSpec.IntValue RESPAWN_GUIDE_ARRIVAL_BLOCKS = BUILDER
+            .comment("Stop the guide when the player is within this many horizontal blocks (0-256; default 16).")
+            .defineInRange("respawnGuideArrivalBlocks", 16, 0, 256);
+
+    public static final ModConfigSpec.IntValue RESPAWN_GUIDE_REFRESH_TICKS = BUILDER
+            .comment("Server ticks between ActionBar refreshes (1-200; default 20).")
+            .defineInRange("respawnGuideRefreshTicks", 20, 1, 200);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -653,6 +672,38 @@ public final class Config {
             return LOOPS_IN_DISCORD.get();
         } catch (IllegalStateException notLoaded) {
             return false;
+        }
+    }
+
+    public static boolean respawnGuideEnabled() {
+        try {
+            return RESPAWN_GUIDE_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static int respawnGuideMaxTicks() {
+        try {
+            return Math.max(0, Math.min(12000, RESPAWN_GUIDE_MAX_TICKS.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 6000;
+        }
+    }
+
+    public static int respawnGuideArrivalBlocks() {
+        try {
+            return Math.max(0, Math.min(256, RESPAWN_GUIDE_ARRIVAL_BLOCKS.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 16;
+        }
+    }
+
+    public static int respawnGuideRefreshTicks() {
+        try {
+            return Math.max(1, Math.min(200, RESPAWN_GUIDE_REFRESH_TICKS.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 20;
         }
     }
 
