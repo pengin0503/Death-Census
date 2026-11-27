@@ -159,7 +159,60 @@ reports each feature and seam as an on/off state.
 
 NeoForge for Minecraft **1.21.1**, **26.1.2**, **26.2** and **26.3**.
 Download the file matching your Minecraft version. Server-side only —
-vanilla clients can join.
+vanilla clients can join. The current release is **1.4.0** on every line.
+
+## 1.4.0 release changelog
+
+- Witnesses: each death now records a bounded list of nearby players, shown on
+  the death detail and ranked with /dc witnesses; names follow the same
+  privacy settings as the rest of the record
+- Death context: equipped gear, active effects, biome and weather are captured
+  at death and shown in history and exports, and can optionally be posted to
+  Discord; old saves and backups load without the new fields
+- Awards and titles: /dc awards picks deterministic winners from retained
+  records and lifetime counters (most deaths, falls, lava, lightning, respects,
+  rarest cause and more), with a configurable minimum count; no winner history
+  is stored
+- World chronicle: /dc chronicle is a capped, browsable timeline of firsts,
+  dragon deaths, category completions and server death milestones, optionally
+  included in exports or posted to Discord; entries rebuilt from older data
+  are labelled and left undated instead of being given an invented day
+- Nemesis and hotspots: /dc nemesis ranks mob species, named rivals and PvP
+  rivals; /dc hotspots ranks chunks where deaths cluster and accepts full
+  dimension ids such as minecraft:overworld; both use configurable minimums
+- Distributions: /dc distribution breaks deaths down by time of day and by
+  height band, with configurable time-bin and height-band sizes
+- Death loops: /dc loops flags repeated nearby deaths inside a time window,
+  with an optional one-time notice to the victim and an opt-in export section;
+  only transient state is kept, never a longest-loop record
+- Respawn return guide: after death, players get a self-only guide back to
+  their dropped items with direction, distance, height difference and the
+  despawn countdown; it is never posted for other players, to Discord or in
+  exports
+- Near-death saves: totem saves and cancelled deaths are counted separately
+  with /dc neardeath and a line in /dc stats, bounded per player and
+  server-wide; a player whose only records are near-death saves no longer
+  makes /dc stats fail
+- Player comparison: /dc compare <playerA> <playerB> [period] [--html] shows two
+  players side by side in chat, in the GUI and in a standalone HTML report,
+  with one-sided privacy opt-outs respected
+- Exports and GUI: HTML/JSON/CSV exports gain the new sections in a stable
+  order; the in-game Home → Rankings menu reaches every new view, including
+  the two-column compare view on all versions
+- Help and doctor: /dc help lists every enabled 1.4.0 command plus a
+  respawn-guide line; /dc doctor reports feature states and aggregate counts as
+  status words only, never the webhook URL
+- Review fixes: F respects and excuses no longer drop witnesses or context on
+  1.21.1; chronicle milestones count the stored server total and reconstructed
+  rows honour the configured cap; rarest-cause winners now match across chat,
+  GUI, exports and digests, and the awards GUI honours the configured minimum;
+  hidden witnesses and rivals are still scrubbed after a player renames, and a
+  real player called "Anonymous" is no longer mistaken for a hidden marker
+- Review fixes (reliability): cancelled totem use is no longer saved as a
+  near-death event; loop detection keeps tracking active players, and its
+  minimum-deaths setting now agrees with what detection requires; crafted
+  backups with oversized witness lists or wrong-typed fields are clamped or
+  ignored with a warning; and the hidden-witness label is localized in the GUI
 
 ---
 
@@ -220,8 +273,8 @@ vanilla clients can join.
   作成します。`/dc import vanilla [dry-run]` は Mod 導入前のバニラの死亡数を
   累計に追加し（`dry-run` では書き込みなし）、マイルストーンの集計に反映します
 - 権限ノードの準備：管理者チェックは将来の権限プロバイダー用の橋渡しを
-  経由するようになりましたが、1.3.0 では従来どおりバニラの権限レベル2を
-  使用し、動作は変わりません
+  経由するようになりましたが、バニラの権限レベル2は従来どおりで、動作は
+  変わりません
 
 ## 1.4.0 の追加機能
 
@@ -285,4 +338,50 @@ vanilla clients can join.
 `/dc help` はすべてのバージョンで従来のテキストヘルプのままです。
 
 対象は NeoForge の Minecraft **1.21.1 / 26.1.2 / 26.2 / 26.3** です。
-コマンドは `/deathcensus`（短縮形 `/dc`）です。
+コマンドは `/deathcensus`（短縮形 `/dc`）です。現在のリリースは全ライン
+共通で **1.4.0** です。
+
+## 1.4.0 リリースノート
+
+- 証言者：死亡時に近くにいたプレイヤーを上限つきで記録し、死亡の詳細と
+  `/dc witnesses` のランキングに表示します。名前は既存のプライバシー設定に
+  従って隠されます
+- 死亡時の状況：装備、エフェクト、バイオーム、天候を記録して履歴と
+  エクスポートに表示します（Discord への投稿は任意）。古いデータも
+  そのまま読み込めます
+- 称号：`/dc awards` は保持された記録と累計から受賞者を決めます
+  （死亡数、落下、溶岩、雷、敬意、最も珍しい死因など）。最低件数は設定可能で、
+  受賞履歴は保存しません
+- 年代記：`/dc chronicle` は初記録、エンダードラゴン、カテゴリ制覇、
+  サーバー死亡数の節目を上限つきで閲覧できる年表です。エクスポートへの
+  掲載や Discord への投稿は任意で、古いデータから復元した行には日付を
+  でっち上げずその旨を表示します
+- 宿敵とホットスポット：`/dc nemesis` はモブ、名前付きの宿敵、PvP の
+  相手をランキングし、`/dc hotspots` は死亡が集中する場所を表示します。
+  どちらも保持された記録から導出し、名前空間付きのディメンションIDを
+  指定できます
+- 分布：`/dc distribution` は時間帯と高度帯ごとの死亡数を表示し、
+  それぞれの幅は設定で変更できます
+- 死亡ループ：`/dc loops` は短い時間内に近い場所で繰り返す死亡を検出し、
+  本人への通知とエクスポートへの掲載を任意で行います。
+  永続化される記録はありません
+- 帰還ガイド：死亡後、落としたアイテムまでの方角、距離、標高差と
+  アイテムの消去までの時間を本人にだけ表示します。他のプレイヤー、
+  Discord、エクスポートには出ません
+- ニアデス記録：トーテムによる復活と死亡のキャンセルを `/dc neardeath` で
+  確認できます（プレイヤーごととサーバー全体に上限あり）。ニアデス記録しか
+  ないプレイヤーでも `/dc stats` が動作するようになりました
+- 比較：`/dc compare <playerA> <playerB> [period] [--html]` で2人の記録を
+  チャット、GUI、単体 HTML レポートで並べて表示します。片方だけの
+  オプトアウトも尊重します
+- ヘルプ・GUI・doctor：`/dc help` は有効な 1.4.0 コマンドをすべて表示し、
+  新しい画面はホーム → ランキングから移動できます。`/dc doctor` は
+  機能と接続ポイントの状態、集計値を表示しますが、Webhook URL は
+  表示しません
+- レビュー修正：1.21.1 で `[F]` や言い訳を付けたときに証言者と死亡時の状況が
+  失われないようにしました。年代記の節目は保存済みのサーバー死亡数を使い、
+  最も珍しい死因の順位はチャット・GUI・エクスポート・ダイジェストで一致します。
+  称号 GUI は設定した最低件数を守り、証言者や宿敵は名前ではなくデータで
+  判定するため、「Anonymous」という名前のプレイヤーが誤って隠されません。
+  キャンセルしたトーテム使用は保存されず、死亡ループの追跡と最低件数設定も
+  検出側と一致するようになりました
