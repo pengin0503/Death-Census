@@ -25,6 +25,7 @@ import java.util.UUID;
 public final class DialogClickHandler {
     private static final List<String> INPUT_KEYS = List.of(
             "in_period", "in_category", "in_dimension", "in_query", "in_excuse", "in_type",
+            "in_compare_a", "in_compare_b",
             "in_optout", "in_hide_coords", "in_hide_opponent", "in_discord_optout");
     private static final List<String> BOOLEAN_KEYS = List.of(
             "in_optout", "in_hide_coords", "in_hide_opponent", "in_discord_optout");

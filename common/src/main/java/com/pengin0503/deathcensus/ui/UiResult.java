@@ -21,6 +21,10 @@ public sealed interface UiResult permits UiResult.Open, UiResult.SideEffect, UiR
             this((Object) view);
         }
 
+        public Open(CompareView view) {
+            this((Object) view);
+        }
+
         public Open(PrivacyView view) {
             this((Object) view);
         }

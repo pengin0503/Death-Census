@@ -90,6 +90,11 @@ public interface UiContext {
         return 16;
     }
 
+    /** 1.4.0 §6: the two-column Compare view hides when disabled. */
+    default boolean compareEnabled() {
+        return true;
+    }
+
     /** 1.4.0 §7: the two read-only Distribution tabs hide when disabled. */
     default boolean distributionsEnabled() {
         return true;
