@@ -238,6 +238,10 @@ public final class DialogUi {
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.excuse",
                 view.excuse().isEmpty() ? ServerLang.tr(player, "command.deathcensus.ui.none") : truncate(view.excuse()))));
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.f_count", view.fCount())));
+        body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.witnesses",
+                view.witnesses().isEmpty()
+                        ? ServerLang.tr(player, "command.deathcensus.ui.none")
+                        : String.join(", ", view.witnesses()))));
         body.add(new ItemBody(causeItem(view.causeCategory()),
                 Optional.of(new PlainMessage(
                         ServerLang.tr(player, "command.deathcensus.ui.detail.item_tooltip", view.causeCategory()),

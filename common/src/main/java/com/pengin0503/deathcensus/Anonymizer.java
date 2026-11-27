@@ -42,6 +42,7 @@ public final class Anonymizer {
 
         Map<String, String> pseudoByUuid = new HashMap<>();
         Map<String, String> anonUuidByUuid = new HashMap<>();
+        Map<String, String> pseudoByName = new HashMap<>();
         List<String> secrets = new ArrayList<>();
         Map<String, String> secretReplacements = new HashMap<>();
         for (int i = 0; i < sorted.size(); i++) {
@@ -53,10 +54,45 @@ public final class Anonymizer {
             // Duplicate names map to the first (lowest-UUID) pseudonym.
             if (!player.name().isEmpty()) {
                 registerSecret(secrets, secretReplacements, player.name(), pseudoByUuid.get(player.uuid()));
+                pseudoByName.putIfAbsent(player.name(), pseudoByUuid.get(player.uuid()));
             }
             if (!player.uuid().isEmpty()) {
                 registerSecret(secrets, secretReplacements, player.uuid(), anonUuid);
             }
+        }
+        // 1.4.0 witnesses: a witness may not be a player in this export set. Give
+        // each such identity a deterministic pseudonym after the players (so the
+        // player numbering above never changes) and register its name/UUID as a
+        // secret too. This is the existing Anonymizer path; no new scrubber.
+        List<WitnessRef> witnessOnly = new ArrayList<>();
+        Map<String, WitnessRef> witnessOnlyByUuid = new HashMap<>();
+        for (PlayerDeaths player : sorted) {
+            for (DeathEntry death : player.deaths()) {
+                for (WitnessRef ref : death.witnesses()) {
+                    if (ref == null || ref.isEmpty() || ref.uuid().isEmpty()
+                            || pseudoByUuid.containsKey(ref.uuid())) {
+                        continue;
+                    }
+                    WitnessRef first = witnessOnlyByUuid.putIfAbsent(ref.uuid(), ref);
+                    if (first == null) {
+                        witnessOnly.add(ref);
+                    }
+                }
+            }
+        }
+        witnessOnly.sort(Comparator.comparing(WitnessRef::uuid).thenComparing(WitnessRef::nameAtDeath));
+        int witnessIndex = sorted.size();
+        for (WitnessRef ref : witnessOnly) {
+            String pseudo = pseudonym(witnessIndex);
+            String anonUuid = "anon-" + (witnessIndex + 1);
+            witnessIndex++;
+            pseudoByUuid.put(ref.uuid(), pseudo);
+            anonUuidByUuid.put(ref.uuid(), anonUuid);
+            if (!ref.nameAtDeath().isEmpty()) {
+                registerSecret(secrets, secretReplacements, ref.nameAtDeath(), pseudo);
+                pseudoByName.putIfAbsent(ref.nameAtDeath(), pseudo);
+            }
+            registerSecret(secrets, secretReplacements, ref.uuid(), anonUuid);
         }
 
         Pattern secretPattern = secretPattern(secrets);
@@ -86,12 +122,40 @@ public final class Anonymizer {
                         d.experienceLevel(),
                         scrub(d.excuse(), secretPattern, secretReplacements),
                         scrub(d.lastWords(), secretPattern, secretReplacements),
-                        d.fCount()));
+                        d.fCount(),
+                        anonymizeWitnesses(d.witnesses(), pseudoByUuid, anonUuidByUuid,
+                                pseudoByName, secretPattern, secretReplacements)));
             }
             // Privacy flags are meaningless for pseudonyms and are normalized (§6).
             result.add(new PlayerDeaths(anonUuid, pseudo, false, false, false, false, redactedDeaths));
         }
         return result;
+    }
+
+    /** Witness refs follow the same pseudonym mapping as players, so no name or UUID leaks. */
+    private static List<WitnessRef> anonymizeWitnesses(
+            List<WitnessRef> witnesses, Map<String, String> pseudoByUuid, Map<String, String> anonUuidByUuid,
+            Map<String, String> pseudoByName, Pattern secretPattern, Map<String, String> secretReplacements) {
+        if (witnesses == null || witnesses.isEmpty()) {
+            return List.of();
+        }
+        List<WitnessRef> result = new ArrayList<>(witnesses.size());
+        for (WitnessRef ref : witnesses) {
+            if (ref == null || ref.isEmpty()) {
+                continue;
+            }
+            String pseudo = pseudoByUuid.get(ref.uuid());
+            if (pseudo == null && !ref.nameAtDeath().isEmpty()) {
+                pseudo = pseudoByName.get(ref.nameAtDeath());
+            }
+            if (pseudo != null) {
+                String anonUuid = anonUuidByUuid.getOrDefault(ref.uuid(), "");
+                result.add(new WitnessRef(anonUuid, pseudo));
+            } else {
+                result.add(new WitnessRef("", scrub(ref.nameAtDeath(), secretPattern, secretReplacements)));
+            }
+        }
+        return List.copyOf(result);
     }
 
     private static void registerSecret(List<String> secrets, Map<String, String> replacements,

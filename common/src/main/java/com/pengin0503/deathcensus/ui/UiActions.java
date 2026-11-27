@@ -8,6 +8,7 @@ import com.pengin0503.deathcensus.Pagination;
 import com.pengin0503.deathcensus.PlayerDeaths;
 import com.pengin0503.deathcensus.PlayerPrivacy;
 import com.pengin0503.deathcensus.TimeFormat;
+import com.pengin0503.deathcensus.WitnessRedactor;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -398,8 +399,15 @@ public final class UiActions {
                 rendered.killerName(),
                 UiPrivacy.canEditExcuse(ctx.viewer(), rendered.playerUuid()),
                 UiPrivacy.canDelete(ctx.viewer(), rendered.playerUuid(), ctx.isAdmin()),
-                hidden
+                hidden,
+                WitnessRedactor.displayNames(rendered, ctx.snapshot(), privileged(ctx, death))
         );
+    }
+
+    /** Self/admin keep captured witness names; every other viewer gets the public composition. */
+    private static boolean privileged(UiContext ctx, DeathEntry death) {
+        UUID owner = parseUuidOrNull(death.playerUuid());
+        return ctx.isAdmin() || (owner != null && ctx.isSelf(owner));
     }
 
     private static UiResult openRankings(UiRequest request, UiContext ctx, String action) {

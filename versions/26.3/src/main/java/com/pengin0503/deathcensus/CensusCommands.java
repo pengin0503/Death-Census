@@ -19,6 +19,8 @@ import com.pengin0503.deathcensus.DiscordLogic.SeasonLabels;
 import com.pengin0503.deathcensus.DiscordLogic.SeasonSection;
 import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.PlayerPrivacy;
+import com.pengin0503.deathcensus.WitnessAnalysis;
+import com.pengin0503.deathcensus.WitnessRedactor;
 import com.pengin0503.deathcensus.ui.DialogUi;
 
 import javax.annotation.Nullable;
@@ -56,7 +58,7 @@ public final class CensusCommands {
         return LiteralArgumentBuilder.literal(name);
     }
 
-    private static LiteralArgumentBuilder<CommandSourceStack> root() {
+    static LiteralArgumentBuilder<CommandSourceStack> root() {
         LiteralArgumentBuilder<CommandSourceStack> root = literal("deathcensus")
                 .executes(CensusCommands::entry);
 
@@ -100,6 +102,40 @@ public final class CensusCommands {
                                         SharedSuggestionProvider.suggest(filterSuggestions(ctx), builder))
                                 .executes(ctx -> history(ctx, StringArgumentType.getString(ctx, "player"), 1,
                                         StringArgumentType.getString(ctx, "filter"))))));
+
+        // 1.4.0 PR-2: /dc witnesses [player] [today|7d|30d|all] [page]
+        LiteralArgumentBuilder<CommandSourceStack> witnesses = literal("witnesses")
+                .executes(ctx -> witnesses(ctx, null, "all", 1))
+                .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                        .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                        .executes(ctx -> witnesses(ctx, null, "all",
+                                IntegerArgumentType.getInteger(ctx, "page"))));
+        com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, String> witnessPlayer =
+                com.mojang.brigadier.builder.RequiredArgumentBuilder
+                        .<CommandSourceStack, String>argument("player", StringArgumentType.word())
+                        .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
+                        .executes(ctx -> witnesses(ctx,
+                                StringArgumentType.getString(ctx, "player"), "all", 1))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> witnesses(ctx, StringArgumentType.getString(ctx, "player"),
+                                        "all", IntegerArgumentType.getInteger(ctx, "page"))));
+        for (String period : PERIODS) {
+            witnessPlayer.then(literal(period)
+                    .executes(ctx -> witnesses(ctx, StringArgumentType.getString(ctx, "player"), period, 1))
+                    .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> witnesses(ctx, StringArgumentType.getString(ctx, "player"), period,
+                                    IntegerArgumentType.getInteger(ctx, "page")))));
+            witnesses.then(literal(period)
+                    .executes(ctx -> witnesses(ctx, null, period, 1))
+                    .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> witnesses(ctx, null, period,
+                                    IntegerArgumentType.getInteger(ctx, "page")))));
+        }
+        witnesses.then(witnessPlayer);
+        root.then(witnesses);
 
         LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
                 .executes(CensusCommands::serverStats);
@@ -543,7 +579,9 @@ public final class CensusCommands {
         return suggestions;
     }
 
-    private static String formatEntryLine(DeathEntry raw, PlayerPrivacy privacy, boolean privileged, int index) {
+    private static String formatEntryLine(DeathEntry raw, PlayerPrivacy privacy, boolean privileged, int index,
+                                          Map<String, String> names, Map<String, PlayerPrivacy> privacyById,
+                                          String language) {
         DeathEntry e = DeathRedactor.apply(raw, privacy, privileged);
         String coords = DeathRedactor.isCoordinateHidden(e)
                 ? DeathRedactor.COORDINATE_MARKER + ", " + DeathRedactor.COORDINATE_MARKER
@@ -558,7 +596,37 @@ public final class CensusCommands {
                 + " · survived " + TimeFormat.formatDuration(e.survivalTicks())
                 + (e.excuse().isEmpty() ? "" : " · \"" + e.excuse() + "\"")
                 + (e.lastWords().isEmpty() ? "" : " · last words: \"" + e.lastWords() + "\"")
-                + (e.fCount() > 0 ? " · F x" + e.fCount() : "");
+                + (e.fCount() > 0 ? " · F x" + e.fCount() : "")
+                + witnessSuffix(raw, names, privacyById, privileged, language);
+    }
+
+    /** The "Witnesses: A, B" detail suffix; absent when no witness was captured. */
+    private static String witnessSuffix(DeathEntry raw, Map<String, String> names,
+                                        Map<String, PlayerPrivacy> privacyById, boolean privileged,
+                                        String language) {
+        List<String> witnesses = WitnessRedactor.displayNames(raw, names, privacyById, privileged);
+        if (witnesses.isEmpty()) {
+            return "";
+        }
+        return " · " + ServerLang.formatForLang(language, "command.deathcensus.witnesses.detail",
+                WitnessRedactor.joinNames(localizeWitnessNames(witnesses, language)));
+    }
+
+    /** The common marker is language-neutral; chat surfaces use its bundled translation. */
+    private static List<String> localizeWitnessNames(List<String> names, String language) {
+        List<String> localized = new ArrayList<>(names.size());
+        String hidden = ServerLang.formatForLang(language, "command.deathcensus.witnesses.hidden");
+        for (String name : names) {
+            localized.add(WitnessRedactor.HIDDEN_NAME_MARKER.equals(name) ? hidden : name);
+        }
+        return localized;
+    }
+
+    /** Chat fallback language for literal lines built from translated fragments. */
+    private static String languageOf(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer self = ctx.getSource().getPlayer();
+        return self != null && self.clientInformation() != null
+                ? self.clientInformation().language() : ServerLang.DEFAULT_LANG;
     }
 
     private static int showHistory(CommandContext<CommandSourceStack> ctx, UUID uuid, String displayName, int page) {
@@ -598,9 +666,14 @@ public final class CensusCommands {
                 pc.hidePvpOpponent, pc.discordOptOut);
         ServerPlayer self = ctx.getSource().getPlayer();
         boolean privileged = isAdmin(ctx) || (self != null && self.getUUID().equals(uuid));
+        List<PlayerDeaths> snapshot = CensusData.get(server).snapshot();
+        Map<String, String> witnessNames = WitnessRedactor.namesById(snapshot);
+        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(snapshot);
+        String language = languageOf(ctx);
         int base = (p.page() - 1) * PAGE_SIZE;
         for (int i = 0; i < p.items().size(); i++) {
-            sendLiteral(ctx, formatEntryLine(p.items().get(i), privacy, privileged, p.total() - (base + i)));
+            sendLiteral(ctx, formatEntryLine(p.items().get(i), privacy, privileged, p.total() - (base + i),
+                    witnessNames, witnessPrivacy, language));
         }
         if (p.pageCount() > 1) {
             send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
@@ -620,10 +693,72 @@ public final class CensusCommands {
         return 1;
     }
 
+    /**
+     * /dc witnesses — public but privacy-gated like history. Witnesses are
+     * composed from the live snapshot; an opted-out victim is refused for
+     * non-self/non-admin viewers and opted-out witnesses are anonymized by the
+     * common redactor. No name is taken from the captured list without the
+     * current privacy lookup.
+     */
+    private static int witnesses(CommandContext<CommandSourceStack> ctx, @Nullable String playerName,
+                                 String period, int page) {
+        MinecraftServer server = server(ctx);
+        if (server == null) {
+            return 0;
+        }
+        ServerPlayer self = ctx.getSource().getPlayer();
+        UUID target;
+        String displayName;
+        if (playerName != null) {
+            target = resolvePlayer(server, playerName);
+            if (target == null) {
+                fail(ctx, "command.deathcensus.player_not_found", playerName);
+                return 0;
+            }
+            CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(target);
+            displayName = pc == null || pc.lastKnownName.isEmpty() ? playerName : pc.lastKnownName;
+        } else {
+            if (self == null) {
+                fail(ctx, "command.deathcensus.players_only");
+                return 0;
+            }
+            target = self.getUUID();
+            displayName = self.getGameProfile().name();
+        }
+        boolean privileged = isAdmin(ctx) || (self != null && self.getUUID().equals(target));
+        CensusData data = CensusData.get(server);
+        CensusData.PlayerCensus pc = data.playerOrNull(target);
+        if (pc != null && pc.optOutPublic && !privileged) {
+            fail(ctx, "command.deathcensus.opted_out", displayName);
+            return 0;
+        }
+        List<PlayerDeaths> snapshot = data.snapshot();
+        List<PlayerDeaths> inPeriod = CensusStats.filterSince(snapshot, sinceMillis(period));
+        List<WitnessAnalysis.Row> rows = WitnessAnalysis.rank(inPeriod, target.toString(), 0L,
+                WitnessRedactor.namesById(snapshot), WitnessRedactor.privacyById(snapshot), privileged);
+        Pagination.Page<WitnessAnalysis.Row> p = Pagination.of(rows, page, PAGE_SIZE);
+        send(ctx, "command.deathcensus.witnesses.header", displayName, period, rows.size(), p.page());
+        if (p.items().isEmpty()) {
+            send(ctx, "command.deathcensus.witnesses.empty", displayName);
+            return 0;
+        }
+        int rank = (p.page() - 1) * PAGE_SIZE;
+        String language = languageOf(ctx);
+        for (WitnessAnalysis.Row row : p.items()) {
+            send(ctx, "command.deathcensus.witnesses.row", ++rank,
+                    localizeWitnessNames(List.of(row.name()), language).get(0), row.count());
+        }
+        if (p.pageCount() > 1) {
+            send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+        }
+        return 1;
+    }
+
     private static int help(CommandContext<CommandSourceStack> ctx) {
         send(ctx, "command.deathcensus.help.title");
         send(ctx, "command.deathcensus.help.excuse");
         send(ctx, "command.deathcensus.help.history");
+        send(ctx, "command.deathcensus.help.witnesses");
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");

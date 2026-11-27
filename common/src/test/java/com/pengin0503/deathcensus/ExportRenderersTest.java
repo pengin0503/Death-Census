@@ -37,7 +37,7 @@ class ExportRenderersTest {
         String csv = ExportRenderers.toCsv(players);
         String expectedHeader = "player_uuid,player_name,epoch_millis,datetime_iso,game_day,play_ticks,"
                 + "survival_ticks,dimension,x,y,z,cause_category,cause_id,killer_type,killer_name,"
-                + "game_mode,experience_level,death_message,excuse,last_words,f_count\n";
+                + "game_mode,experience_level,death_message,excuse,last_words,f_count,witnesses\n";
         assertTrue(csv.startsWith(expectedHeader));
         assertTrue(csv.endsWith("\n"));
 
@@ -50,7 +50,7 @@ class ExportRenderersTest {
         assertTrue(csv.contains("\"Alice \"\"tried\"\" to swim, badly\""));
         assertTrue(csv.contains(",12.3,64.0,-30.6,"));
         assertTrue(csv.contains(",2026-11-24T10:15:00Z,"));
-        assertTrue(csv.contains(",\"Alice \"\"tried\"\" to swim, badly\",It was the lava's fault,See you on the other side,3\n"));
+        assertTrue(csv.contains(",\"Alice \"\"tried\"\" to swim, badly\",It was the lava's fault,See you on the other side,3,\n"));
     }
 
     @Test
@@ -174,5 +174,54 @@ class ExportRenderersTest {
         assertTrue(json.contains("\"totalDeaths\": 1"));
         assertTrue(html.contains("~</td>"));
         assertFalse(DeathRedactor.isCoordinateHidden(d), "the source snapshot is not redacted");
+    }
+
+    @Test
+    void witnessesAppearInEveryExportAndFollowPrivacyComposition() {
+        DeathEntry d = new DeathEntry("u1", "Alice", T1, 3L, 1000, 600,
+                "minecraft:overworld", 10.5, 64.0, -5.25,
+                "fall", "minecraft:fall", "Alice fell", "", "", "survival", 7,
+                "", "", 2,
+                List.of(new WitnessRef("u2", "Bob at death"), new WitnessRef("u3", "Carol at death")));
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u1", "Alice", false, List.of(d)),
+                new PlayerDeaths("u2", "Bob renamed", false, List.of()),
+                new PlayerDeaths("u3", "Carol", true, false, false, false, List.of()));
+
+        String csv = ExportRenderers.toCsv(players);
+        String json = ExportRenderers.toJson(players, T2);
+        String html = ExportRenderers.toHtml(players, T2, ZoneOffset.UTC);
+        String backup = ExportRenderers.toBackupJson(players, T2);
+
+        assertTrue(csv.contains("\"Bob renamed, Anonymous\""), csv);
+        assertTrue(json.contains("\"witnesses\": [\"Bob renamed\", \"Anonymous\"]"), json);
+        assertTrue(html.contains("<th>Witnesses</th>"), html);
+        assertTrue(html.contains("Bob renamed, Anonymous"), html);
+        assertEquals("Carol at death", d.witnesses().get(1).nameAtDeath(), "source record untouched");
+        // PR-1 backup seam stays object-shaped for restore compatibility.
+        assertTrue(backup.contains("\"witnesses\": ["), backup);
+        assertTrue(backup.contains("\"nameAtDeath\": \"Bob at death\""), backup);
+    }
+
+    @Test
+    void anonymizedExportsScrubWitnessNamesAndUuids() {
+        DeathEntry d = new DeathEntry("u1", "Alice", T1, 3L, 1000, 600,
+                "minecraft:overworld", 10.5, 64.0, -5.25,
+                "fall", "minecraft:fall", "Alice fell", "", "", "survival", 7,
+                "", "", 2,
+                List.of(new WitnessRef("u2", "Bob"), new WitnessRef("outsider-uuid", "Dave")));
+        List<PlayerDeaths> players = List.of(
+                new PlayerDeaths("u1", "Alice", false, List.of(d)),
+                new PlayerDeaths("u2", "Bob", false, List.of()));
+
+        String csv = ExportRenderers.toCsv(players, true);
+        String json = ExportRenderers.toJson(players, T2, true);
+        String html = ExportRenderers.toHtml(players, T2, ZoneOffset.UTC, true);
+        for (String rendered : List.of(csv, json, html)) {
+            assertTrue(rendered.contains("Player B"), rendered);
+            assertFalse(rendered.contains("Dave"), rendered);
+            assertFalse(rendered.contains("outsider-uuid"), rendered);
+        }
+        assertEquals("Player B", Anonymizer.apply(players).get(0).deaths().get(0).witnesses().get(0).nameAtDeath());
     }
 }

@@ -177,4 +177,26 @@ class AnonymizerTest {
         assertNoLeaks(anonJson, uuid, "Hidden");
         assertEquals("Hidden", optedOut.name());
     }
+
+    @Test
+    void witnessesFollowTheSamePseudonymMappingIncludingNonPlayerIdentities() {
+        String alpha = "00000000-0000-0000-0000-00000000000a";
+        String beta = "00000000-0000-0000-0000-00000000000b";
+        String outsider = "99999999-9999-9999-9999-999999999999";
+        DeathEntry d = new DeathEntry(alpha, "Zed", T, 1L, 100, 100, "minecraft:overworld",
+                1.0, 2.0, 3.0, "fall", "minecraft:fall", "Zed fell with Beta",
+                "", "", "survival", 1, "", "", 0,
+                List.of(new WitnessRef(beta, "Beta"), new WitnessRef(outsider, "Dave")));
+        List<PlayerDeaths> original = List.of(new PlayerDeaths(alpha, "Zed", false, List.of(d)));
+
+        List<PlayerDeaths> redacted = Anonymizer.apply(original);
+        List<WitnessRef> witnesses = redacted.get(0).deaths().get(0).witnesses();
+        assertEquals(2, witnesses.size());
+        assertEquals("anon-2", witnesses.get(0).uuid()); // witness-only identities follow the players
+        assertEquals("Player B", witnesses.get(0).nameAtDeath());
+        assertEquals("anon-3", witnesses.get(1).uuid());
+        assertEquals("Player C", witnesses.get(1).nameAtDeath());
+        assertNoLeaks(ExportRenderers.toJson(original, T, true), "Zed", "Beta", "Dave", beta, outsider);
+        assertEquals("Beta", original.get(0).deaths().get(0).witnesses().get(0).nameAtDeath());
+    }
 }

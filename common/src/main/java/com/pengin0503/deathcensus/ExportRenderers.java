@@ -12,7 +12,7 @@ public final class ExportRenderers {
     private static final String CSV_HEADER =
             "player_uuid,player_name,epoch_millis,datetime_iso,game_day,play_ticks,survival_ticks,"
                     + "dimension,x,y,z,cause_category,cause_id,killer_type,killer_name,"
-                    + "game_mode,experience_level,death_message,excuse,last_words,f_count";
+                    + "game_mode,experience_level,death_message,excuse,last_words,f_count,witnesses";
 
     private ExportRenderers() {
     }
@@ -20,7 +20,10 @@ public final class ExportRenderers {
     public static String toCsv(List<PlayerDeaths> players) {
         List<DeathEntry> rows = new ArrayList<>();
         // Aggregates are never built from these copies; only the rendered rows are.
-        for (PlayerDeaths player : DeathRedactor.publicView(players)) {
+        List<PlayerDeaths> safe = safePlayerList(players);
+        Map<String, String> witnessNames = WitnessRedactor.namesById(safe);
+        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(safe);
+        for (PlayerDeaths player : DeathRedactor.publicView(safe)) {
             rows.addAll(player.deaths());
         }
         rows.sort(Comparator.comparingLong(DeathEntry::epochMillis));
@@ -49,7 +52,9 @@ public final class ExportRenderers {
                     d.deathMessage(),
                     d.excuse(),
                     d.lastWords(),
-                    Integer.toString(d.fCount())
+                    Integer.toString(d.fCount()),
+                    WitnessRedactor.joinNames(WitnessRedactor.displayNames(
+                            d, witnessNames, witnessPrivacy, false))
             };
             for (int i = 0; i < fields.length; i++) {
                 if (i > 0) {
@@ -108,6 +113,8 @@ public final class ExportRenderers {
         // per-death rows use the public redaction view.
         List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
+        Map<String, String> witnessNames = WitnessRedactor.namesById(safePlayers);
+        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(safePlayers);
 
         StringBuilder sb = new StringBuilder(256 + totalDeaths * 256);
         sb.append("{\n");
@@ -179,7 +186,10 @@ public final class ExportRenderers {
                             appendContext(sb, d.context(), "          ");
                             sb.append('\n');
                         } else {
-                            sb.append("          \"fCount\": ").append(d.fCount()).append('\n');
+                            sb.append("          \"fCount\": ").append(d.fCount()).append(",\n");
+                            appendWitnessNames(sb, WitnessRedactor.displayNames(
+                                    d, witnessNames, witnessPrivacy, false), "          ");
+                            sb.append('\n');
                         }
                         sb.append("        }");
                         if (j + 1 < deaths.size()) {
@@ -217,6 +227,8 @@ public final class ExportRenderers {
         // the public redaction view of the same records.
         List<PlayerDeaths> renderPlayers = DeathRedactor.publicView(safePlayers);
         int totalDeaths = CensusStats.totalDeaths(safePlayers);
+        Map<String, String> witnessNames = WitnessRedactor.namesById(safePlayers);
+        Map<String, PlayerPrivacy> witnessPrivacy = WitnessRedactor.privacyById(safePlayers);
         List<Map.Entry<String, Integer>> causes = CensusStats.causeCounts(safePlayers, true);
         List<CensusStats.PlayerSummary> leaderboard = CensusStats.leaderboardDeaths(safePlayers, true);
         int topLimit = Math.min(10, leaderboard.size());
@@ -295,7 +307,7 @@ public final class ExportRenderers {
             sb.append("<h3>").append(TextEscaping.html(player.name())).append("</h3>\n");
             sb.append("<p>Deaths: ").append(player.deaths().size()).append("</p>\n");
             sb.append("<table>\n");
-            sb.append("<thead><tr><th>Date/Time</th><th>Day</th><th>Dimension</th><th>Position</th><th>Cause</th><th>Death Message</th><th>Survived</th></tr></thead>\n");
+            sb.append("<thead><tr><th>Date/Time</th><th>Day</th><th>Dimension</th><th>Position</th><th>Cause</th><th>Death Message</th><th>Survived</th><th>Witnesses</th></tr></thead>\n");
             sb.append("<tbody>\n");
             for (DeathEntry d : player.deaths()) {
                 String position = hiddenCoordinates(d)
@@ -329,6 +341,9 @@ public final class ExportRenderers {
                 }
                 sb.append("</td><td>")
                         .append(TextEscaping.html(TimeFormat.formatDuration(d.survivalTicks())))
+                        .append("</td><td>")
+                        .append(TextEscaping.html(WitnessRedactor.joinNames(WitnessRedactor.displayNames(
+                                d, witnessNames, witnessPrivacy, false))))
                         .append("</td></tr>\n");
             }
             sb.append("</tbody>\n");
@@ -381,6 +396,20 @@ public final class ExportRenderers {
 
     // Backup-only 1.4.0 aggregates (§13.2.4). Public HTML/JSON/CSV never call
     // these, and old backups simply omit the keys.
+
+    /** Public JSON: witness display names only, already composed for a public viewer. */
+    private static void appendWitnessNames(StringBuilder sb, List<String> names, String indent) {
+        sb.append(indent).append("\"witnesses\": [");
+        boolean first = true;
+        for (String name : names) {
+            if (name == null) {
+                continue;
+            }
+            sb.append(first ? "\"" : ", \"").append(TextEscaping.jsonString(name)).append('"');
+            first = false;
+        }
+        sb.append(']');
+    }
 
     private static void appendWitnesses(StringBuilder sb, List<WitnessRef> witnesses, String indent) {
         List<WitnessRef> refs = WitnessRef.copyOf(witnesses);
