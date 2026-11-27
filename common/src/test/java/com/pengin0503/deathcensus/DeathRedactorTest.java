@@ -125,7 +125,7 @@ class DeathRedactorTest {
 
     @Test
     void nullBlankAndUnusualInputsAreSafe() {
-        assertNull(DeathRedactor.apply(null, PlayerPrivacy.none(), false));
+        assertNull(DeathRedactor.apply((DeathEntry) null, PlayerPrivacy.none(), false));
         DeathEntry original = entry();
         assertSame(original, DeathRedactor.apply(original, null, false));
         DeathEntry blank = new DeathEntry("u", "N", 1L, 0L, 0, 0, "", 0, 0, 0,

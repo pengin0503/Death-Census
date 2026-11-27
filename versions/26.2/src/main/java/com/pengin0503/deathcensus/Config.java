@@ -206,6 +206,25 @@ public final class Config {
             .comment("Server ticks between ActionBar refreshes (1-200; default 20).")
             .defineInRange("respawnGuideRefreshTicks", 20, 1, 200);
 
+    // 1.4.0 PR-11 (§10): near deaths are a separate counter, never real deaths.
+    public static final ModConfigSpec.BooleanValue NEAR_DEATH_CAPTURE_ENABLED = BUILDER
+            .comment("Record totem saves and cancelled deaths as near-death events (DESIGN 1.4.0 §10).",
+                     "Near deaths are stored separately and never contribute to death totals, milestones,",
+                     "leaderboards or cause percentages. Earlier saves cannot be backfilled.")
+            .define("nearDeathCaptureEnabled", true);
+
+    public static final ModConfigSpec.IntValue NEAR_DEATH_DEDUP_WINDOW_MILLIS = BUILDER
+            .comment("Dedupe window in milliseconds for one save seen by both hooks (500-10000; default 2000).")
+            .defineInRange("nearDeathDedupWindowMillis", 2000, 500, 10000);
+
+    public static final ModConfigSpec.IntValue NEAR_DEATH_MAX_PER_PLAYER = BUILDER
+            .comment("Maximum stored near-death saves per player (1-500; default 50); the server-wide cap is 500.")
+            .defineInRange("nearDeathMaxPerPlayer", 50, 1, 500);
+
+    public static final ModConfigSpec.BooleanValue NEAR_DEATH_IN_DISCORD = BUILDER
+            .comment("Opt-in seam for future near-death Discord posts (default false; realtime death lines are unchanged).")
+            .define("nearDeathInDiscord", false);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -704,6 +723,42 @@ public final class Config {
             return Math.max(1, Math.min(200, RESPAWN_GUIDE_REFRESH_TICKS.get()));
         } catch (IllegalStateException notLoaded) {
             return 20;
+        }
+    }
+
+    /** Near-death capture is on by default: missed saves cannot be backfilled. */
+    public static boolean nearDeathCaptureEnabled() {
+        try {
+            return NEAR_DEATH_CAPTURE_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    /** Clamped to §10's 500-10000 ms range; the default is 2 seconds. */
+    public static long nearDeathDedupWindowMillis() {
+        try {
+            return NearDeathAnalysis.dedupWindow(NEAR_DEATH_DEDUP_WINDOW_MILLIS.get());
+        } catch (IllegalStateException notLoaded) {
+            return NearDeathAnalysis.DEFAULT_DEDUP_WINDOW_MILLIS;
+        }
+    }
+
+    /** Per-player cap; the server-wide 500 cap is enforced by CensusData. */
+    public static int nearDeathMaxPerPlayer() {
+        try {
+            return Math.max(1, Math.min(NearDeathAnalysis.SERVER_CAP, NEAR_DEATH_MAX_PER_PLAYER.get()));
+        } catch (IllegalStateException notLoaded) {
+            return NearDeathAnalysis.DEFAULT_MAX_PER_PLAYER;
+        }
+    }
+
+    /** No new Discord posts in PR-11; this accessor is the opt-in seam. */
+    public static boolean nearDeathInDiscord() {
+        try {
+            return NEAR_DEATH_IN_DISCORD.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
         }
     }
 

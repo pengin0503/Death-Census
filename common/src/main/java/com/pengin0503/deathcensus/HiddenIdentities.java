@@ -140,6 +140,22 @@ public final class HiddenIdentities {
         return sb.toString();
     }
 
+    /** Scrubs the identity-bearing fields of a near-death record (§10). */
+    public NearDeathEvent scrub(NearDeathEvent event) {
+        if (event == null || pattern == null) {
+            return event;
+        }
+        return new NearDeathEvent(
+                scrub(event.uuid()),
+                scrub(event.name()),
+                event.epochMillis(),
+                scrub(event.dimension()),
+                event.x(), event.y(), event.z(),
+                scrub(event.causeCategory()),
+                scrub(event.causeId()),
+                event.kind());
+    }
+
     /** Scrubs the four personal text fields of an immutable death record. */
     public DeathEntry scrub(DeathEntry entry) {
         if (entry == null || pattern == null) {

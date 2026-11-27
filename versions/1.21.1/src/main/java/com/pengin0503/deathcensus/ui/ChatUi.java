@@ -138,6 +138,7 @@ public final class ChatUi {
         line(player, ServerLang.tr(player, "command.deathcensus.ui.home.survival",
                 TimeFormat.formatDuration(view.currentSurvivalTicks())));
         line(player, ServerLang.tr(player, "command.deathcensus.ui.home.server_total", view.serverTotalDeaths()));
+        line(player, ServerLang.tr(player, "command.deathcensus.neardeath.stats", view.nearDeathSaves()));
         Component last = UiText.RECORD_UNAVAILABLE_KEY.equals(view.lastDeathLine())
                 ? ServerLang.tr(player, UiText.RECORD_UNAVAILABLE_KEY)
                 : Component.literal(truncate(view.lastDeathLine()));
@@ -283,6 +284,7 @@ public final class ChatUi {
             case "distribution_y" -> ServerLang.formatForLang(language,
                     "command.deathcensus.ui.ranking.distribution.y");
             case "loops" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.loops");
+            case "neardeath" -> ServerLang.formatForLang(language, "command.deathcensus.ui.ranking.neardeath");
             default -> view.type();
         };
         line(player, ServerLang.tr(player, "command.deathcensus.ui.rankings.title"));

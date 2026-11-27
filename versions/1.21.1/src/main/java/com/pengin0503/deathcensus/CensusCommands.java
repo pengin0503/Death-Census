@@ -425,6 +425,21 @@ public final class CensusCommands {
             root.then(loops);
         }
 
+        // 1.4.0 PR-11: /dc neardeath [player] [page] (§10), a separate counter.
+        if (Config.nearDeathCaptureEnabled()) {
+            LiteralArgumentBuilder<CommandSourceStack> neardeath = literal("neardeath")
+                    .executes(ctx -> nearDeaths(ctx, null, 1))
+                    .then(arg("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> nearDeaths(ctx, null, IntegerArgumentType.getInteger(ctx, "page"))));
+            neardeath.then(arg("player", StringArgumentType.word())
+                    .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(playerNames(ctx), builder))
+                    .executes(ctx -> nearDeaths(ctx, StringArgumentType.getString(ctx, "player"), 1))
+                    .then(arg("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> nearDeaths(ctx, StringArgumentType.getString(ctx, "player"),
+                                    IntegerArgumentType.getInteger(ctx, "page")))));
+            root.then(neardeath);
+        }
+
         LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
                 .executes(CensusCommands::serverStats);
         for (String period : PERIODS) {
@@ -1095,6 +1110,9 @@ public final class CensusCommands {
             send(ctx, "command.deathcensus.loops.help");
         }
         send(ctx, "command.deathcensus.help.stats");
+        if (Config.nearDeathCaptureEnabled()) {
+            send(ctx, "command.deathcensus.neardeath.help");
+        }
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
         send(ctx, "command.deathcensus.help.privacy");
@@ -1204,17 +1222,21 @@ public final class CensusCommands {
         }
         CensusData data = CensusData.get(server);
         CensusData.PlayerCensus pc = data.playerOrNull(self.getUUID());
-        if (pc == null || pc.deaths.isEmpty()) {
+        if (pc == null || (pc.deaths.isEmpty() && pc.nearDeaths.isEmpty())) {
             send(ctx, "command.deathcensus.history.empty", self.getGameProfile().getName());
             return 0;
         }
         PlayerDeaths selfDeaths = new PlayerDeaths(self.getUUID().toString(),
                 self.getGameProfile().getName(), pc.optOutPublic,
-                pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths);
+                pc.hideCoordinates, pc.hidePvpOpponent, pc.discordOptOut, pc.deaths,
+                0, java.util.Map.of(), pc.nearDeaths);
         List<CensusStats.PlayerSummary> summaries = CensusStats.summaries(List.of(selfDeaths), true);
         CensusStats.PlayerSummary s = summaries.get(0);
         send(ctx, "command.deathcensus.stats.header", s.name());
         send(ctx, "command.deathcensus.stats.deaths", s.deaths());
+        if (Config.nearDeathCaptureEnabled()) {
+            send(ctx, "command.deathcensus.neardeath.stats", NearDeathAnalysis.countFor(selfDeaths));
+        }
         send(ctx, "command.deathcensus.stats.top_cause", s.topCategory());
         send(ctx, "command.deathcensus.stats.longest", TimeFormat.formatDuration(s.longestSurvivalTicks()));
         send(ctx, "command.deathcensus.stats.shortest",
@@ -1804,6 +1826,87 @@ public final class CensusCommands {
     }
 
     // --------------------------------------------------------------- awards (§2)
+
+    // -------------------------------------------------------- near death (§10)
+
+    /**
+     * Own (or, for admins, another player's) near-death history. Nothing here
+     * creates a DeathEntry, touches F counts or feeds any death aggregate.
+     */
+    private static int nearDeaths(CommandContext<CommandSourceStack> ctx, @Nullable String target, int page) {
+        MinecraftServer server = server(ctx);
+        if (server == null || !Config.nearDeathCaptureEnabled()) {
+            return 0;
+        }
+        UUID uuid;
+        String displayName;
+        if (target == null || target.isBlank()) {
+            ServerPlayer self = ctx.getSource().getPlayer();
+            if (self == null) {
+                fail(ctx, "command.deathcensus.players_only");
+                return 0;
+            }
+            uuid = self.getUUID();
+            displayName = self.getGameProfile().getName();
+        } else {
+            String query = target.trim();
+            uuid = resolvePlayer(server, query);
+            if (uuid == null) {
+                fail(ctx, "command.deathcensus.player_not_found", query);
+                return 0;
+            }
+            boolean privileged = isAdmin(ctx) || uuid.equals(selfUuid(ctx));
+            CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+            if (!privileged && pc != null && pc.optOutPublic) {
+                fail(ctx, "command.deathcensus.opted_out", query);
+                return 0;
+            }
+            displayName = query;
+        }
+        boolean privileged = isAdmin(ctx) || uuid.equals(selfUuid(ctx));
+        List<PlayerDeaths> snapshot = CensusData.get(server).snapshot();
+        List<PlayerDeaths> scope = new ArrayList<>();
+        for (PlayerDeaths player : snapshot) {
+            if (player != null && uuid.toString().equalsIgnoreCase(player.uuid())) {
+                scope.add(player);
+            }
+        }
+        NearDeathAnalysis.Split split = NearDeathAnalysis.split(scope);
+        send(ctx, "command.deathcensus.neardeath.header", displayName,
+                split.total(), split.totem(), split.cancelled());
+        List<NearDeathEvent> events = NearDeathAnalysis.history(scope, uuid, 0L);
+        Pagination.Page<NearDeathEvent> p = Pagination.of(events, page, PAGE_SIZE);
+        if (p.items().isEmpty()) {
+            send(ctx, "command.deathcensus.neardeath.empty");
+        }
+        // §10: near-death rows follow the same redaction rules as death rows.
+        // A public viewer never sees hidden coordinates or scrubbed identities.
+        PlayerPrivacy privacy = scope.isEmpty() ? PlayerPrivacy.none() : PlayerPrivacy.of(scope.get(0));
+        HiddenIdentities hidden = HiddenIdentities.of(snapshot);
+        for (NearDeathEvent raw : p.items()) {
+            NearDeathEvent event = privileged ? raw : DeathRedactor.apply(raw, privacy, false, hidden);
+            String name = event.name().isEmpty() ? event.uuid() : event.name();
+            CensusData.PlayerCensus pc = CensusData.get(server).playerOrNull(uuid);
+            if (!privileged && pc != null && pc.optOutPublic) {
+                name = WitnessRedactor.HIDDEN_NAME_MARKER;
+            }
+            String kind = ServerLang.formatForLang(languageOf(ctx), event.kind() == NearDeathEvent.Kind.TOTEM
+                    ? "command.deathcensus.neardeath.kind.totem"
+                    : "command.deathcensus.neardeath.kind.cancelled");
+            String when = TimeFormat.formatDateTime(event.epochMillis(), Config.displayTimeZone());
+            String position = DeathRedactor.isNearDeathCoordinateHidden(event)
+                    ? DeathRedactor.COORDINATE_MARKER + ", " + DeathRedactor.COORDINATE_MARKER
+                            + ", " + DeathRedactor.COORDINATE_MARKER
+                    : NearDeathAnalysis.positionLabel(event);
+            sendLiteral(ctx, ServerLang.formatForLang(languageOf(ctx),
+                    "command.deathcensus.neardeath.row", name, kind, when,
+                    event.dimension(), position, event.causeId()));
+        }
+        if (p.pageCount() > 1) {
+            send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+        }
+        return 1;
+    }
 
     private static int awards(CommandContext<CommandSourceStack> ctx, String period, int page) {
         MinecraftServer server = server(ctx);

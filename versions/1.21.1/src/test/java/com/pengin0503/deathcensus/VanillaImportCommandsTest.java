@@ -103,7 +103,7 @@ class VanillaImportCommandsTest {
             for (String key : keys) {
                 assertTrue(table.has(key), lang + " missing " + key);
             }
-            assertEquals(287, table.size());
+            assertEquals(295, table.size());
             assertTrue(table.get("command.deathcensus.help.admin").getAsString().contains("import vanilla"));
         }
     }

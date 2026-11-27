@@ -55,7 +55,10 @@ public final class CensusStats {
                     player.hideCoordinates(),
                     player.hidePvpOpponent(),
                     player.discordOptOut(),
-                    deaths
+                    deaths,
+                    player.vanillaDeathsBaseline(),
+                    player.vanillaBaselineCauses(),
+                    player.nearDeaths()
             ));
         }
         return List.copyOf(filtered);
@@ -93,7 +96,10 @@ public final class CensusStats {
                     player.hideCoordinates(),
                     player.hidePvpOpponent(),
                     player.discordOptOut(),
-                    deaths));
+                    deaths,
+                    player.vanillaDeathsBaseline(),
+                    player.vanillaBaselineCauses(),
+                    player.nearDeaths()));
         }
         return List.copyOf(ranged);
     }

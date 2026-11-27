@@ -12,6 +12,7 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -371,6 +372,70 @@ public class CensusData extends SavedData {
         }
         setDirty();
         return true;
+    }
+
+    /**
+     * PR-11 (§10): appends one near-death save through the PR-1 seam. No
+     * DeathEntry, lifetime counter, category or F count is touched: near deaths
+     * are a separate, bounded counter and never affect death aggregates.
+     *
+     * @return false when the event is empty, malformed or deduped
+     */
+    public boolean addNearDeathEvent(NearDeathEvent event, int maxPerPlayer, long dedupWindowMillis) {
+        if (event == null || event.isEmpty()) {
+            return false;
+        }
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(event.uuid());
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        PlayerCensus pc = player(uuid);
+        if (NearDeathAnalysis.isDuplicate(pc.nearDeaths, event, dedupWindowMillis)) {
+            return false;
+        }
+        NearDeathAnalysis.CapResult capped = NearDeathAnalysis.appendBounded(
+                pc.nearDeaths, List.of(event), maxPerPlayer);
+        pc.nearDeaths.clear();
+        pc.nearDeaths.addAll(capped.events());
+        if (pc.lastKnownName.isEmpty() && !event.name().isEmpty()) {
+            pc.lastKnownName = event.name();
+        }
+        int dropped = capped.dropped() + trimNearDeathsToServerCap();
+        if (dropped > 0) {
+            DeathCensus.LOGGER.info("[DeathCensus] Dropped {} oldest near-death save(s) beyond caps", dropped);
+        }
+        setDirty();
+        return true;
+    }
+
+    /** Server-wide §10 cap (500); only the oldest near-death saves are dropped. */
+    private int trimNearDeathsToServerCap() {
+        int total = 0;
+        for (PlayerCensus pc : players.values()) {
+            total += pc.nearDeaths.size();
+        }
+        int excess = total - NearDeathAnalysis.SERVER_CAP;
+        if (excess <= 0) {
+            return 0;
+        }
+        List<Map.Entry<String, NearDeathEvent>> all = new ArrayList<>();
+        for (Map.Entry<UUID, PlayerCensus> entry : players.entrySet()) {
+            for (NearDeathEvent event : entry.getValue().nearDeaths) {
+                all.add(Map.entry(entry.getKey().toString(), event));
+            }
+        }
+        all.sort(Comparator.comparingLong((Map.Entry<String, NearDeathEvent> e) -> e.getValue().epochMillis())
+                .thenComparing(Map.Entry::getKey));
+        for (int i = 0; i < excess; i++) {
+            Map.Entry<String, NearDeathEvent> oldest = all.get(i);
+            PlayerCensus pc = players.get(UUID.fromString(oldest.getKey()));
+            if (pc != null) {
+                pc.nearDeaths.remove(oldest.getValue());
+            }
+        }
+        return excess;
     }
 
     private static DeathEntry copyWithStory(DeathEntry e, String excuse, String lastWords, int fCount) {

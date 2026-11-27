@@ -166,6 +166,11 @@ public final class DialogUiContext implements UiContext {
     }
 
     @Override
+    public boolean nearDeathEnabled() {
+        return Config.nearDeathCaptureEnabled();
+    }
+
+    @Override
     public int deathLoopMinDeaths() {
         return Config.deathLoopMinDeaths();
     }

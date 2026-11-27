@@ -14,6 +14,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.util.FakePlayer;
 import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
+import net.neoforged.neoforge.event.entity.living.LivingUseTotemEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 
 import com.pengin0503.deathcensus.ui.ChatUi;
@@ -57,6 +58,10 @@ public final class DeathTracker {
     /** PR-10 (§9): transient, self-only return guide; no persisted state. */
     private static final RespawnGuideTracker GUIDE_TRACKER = new RespawnGuideTracker();
 
+    /** PR-11 (§10): bounded dedupe keys for cancel/totem saves; transient only. */
+    private static final java.util.Set<String> NEAR_DEATH_SEEN = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final int MAX_NEAR_DEATH_KEYS = 2_000;
+
     private DeathTracker() {
     }
 
@@ -67,6 +72,7 @@ public final class DeathTracker {
         RESPECTED.clear();
         LOOP_TRACKER.clear();
         GUIDE_TRACKER.clear();
+        NEAR_DEATH_SEEN.clear();
     }
 
     static int currentPlayTicks(ServerPlayer player) {
@@ -517,6 +523,63 @@ public final class DeathTracker {
         return message.length() <= LAST_WORDS_MAX_CHARS
                 ? message
                 : message.substring(0, LAST_WORDS_MAX_CHARS);
+    }
+
+    // ------------------------------------------------------- near death (§10)
+
+    /**
+     * PR-11: a cancelled death is a save, not a DeathEntry. receiveCanceled is
+     * essential because the recording listener ignores cancelled death events.
+     */
+    @SubscribeEvent(receiveCanceled = true, priority = EventPriority.LOW)
+    public static void onLivingDeathCancelled(LivingDeathEvent event) {
+        if (!event.isCanceled()) {
+            return;
+        }
+        if (event.getEntity() instanceof ServerPlayer player) {
+            recordNearDeath(player, event.getSource(), NearDeathEvent.Kind.CANCELLED);
+        }
+    }
+
+    /** PR-11: the version's totem event is observed directly, never guessed. */
+    @SubscribeEvent
+    public static void onTotemUsed(net.neoforged.neoforge.event.entity.living.LivingUseTotemEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        Object itemKey = BuiltInRegistries.ITEM.getKey(event.getTotem().getItem());
+        if (itemKey == null || !"minecraft:totem_of_undying".equals(itemKey.toString())) {
+            return;
+        }
+        recordNearDeath(player, event.getSource(), NearDeathEvent.Kind.TOTEM);
+    }
+
+    /** Config-gated, bounded and deduped; never touches DeathEntry or counters. */
+    private static void recordNearDeath(ServerPlayer player, DamageSource source, NearDeathEvent.Kind kind) {
+        if (!Config.nearDeathCaptureEnabled() || player instanceof FakePlayer) {
+            return;
+        }
+        MinecraftServer server = player.getServer();
+        if (server == null) {
+            return;
+        }
+        String causeId = causeId(player, source);
+        String category = CauseClassifier.classify(causeId,
+                source.getEntity() instanceof net.minecraft.world.entity.player.Player);
+        String name = player.getGameProfile().getName();
+        NearDeathEvent event = new NearDeathEvent(player.getUUID().toString(),
+                name == null ? "" : name, System.currentTimeMillis(),
+                player.level().dimension().location().toString(), player.getX(), player.getY(), player.getZ(),
+                category, causeId, kind);
+        String key = NearDeathAnalysis.dedupeKey(event, Config.nearDeathDedupWindowMillis());
+        if (NEAR_DEATH_SEEN.size() >= MAX_NEAR_DEATH_KEYS) {
+            NEAR_DEATH_SEEN.clear(); // bounded transient state, never grows with playtime
+        }
+        if (!NEAR_DEATH_SEEN.add(key)) {
+            return;
+        }
+        server.execute(() -> CensusData.get(server).addNearDeathEvent(event,
+                Config.nearDeathMaxPerPlayer(), Config.nearDeathDedupWindowMillis()));
     }
 
     private static String causeId(ServerPlayer player, DamageSource source) {
