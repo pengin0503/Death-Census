@@ -9,6 +9,8 @@ import com.pengin0503.deathcensus.CauseClassifier;
 import com.pengin0503.deathcensus.DeathEntry;
 import com.pengin0503.deathcensus.DeathRedactor;
 import com.pengin0503.deathcensus.HiddenIdentities;
+import com.pengin0503.deathcensus.Hotspot;
+import com.pengin0503.deathcensus.HotspotAnalysis;
 import com.pengin0503.deathcensus.NemesisAnalysis;
 import com.pengin0503.deathcensus.NemesisRow;
 import com.pengin0503.deathcensus.Pagination;
@@ -450,6 +452,7 @@ public final class UiActions {
             case "awards" -> awardRows(ctx, filtered);
             case "chronicle" -> chronicleRows(ctx, since);
             case "nemesis" -> nemesisRows(ctx, filtered);
+            case "hotspots" -> hotspotRows(ctx, filtered);
             case "survival" -> {
                 List<String> rows = new ArrayList<>();
                 for (DeathEntry death : CensusStats.leaderboardSurvival(filtered, false)) {
@@ -585,6 +588,31 @@ public final class UiActions {
                         ? String.format(Locale.ROOT, template, table, rival, row.count())
                         : table + ": " + rival + " — " + row.count());
             }
+        }
+        return rows;
+    }
+
+    /**
+     * 1.4.0 §5: read-only chunk rows over the same period-scoped snapshot as
+     * chat. The analyzer applies the hidden-coordinate and opt-out exclusions
+     * itself, so even an admin sees only public-location cells here; exact
+     * per-record lookup stays in /dc lookup.
+     */
+    private static List<String> hotspotRows(UiContext ctx, List<PlayerDeaths> filtered) {
+        if (!ctx.hotspotsEnabled()) {
+            return List.of();
+        }
+        String template = ctx.label("command.deathcensus.hotspots.row");
+        List<String> rows = new ArrayList<>();
+        for (Hotspot hotspot : HotspotAnalysis.groupByChunk(filtered, null, 0L,
+                ctx.hotspotChunkSize(), ctx.hotspotMinDeaths())) {
+            String line = template.contains("%")
+                    ? String.format(Locale.ROOT, template, hotspot.dimension(), hotspot.chunkX(),
+                            hotspot.chunkZ(), hotspot.count(), hotspot.topCause(),
+                            TimeFormat.formatDate(hotspot.lastEpoch(), ctx.zoneId()))
+                    : hotspot.dimension() + " chunk " + hotspot.chunkX() + "," + hotspot.chunkZ()
+                            + " — " + hotspot.count() + " · " + hotspot.topCause();
+            rows.add(line);
         }
         return rows;
     }

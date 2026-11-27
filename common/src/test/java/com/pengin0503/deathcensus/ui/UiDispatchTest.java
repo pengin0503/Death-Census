@@ -201,6 +201,33 @@ class UiDispatchTest {
         assertTrue(view.rows().get(1).contains("PvP rival: Steve — 2"), view.rows().toString());
     }
 
+    @Test
+    void hotspotsRankingExposesOnlyPublicChunksEvenToAdmins() {
+        DeathEntry publicDeath = hotspotDeath(1.0, 1.0, 1_000L);
+        DeathEntry hiddenDeath = hotspotDeath(100.0, 100.0, 2_000L);
+        List<PlayerDeaths> players = List.of(
+                TestData.player(TestData.ALICE, "Alice", false,
+                        publicDeath, publicDeath, publicDeath),
+                TestData.player(TestData.BOB, "Bob", false, hiddenDeath),
+                TestData.player(TestData.CAROL, "Carol", true, hiddenDeath));
+        FakeUiContext ctx = home(new FakeUiContext(TestData.ALICE, players));
+        ctx.admin = true;
+        UiRequest request = new UiRequest(TestData.ALICE, "rankings", ctx.token(), 1, "", -1L,
+                Map.of("in_type", "hotspots", "in_period", "all"));
+        RankingView view = assertInstanceOf(RankingView.class, open(UiActions.handle(request, ctx)));
+        assertEquals("hotspots", view.type());
+        assertEquals(1, view.rows().size());
+        assertTrue(view.rows().get(0).contains("chunk 0,0"), view.rows().toString());
+        assertFalse(view.rows().get(0).contains("6,6"), view.rows().toString());
+        assertTrue(view.anonymousTotalsLine().contains("total=5"));
+    }
+
+    private static DeathEntry hotspotDeath(double x, double z, long epoch) {
+        return new DeathEntry(TestData.ALICE.toString(), "Alice", epoch, 1L, 10, 10,
+                "minecraft:overworld", x, 64.0, z, "fall", "minecraft:fall", "died",
+                "", "", "survival", 0, "", "", 0);
+    }
+
     private static DeathEntry nemesisDeath(String killerType, String killerName, boolean playerCause) {
         return new DeathEntry(TestData.ALICE.toString(), "Alice", 1_000L, 1L, 10, 10,
                 "minecraft:overworld", 0, 0, 0, playerCause ? "player" : "mob", killerType,

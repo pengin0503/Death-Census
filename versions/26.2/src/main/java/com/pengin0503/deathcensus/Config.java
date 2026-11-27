@@ -117,6 +117,25 @@ public final class Config {
             .comment("Opt-in seam for a future nemesis Discord section (default false; PR-6 adds no posts).")
             .define("nemesisInDigest", false);
 
+    // 1.4.0 PR-7 (§5): hotspot cells are derived from stored coordinates; nothing new is stored.
+    public static final ModConfigSpec.BooleanValue HOTSPOTS_ENABLED = BUILDER
+            .comment("Enable hotspots: /dc hotspots, the Hotspots ranking page and export section.",
+                    "Hidden-coordinate and opted-out deaths are excluded from cells by design;",
+                    "the exclusion does not change anonymous server totals.")
+            .define("hotspotsEnabled", true);
+
+    public static final ModConfigSpec.IntValue HOTSPOT_MIN_DEATHS = BUILDER
+            .comment("Minimum public-location deaths before a chunk appears as a hotspot (1-100).")
+            .defineInRange("hotspotMinDeaths", 3, 1, 100);
+
+    public static final ModConfigSpec.IntValue HOTSPOT_CHUNK_SIZE = BUILDER
+            .comment("Hotspot cell edge length in blocks (8-32; default 16).")
+            .defineInRange("hotspotChunkSize", 16, 8, 32);
+
+    public static final ModConfigSpec.BooleanValue HOTSPOTS_IN_DIGEST = BUILDER
+            .comment("Opt-in seam for a future hotspot Discord section (default false; PR-7 adds no posts).")
+            .define("hotspotsInDigest", false);
+
     public static final ModConfigSpec.IntValue MAX_RECORDS_PER_PLAYER = BUILDER
             .comment("Maximum number of death records kept per player; the oldest are dropped beyond this.")
             .defineInRange("maxRecordsPerPlayer", 10000, 100, 100000);
@@ -448,6 +467,39 @@ public final class Config {
     public static boolean nemesisInDigest() {
         try {
             return NEMESIS_IN_DIGEST.get();
+        } catch (IllegalStateException notLoaded) {
+            return false;
+        }
+    }
+
+    public static boolean hotspotsEnabled() {
+        try {
+            return HOTSPOTS_ENABLED.get();
+        } catch (IllegalStateException notLoaded) {
+            return true;
+        }
+    }
+
+    public static int hotspotMinDeaths() {
+        try {
+            return Math.max(1, Math.min(100, HOTSPOT_MIN_DEATHS.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 3;
+        }
+    }
+
+    public static int hotspotChunkSize() {
+        try {
+            return Math.max(8, Math.min(32, HOTSPOT_CHUNK_SIZE.get()));
+        } catch (IllegalStateException notLoaded) {
+            return 16;
+        }
+    }
+
+    /** No new Discord posts in PR-7; this accessor is the opt-in seam. */
+    public static boolean hotspotsInDigest() {
+        try {
+            return HOTSPOTS_IN_DIGEST.get();
         } catch (IllegalStateException notLoaded) {
             return false;
         }

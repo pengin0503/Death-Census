@@ -337,6 +337,48 @@ public final class CensusCommands {
             root.then(nemesis);
         }
 
+        // 1.4.0 PR-7: /dc hotspots [dimension] [today|7d|30d|all] [page] (§5), public.
+        if (Config.hotspotsEnabled()) {
+            LiteralArgumentBuilder<CommandSourceStack> hotspots = literal("hotspots")
+                    .executes(ctx -> hotspots(ctx, null, "all", 1))
+                    .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                            .executes(ctx -> hotspots(ctx, null, "all",
+                                    IntegerArgumentType.getInteger(ctx, "page"))));
+            for (String period : PERIODS) {
+                hotspots.then(literal(period)
+                        .executes(ctx -> hotspots(ctx, null, period, 1))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> hotspots(ctx, null, period,
+                                        IntegerArgumentType.getInteger(ctx, "page")))));
+            }
+            com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, String> hotspotDimension =
+                    com.mojang.brigadier.builder.RequiredArgumentBuilder
+                            .<CommandSourceStack, String>argument("dimension", StringArgumentType.word())
+                            .suggests((ctx, builder) -> SharedSuggestionProvider.suggest(
+                                    dimensionSuggestions(ctx), builder))
+                            .executes(ctx -> hotspots(ctx,
+                                    StringArgumentType.getString(ctx, "dimension"), "all", 1))
+                            .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                    .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                    .executes(ctx -> hotspots(ctx,
+                                            StringArgumentType.getString(ctx, "dimension"), "all",
+                                            IntegerArgumentType.getInteger(ctx, "page"))));
+            for (String period : PERIODS) {
+                hotspotDimension.then(literal(period)
+                        .executes(ctx -> hotspots(ctx,
+                                StringArgumentType.getString(ctx, "dimension"), period, 1))
+                        .then(com.mojang.brigadier.builder.RequiredArgumentBuilder
+                                .<CommandSourceStack, Integer>argument("page", IntegerArgumentType.integer(1))
+                                .executes(ctx -> hotspots(ctx,
+                                        StringArgumentType.getString(ctx, "dimension"), period,
+                                        IntegerArgumentType.getInteger(ctx, "page")))));
+            }
+            hotspots.then(hotspotDimension);
+            root.then(hotspots);
+        }
+
         LiteralArgumentBuilder<CommandSourceStack> statsServer = literal("server")
                 .executes(CensusCommands::serverStats);
         for (String period : PERIODS) {
@@ -997,6 +1039,9 @@ public final class CensusCommands {
         if (Config.nemesisEnabled()) {
             send(ctx, "command.deathcensus.nemesis.help");
         }
+        if (Config.hotspotsEnabled()) {
+            send(ctx, "command.deathcensus.hotspots.help");
+        }
         send(ctx, "command.deathcensus.help.stats");
         send(ctx, "command.deathcensus.help.leaderboard");
         send(ctx, "command.deathcensus.help.optout");
@@ -1467,6 +1512,106 @@ public final class CensusCommands {
             case NAMED_RIVAL -> "command.deathcensus.nemesis.table.named";
             case PVP_RIVAL -> "command.deathcensus.nemesis.table.pvp";
         };
+    }
+
+    // --------------------------------------------------------------- hotspots (§5)
+
+    /**
+     * Public-location chunk ranking. A cell is a location disclosure, so the
+     * analyzer excludes hidden-coordinate and opted-out deaths even for admins;
+     * anonymous server totals are computed elsewhere from the full snapshot.
+     */
+    private static int hotspots(CommandContext<CommandSourceStack> ctx, @Nullable String dimension,
+                                String period, int page) {
+        MinecraftServer server = server(ctx);
+        if (server == null || !Config.hotspotsEnabled()) {
+            return 0;
+        }
+        List<PlayerDeaths> snapshot = CensusData.get(server).snapshot();
+        String filter = dimension == null ? "" : dimension.trim();
+        if (filter.length() > 128 || (!filter.isEmpty() && !knownDimension(snapshot, filter))) {
+            fail(ctx, "command.deathcensus.hotspots.bad_dimension",
+                    filter.isEmpty() ? "-" : filter);
+            return 0;
+        }
+        List<PlayerDeaths> inPeriod = CensusStats.filterSince(snapshot, sinceMillis(period));
+        List<Hotspot> rows = HotspotAnalysis.groupByChunk(inPeriod, filter, 0L,
+                Config.hotspotChunkSize(), Config.hotspotMinDeaths());
+        Pagination.Page<Hotspot> p = Pagination.of(rows, page, PAGE_SIZE);
+        send(ctx, "command.deathcensus.hotspots.header",
+                filter.isEmpty() ? "*" : filter, period, rows.size(), p.page(), p.pageCount());
+        if (p.items().isEmpty()) {
+            send(ctx, "command.deathcensus.hotspots.empty");
+        }
+        for (String line : hotspotLines(p.items(), languageOf(ctx))) {
+            sendLiteral(ctx, line);
+        }
+        if (p.pageCount() > 1) {
+            send(ctx, "command.deathcensus.page.hint", p.page(), p.pageCount());
+        }
+        return 1;
+    }
+
+    /** Exact-id dimension validation, matching /dc history conventions. */
+    static boolean knownDimension(List<PlayerDeaths> snapshot, String dimension) {
+        if (snapshot == null || dimension == null) {
+            return false;
+        }
+        for (PlayerDeaths player : snapshot) {
+            if (player == null) {
+                continue;
+            }
+            for (DeathEntry death : player.deaths()) {
+                if (death != null && dimension.equals(death.dimension())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static List<String> dimensionSuggestions(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = server(ctx);
+        List<String> suggestions = new ArrayList<>();
+        if (server == null) {
+            return suggestions;
+        }
+        for (PlayerDeaths player : CensusData.get(server).snapshot()) {
+            if (player == null) {
+                continue;
+            }
+            for (DeathEntry death : player.deaths()) {
+                if (death != null && !death.dimension().isEmpty()
+                        && !suggestions.contains(death.dimension())) {
+                    suggestions.add(death.dimension());
+                }
+            }
+        }
+        return suggestions;
+    }
+
+    /** Export projection: localized coarse rows from the full unredacted snapshot. */
+    static List<String> publicHotspotLines(List<PlayerDeaths> snapshot) {
+        if (!Config.hotspotsEnabled()) {
+            return List.of();
+        }
+        return hotspotLines(HotspotAnalysis.groupByChunk(snapshot, null, 0L,
+                Config.hotspotChunkSize(), Config.hotspotMinDeaths()), ServerLang.DEFAULT_LANG);
+    }
+
+    /** Localized, already privacy-projected hotspot rows for chat, GUI and exports. */
+    static List<String> hotspotLines(List<Hotspot> rows, String language) {
+        List<String> lines = new ArrayList<>();
+        for (Hotspot hotspot : rows) {
+            if (hotspot == null) {
+                continue;
+            }
+            lines.add(ServerLang.formatForLang(language, "command.deathcensus.hotspots.row",
+                    hotspot.dimension(), hotspot.chunkX(), hotspot.chunkZ(), hotspot.count(),
+                    hotspot.topCause(), TimeFormat.formatDate(
+                            hotspot.lastEpoch(), Config.displayTimeZone())));
+        }
+        return lines;
     }
 
     // --------------------------------------------------------------- awards (§2)

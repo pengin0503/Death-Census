@@ -75,6 +75,21 @@ public interface UiContext {
         return 2;
     }
 
+    /** 1.4.0 §5: the read-only Hotspots ranking page hides when disabled. */
+    default boolean hotspotsEnabled() {
+        return true;
+    }
+
+    /** Minimum deaths in a chunk before the Hotspots page lists it. */
+    default int hotspotMinDeaths() {
+        return 3;
+    }
+
+    /** Chunk edge length used by the Hotspots page (8–32 blocks). */
+    default int hotspotChunkSize() {
+        return 16;
+    }
+
     /** Resolves a bundled lang key for a language-neutral view row. */
     default String label(String key) {
         return key;
