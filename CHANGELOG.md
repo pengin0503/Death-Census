@@ -1,30 +1,67 @@
 # Changelog
 
-## 1.2.1
+## 1.3.0
 
-This is a maintenance patch for 1.2.0: it hardens saved data, closes privacy
-gaps and fixes Discord and UI issues. There are no new features and no config
-or language-key changes; existing worlds and settings keep working as before.
+- Discord delivery: webhook sends are now retried on rate limits (HTTP 429,
+  honoring Retry-After) and temporary server errors, with exponential
+  backoff, at most four attempts and a bounded queue; several deaths in a
+  short window are combined into one message instead of one post per death,
+  while a single death still looks exactly the same as before
+- Discord channels and filters: the periodic digest can have its own webhook
+  URL (empty keeps the current channel) and can be tested with /dc discordtest
+  digest; realtime death posts can be limited to an allow-list of dimension
+  ids and to PvP-only or non-PvP deaths, while digests and season summaries
+  keep counting every death
+- Season digests: /dc digest season <from> <to> [html] posts a summary of any
+  date range to the digest webhook, with top causes, public players,
+  most-respected last words and awards, and can attach a standalone HTML
+  report
+- Shareable exports: /dc export html|json|csv [player] [--anonymize] replaces
+  player names with Player A/B/..., rounds coordinates to 64 blocks and
+  scrubs names from messages; anonymized file names never include a player
+  name
+- Granular privacy: /dc privacy <coords|opponent|discord> <on|off> and the
+  in-game privacy screen let players hide their coordinates, hide the PvP
+  opponent's name, or skip realtime Discord posts without hiding their whole
+  history; anonymous totals and self/admin detail views stay unchanged
+- Operator tools: /dc dev demo <count> generates up to 500 synthetic deaths
+  for development, but only when both the devMode config option and
+  -Ddeathcensus.dev=true are set, and always writes a safety backup first;
+  /dc import vanilla [dry-run] adds pre-install vanilla death and killed-by
+  statistics to lifetime totals for milestones without inventing history
+  records, with dry-run writing nothing
+- Permissions: admin checks now pass through a bridge with named node slots
+  reserved for a future permissions provider, but 1.3.0 still uses vanilla OP
+  level 2 exactly as before, so existing servers see no behavior change
+
+Fixes in this build:
 
 - Saved-data safety: a malformed or wrong-typed `players` container keeps the
   original data and pauses saving until an operator has taken a backup, instead
   of silently erasing the census; corrupt player entries and death records are
-  skipped with a warning while valid neighbours are kept
+  skipped with a warning while valid neighbours are kept (all four versions)
+- Vanilla death import: lifetime baselines no longer double-count deaths that
+  were trimmed or deleted, and a dry run writes nothing at all on a fresh world
+- Backups and restores: safety backups keep hidden coordinates and PvP
+  opponents exactly as stored, so a restore no longer destroys private data;
+  safety backup file names are unique even when several actions happen in the
+  same second
 - Privacy: opted-out players are now scrubbed from every public view, including
-  other players' history, the GUI, Discord posts and HTML/JSON/CSV exports;
-  anonymous totals are unchanged
-- Backups and restores: one corrupt player or death no longer aborts a whole
-  restore; safety backup file names are unique even when several actions happen
-  in the same second
-- Discord delivery: a failed or dropped digest keeps its whole time window and
-  is retried instead of losing an interval, and workers never restart after
-  shutdown
+  other players' history, the GUI, Discord posts, exports and season reports;
+  anonymized exports build their name dictionary from the whole save, so names
+  and old aliases cannot leak in single-player or opted-out-killer exports, and
+  name scrubbing is case-insensitive
+- Discord delivery: a full worker queue can no longer strand batched death
+  messages; a failed or dropped digest keeps its whole time window and is
+  retried instead of losing an interval; workers and timers never restart after
+  shutdown, the batch header reports its real time window, invalid digest URLs
+  warn only once (and show in /dc doctor), multipart boundaries cannot be forged
+  by player text, and a shutdown interrupt stops retrying immediately
+- Season posts: the admin is told the report is queued until the upload result
+  is known, instead of being told it was attached too early
 - UI: the 1.21.1 history "prev"/"next" buttons now work, dialog pagination
   accepts whitespace-padded payloads, and delete confirmations report the
   correct death number
-- Save compatibility: play-time defaults and death-record validation are now
-  consistent between the NBT and codec trees, and non-string category data no
-  longer empties a player's lifetime categories
 
 ## 1.2.0
 
