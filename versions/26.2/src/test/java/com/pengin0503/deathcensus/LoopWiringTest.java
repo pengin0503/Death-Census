@@ -131,8 +131,8 @@ class LoopWiringTest {
             assertFalse(ja.get(key).getAsString().isBlank(), "blank ja_jp entry for " + key);
         }
         assertEquals(7, keys.size());
-        assertEquals(315, en.size());
-        assertEquals(315, ja.size());
+        assertEquals(313, en.size());
+        assertEquals(313, ja.size());
         assertTrue(en.get("command.deathcensus.ui.chat.ranking_hint").getAsString().contains("loops"));
         assertTrue(ja.get("command.deathcensus.ui.chat.ranking_hint_no_awards").getAsString().contains("loops"));
     }

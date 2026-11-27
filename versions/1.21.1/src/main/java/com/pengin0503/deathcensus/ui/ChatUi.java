@@ -53,20 +53,6 @@ public final class ChatUi {
         line(viewer, line);
     }
 
-    /** The plain help text stays available alongside the chat menu on entry. */
-    public static void sendHelpLines(ServerPlayer player) {
-        line(player, ServerLang.tr(player, "command.deathcensus.help.title"));
-        line(player, ServerLang.tr(player, "command.deathcensus.help.excuse"));
-        line(player, ServerLang.tr(player, "command.deathcensus.help.history"));
-        line(player, ServerLang.tr(player, "command.deathcensus.help.stats"));
-        line(player, ServerLang.tr(player, "command.deathcensus.help.leaderboard"));
-        line(player, ServerLang.tr(player, "command.deathcensus.help.optout"));
-        line(player, ServerLang.tr(player, "command.deathcensus.help.privacy"));
-        if (new ChatUiContext(player).isAdmin()) {
-            line(player, ServerLang.tr(player, "command.deathcensus.help.admin"));
-        }
-    }
-
     /** Turns the arguments of a {@code /dc ui ...} command into a dispatch. */
     public static boolean dispatchArgs(ServerPlayer player, List<String> args) {
         Optional<UiRequest> parsed = ChatUiRequestParser.parse(player.getUUID(), args);

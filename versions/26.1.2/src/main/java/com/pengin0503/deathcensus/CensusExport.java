@@ -164,14 +164,15 @@ public final class CensusExport {
         String loopHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
                 "command.deathcensus.export.loops");
         String content = switch (format) {
+            // PR-13: JSON/CSV must carry the same opt-in loop section as HTML.
             case "json" -> ExportRenderers.toJsonWithChronicle(players, now, anonymize, includeContext,
                     allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader,
                     nemesisLines, nemesisHeader, hotspotLines, hotspotHeader,
-                    distributionLines, distributionHeader);
+                    distributionLines, distributionHeader, loopLines, loopHeader);
             case "csv" -> ExportRenderers.toCsvWithChronicle(players, anonymize, includeContext,
                     allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader,
                     nemesisLines, nemesisHeader, hotspotLines, hotspotHeader,
-                    distributionLines, distributionHeader);
+                    distributionLines, distributionHeader, loopLines, loopHeader);
             default -> ExportRenderers.toHtmlWithChronicle(players, now, zone, anonymize, includeContext,
                     contextHeader, allPlayers, awardLines, awardsHeader, chronicleLines, chronicleHeader,
                     nemesisLines, nemesisHeader, hotspotLines, hotspotHeader,

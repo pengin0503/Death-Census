@@ -441,3 +441,73 @@ logic lives in `common/`, with thin version-specific glue.
   through it, but the bridge currently returns the vanilla OP-level-2
   fallback unchanged — no node provider, config option or behavior change
   ships in 1.3.0.
+
+## 15. 1.4.0 additions
+
+The full 1.4.0 specification is `DESIGN_1.4.0.md`. This addendum summarizes
+the user-facing surface; the older sections above remain the 1.0.0 baseline.
+Everything stays server-side, redaction happens at render time, webhook URLs
+are never logged or printed, and all mutating admin commands still write a
+safety backup first. New pure logic lives in `common/`, with thin version glue
+in each of the four version trees.
+
+- **Witnesses** (§1): bounded nearby-player lists captured at death time;
+  `/dc witnesses` ranks companions, and witnesses appear on death detail.
+- **Awards / titles** (§2): derived from retained records and counters
+  (`/dc awards`); no winner history is stored.
+- **World chronicle** (§3): capped, opt-in public chronicle (`/dc chronicle`)
+  with labelled reconstruction from retained data.
+- **Nemesis** (§4) and **hotspots** (§5): public rankings derived from killer
+  fields and coordinates (`/dc nemesis`, `/dc hotspots`).
+- **Compare** (§6): `/dc compare <a> <b> [period] [--html]`; a two-column GUI
+  view and an optional standalone HTML report, with strict one-sided opt-out.
+- **Distributions** (§7): time-of-day and Y-band totals (`/dc distribution`).
+- **Death loops** (§8): consecutive return detections (`/dc loops`), transient
+  ring state only; no persisted longest-loop record.
+- **Respawn guide** (§9): self-only, transient bearings to the dropped items;
+  no command, GUI page, Discord post or export section.
+- **Near-death** (§10): bounded totem/cancel saves (`/dc neardeath`).
+- **Death context** (§11): equipment, effects, biome and weather on each death;
+  absent old data decodes as `DeathContext.EMPTY`.
+- **Doctor** (§13): `/dc doctor` reports the feature/config states, digest and
+  export seams, and aggregate counts as status words only — never secrets.
+
+New config keys (default in parentheses):
+
+| Feature | Keys |
+|---|---|
+| Witnesses | `captureWitnesses` (true), `witnessRadiusBlocks` (24), `witnessMaxPerDeath` (8), `witnessesInDiscord` (false) |
+| Context | `captureDeathContext` (true), `deathContextMaxEffects` (8), `deathContextInDiscord` (false), `deathContextInExports` (true) |
+| Awards | `awardsEnabled` (true), `awardsDefaultPeriod` (all), `awardsInDigest` (true), `awardsMinCount` (1) |
+| Chronicle | `chronicleEnabled` (true), `chronicleMaxEvents` (200), `chronicleInExport` (true), `chronicleInDiscord` (false) |
+| Nemesis | `nemesisEnabled` (true), `nemesisMinMobCount` (3), `nemesisMinNamedCount` (2), `nemesisInDigest` (false) |
+| Hotspots | `hotspotsEnabled` (true), `hotspotMinDeaths` (3), `hotspotChunkSize` (16), `hotspotsInDigest` (false) |
+| Compare | `compareEnabled` (true), `compareDefaultPeriod` (all), `compareInDiscord` (false) |
+| Distributions | `distributionsEnabled` (true), `distributionTimeBinHours` (2), `distributionYBandBlocks` (16), `distributionsInDigest` (false) |
+| Loops | `deathLoopEnabled` (true), `deathLoopMinDeaths` (3), `deathLoopWindowMinutes` (10), `deathLoopRadiusBlocks` (48), `deathLoopNotifyVictim` (true), `loopsInExport` (false), `loopsInDiscord` (false) |
+| Respawn guide | `respawnGuideEnabled` (true), `respawnGuideMaxTicks` (6000), `respawnGuideArrivalBlocks` (16), `respawnGuideRefreshTicks` (20) |
+| Near-death | `nearDeathCaptureEnabled` (true), `nearDeathDedupWindowMillis` (2000), `nearDeathMaxPerPlayer` (50), `nearDeathInDiscord` (false) |
+
+### 15.1 Integration-sweep notes (PR-13)
+
+1. **Help scope?** Every enabled 1.4.0 subcommand is listed by `/dc help`;
+   **default: include compare and a respawn-guide status line**, and make bare
+   `/dc` on 1.21.1 use the same complete renderer instead of its old short list.
+2. **Respawn guide as a command?** **Default: no** — §9 defines a self-only
+   runtime message, so help gets one informational line gated by
+   `respawnGuideEnabled` and no GUI page or command tree node is added.
+3. **Doctor detail?** **Default: status words, booleans and aggregate counts
+   only.** Config URLs are resolved to status words before display; no new
+   secret or player name is printed.
+4. **Ranking kinds?** **Default: the twelve `UiSession.RankingSelection.TYPES`
+   appear in every hint/selection list**, including `neardeath`, and `compare`
+   stays a separate two-column action (never a pseudo-ranking kind).
+5. **Orphan lang keys?** **Default: remove keys superseded by another key or
+   never rendered** (`witnesses.help`, `ui.privacy.state`, `export.compare`);
+   the final bundles hold 313 identical keys in en/ja.
+6. **Export section order?** **Default: awards → chronicle → nemesis →
+   hotspots → distributions → loops → near-death in HTML, JSON and CSV**; the
+   opt-in loop section must never differ by format.
+7. **Unreachable ranking-label cases?** **Default: leave them** — no adapter
+   generates a `compare` ranking type, so they are harmless compatibility
+   labels rather than dead navigation entries.

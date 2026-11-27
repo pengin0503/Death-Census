@@ -365,6 +365,9 @@ public final class DialogUi {
         if (Config.deathLoopEnabled()) {
             types.add("loops");
         }
+        if (Config.nearDeathCaptureEnabled()) {
+            types.add("neardeath");
+        }
         List<Input> inputs = List.of(
                 choiceInput(player, "in_type", "command.deathcensus.ui.input.type",
                         types, view.type()),

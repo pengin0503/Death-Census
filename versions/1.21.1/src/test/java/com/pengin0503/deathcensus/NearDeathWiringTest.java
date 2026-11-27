@@ -213,8 +213,8 @@ class NearDeathWiringTest {
             assertFalse(en.get(key).getAsString().isBlank(), "blank en_us entry for " + key);
             assertFalse(ja.get(key).getAsString().isBlank(), "blank ja_jp entry for " + key);
         }
-        assertEquals(315, en.size());
-        assertEquals(315, ja.size());
+        assertEquals(313, en.size());
+        assertEquals(313, ja.size());
         assertEquals(en.keySet(), ja.keySet());
     }
 }
