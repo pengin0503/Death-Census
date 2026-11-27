@@ -1,6 +1,7 @@
 package com.pengin0503.deathcensus.ui;
 
 import com.pengin0503.deathcensus.CauseClassifier;
+import com.pengin0503.deathcensus.DeathContext;
 import com.pengin0503.deathcensus.DeathCensus;
 import com.pengin0503.deathcensus.ServerLang;
 import com.pengin0503.deathcensus.TimeFormat;
@@ -219,6 +220,35 @@ public final class DialogUi {
                 actions, Optional.of(backButton(player)), COLUMNS);
     }
 
+    /** PR-3 context lines in the dialog detail view (DESIGN 1.4.0 §11). */
+    private static void appendContextLines(List<DialogBody> body, ServerPlayer player,
+                                           DeathContext context) {
+        if (context == null || context.isEmpty()) {
+            body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.context.empty")));
+            return;
+        }
+        if (!context.mainHand().isEmpty()) {
+            body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.context.main_hand",
+                    context.mainHand())));
+        }
+        if (!context.armor().isEmpty()) {
+            body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.context.armor",
+                    String.join(", ", context.armor()))));
+        }
+        if (!context.effects().isEmpty()) {
+            body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.context.effects",
+                    String.join(", ", context.effects()))));
+        }
+        if (!context.biome().isEmpty()) {
+            body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.context.biome",
+                    context.biome())));
+        }
+        if (!context.weather().isEmpty()) {
+            body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.context.weather",
+                    context.weather())));
+        }
+    }
+
     private static Dialog detailDialog(ServerPlayer player, DeathDetailView view) {
         List<DialogBody> body = new ArrayList<>();
         body.add(line(ServerLang.tr(player, "command.deathcensus.ui.detail.date", view.dateTime())));
@@ -242,6 +272,7 @@ public final class DialogUi {
                 view.witnesses().isEmpty()
                         ? ServerLang.tr(player, "command.deathcensus.ui.none")
                         : String.join(", ", view.witnesses()))));
+        appendContextLines(body, player, view.context());
         body.add(new ItemBody(causeItem(view.causeCategory()),
                 Optional.of(new PlainMessage(
                         ServerLang.tr(player, "command.deathcensus.ui.detail.item_tooltip", view.causeCategory()),

@@ -37,7 +37,8 @@ class ExportRenderersTest {
         String csv = ExportRenderers.toCsv(players);
         String expectedHeader = "player_uuid,player_name,epoch_millis,datetime_iso,game_day,play_ticks,"
                 + "survival_ticks,dimension,x,y,z,cause_category,cause_id,killer_type,killer_name,"
-                + "game_mode,experience_level,death_message,excuse,last_words,f_count,witnesses\n";
+                + "game_mode,experience_level,death_message,excuse,last_words,f_count,witnesses,"
+                + "context_main_hand,context_armor,context_effects,context_biome,context_weather\n";
         assertTrue(csv.startsWith(expectedHeader));
         assertTrue(csv.endsWith("\n"));
 
@@ -50,7 +51,7 @@ class ExportRenderersTest {
         assertTrue(csv.contains("\"Alice \"\"tried\"\" to swim, badly\""));
         assertTrue(csv.contains(",12.3,64.0,-30.6,"));
         assertTrue(csv.contains(",2026-11-24T10:15:00Z,"));
-        assertTrue(csv.contains(",\"Alice \"\"tried\"\" to swim, badly\",It was the lava's fault,See you on the other side,3,\n"));
+        assertTrue(csv.contains(",\"Alice \"\"tried\"\" to swim, badly\",It was the lava's fault,See you on the other side,3,,,,,,\n"));
     }
 
     @Test
@@ -223,5 +224,57 @@ class ExportRenderersTest {
             assertFalse(rendered.contains("outsider-uuid"), rendered);
         }
         assertEquals("Player B", Anonymizer.apply(players).get(0).deaths().get(0).witnesses().get(0).nameAtDeath());
+    }
+
+    @Test
+    void contextFieldsAppearInEveryPublicExportAndFollowRedaction() {
+        DeathContext context = new DeathContext("minecraft:sword", List.of("minecraft:helmet"),
+                List.of("minecraft:speed:1"), "minecraft:plains", "thunder");
+        DeathEntry d = new DeathEntry("u1", "Alice", T1, 3L, 1000, 600,
+                "minecraft:overworld", 10.5, 64.0, -5.25,
+                "fall", "minecraft:fall", "Alice fell", "", "", "survival", 7,
+                "", "", 2, List.of(), context);
+        List<PlayerDeaths> players = List.of(new PlayerDeaths("u1", "Alice", false, true, false, false,
+                List.of(d)));
+
+        String csv = ExportRenderers.toCsv(players);
+        String json = ExportRenderers.toJson(players, T2);
+        String html = ExportRenderers.toHtml(players, T2, ZoneOffset.UTC);
+        for (String rendered : List.of(csv, json, html)) {
+            assertTrue(rendered.contains("minecraft:sword"), rendered);
+            assertTrue(rendered.contains("minecraft:helmet"), rendered);
+            assertTrue(rendered.contains("minecraft:speed:1"), rendered);
+            assertTrue(rendered.contains("thunder"), rendered);
+            assertFalse(rendered.contains("minecraft:plains"), rendered + " (hideCoordinates redacts biome)");
+        }
+        assertTrue(csv.contains("context_main_hand,context_armor,context_effects,context_biome,context_weather"));
+        assertTrue(json.contains("\"mainHand\": \"minecraft:sword\""));
+        assertTrue(json.contains("\"biome\": \"~\""));
+        assertTrue(html.contains("<th>Context</th>"));
+        assertEquals("minecraft:plains", d.context().biome(), "source record untouched");
+
+        // Backup JSON keeps the stored biome for restore even when public views hide it.
+        String backup = ExportRenderers.toBackupJson(players, T2);
+        assertTrue(backup.contains("\"biome\": \"minecraft:plains\""), backup);
+    }
+
+    @Test
+    void exportSwitchCanOmitContextWithoutChangingOtherFields() {
+        DeathEntry d = new DeathEntry("u1", "Alice", T1, 3L, 1000, 600,
+                "d", 10.5, 64.0, -5.25, "fall", "minecraft:fall", "Alice fell",
+                "", "", "survival", 7, "", "", 2, List.of(),
+                new DeathContext("minecraft:sword", List.of(), List.of(), "minecraft:plains", "clear"));
+        List<PlayerDeaths> players = List.of(new PlayerDeaths("u1", "Alice", false, List.of(d)));
+
+        String csv = ExportRenderers.toCsv(players, false, false);
+        String json = ExportRenderers.toJson(players, T2, false, false);
+        String html = ExportRenderers.toHtml(players, T2, ZoneOffset.UTC, false, false);
+        for (String rendered : List.of(csv, json, html)) {
+            assertFalse(rendered.contains("minecraft:sword"), rendered);
+            assertFalse(rendered.contains("context_main_hand"), rendered);
+        }
+        assertTrue(csv.contains("Alice fell"));
+        assertTrue(json.contains("\"causeId\": \"minecraft:fall\""));
+        assertTrue(html.contains("<th>Witnesses</th>"));
     }
 }

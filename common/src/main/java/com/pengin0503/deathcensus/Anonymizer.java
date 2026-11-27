@@ -124,7 +124,8 @@ public final class Anonymizer {
                         scrub(d.lastWords(), secretPattern, secretReplacements),
                         d.fCount(),
                         anonymizeWitnesses(d.witnesses(), pseudoByUuid, anonUuidByUuid,
-                                pseudoByName, secretPattern, secretReplacements)));
+                                pseudoByName, secretPattern, secretReplacements),
+                        anonymizeContext(d.context(), secretPattern, secretReplacements)));
             }
             // Privacy flags are meaningless for pseudonyms and are normalized (§6).
             result.add(new PlayerDeaths(anonUuid, pseudo, false, false, false, false, redactedDeaths));
@@ -153,6 +154,40 @@ public final class Anonymizer {
                 result.add(new WitnessRef(anonUuid, pseudo));
             } else {
                 result.add(new WitnessRef("", scrub(ref.nameAtDeath(), secretPattern, secretReplacements)));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    /**
+     * PR-3: registry ids are not personal identifiers, so items/effects/weather
+     * survive anonymization. Biome is location-derived: anonymized exports drop
+     * it just as they blur coordinates, and any player text that could appear in
+     * a malformed id is scrubbed through the same secret pattern.
+     */
+    private static DeathContext anonymizeContext(DeathContext context, Pattern secretPattern,
+                                                 Map<String, String> secretReplacements) {
+        if (context == null) {
+            return DeathContext.EMPTY;
+        }
+        return new DeathContext(
+                scrub(context.mainHand(), secretPattern, secretReplacements),
+                scrubIds(context.armor(), secretPattern, secretReplacements),
+                scrubIds(context.effects(), secretPattern, secretReplacements),
+                "",
+                context.weather());
+    }
+
+    private static List<String> scrubIds(List<String> values, Pattern pattern,
+                                         Map<String, String> replacements) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>(values.size());
+        for (String value : values) {
+            String clean = scrub(value, pattern, replacements);
+            if (!clean.isEmpty()) {
+                result.add(clean);
             }
         }
         return List.copyOf(result);

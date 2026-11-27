@@ -199,4 +199,24 @@ class AnonymizerTest {
         assertNoLeaks(ExportRenderers.toJson(original, T, true), "Zed", "Beta", "Dave", beta, outsider);
         assertEquals("Beta", original.get(0).deaths().get(0).witnesses().get(0).nameAtDeath());
     }
+
+    @Test
+    void contextKeepsRegistryIdsButDropsTheLocationDerivedBiome() {
+        String uuid = "00000000-0000-0000-0000-00000000000a";
+        DeathContext context = new DeathContext(uuid, List.of("minecraft:helmet"),
+                List.of("minecraft:speed:1"), "minecraft:plains", "clear");
+        DeathEntry d = new DeathEntry(uuid, "Zed", T, 1L, 100, 100, "minecraft:overworld",
+                1.0, 2.0, 3.0, "fall", "minecraft:fall", "Zed fell",
+                "", "", "survival", 1, "", "", 0, List.of(), context);
+        List<PlayerDeaths> original = List.of(new PlayerDeaths(uuid, "Zed", false, List.of(d)));
+
+        DeathContext anon = Anonymizer.apply(original).get(0).deaths().get(0).context();
+        assertEquals("anon-1", anon.mainHand(), "player uuid used as an id is scrubbed");
+        assertEquals(List.of("minecraft:helmet"), anon.armor());
+        assertEquals(List.of("minecraft:speed:1"), anon.effects());
+        assertEquals("", anon.biome());
+        assertEquals("clear", anon.weather());
+        assertEquals("minecraft:plains", original.get(0).deaths().get(0).context().biome());
+        assertNoLeaks(ExportRenderers.toJson(original, T, true), "minecraft:plains");
+    }
 }

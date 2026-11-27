@@ -33,6 +33,7 @@ public final class DeathRedactor {
             return entry;
         }
         String killerName = effective.hidePvpOpponent() ? "" : entry.killerName();
+        DeathContext context = contextView(entry, effective, false);
         return new DeathEntry(
                 entry.playerUuid(),
                 entry.playerName(),
@@ -55,7 +56,27 @@ public final class DeathRedactor {
                 entry.lastWords(),
                 entry.fCount(),
                 entry.witnesses(),
-                entry.context());
+                context);
+    }
+
+    /**
+     * Render-time context composition (DESIGN 1.4.0 §11): biome is location
+     * derived, so a public viewer with {@code hideCoordinates} sees the existing
+     * hidden marker instead. Registry ids for items/effects and the weather word
+     * are not personal identifiers and stay visible. Self/admin see the truth;
+     * the stored record is never modified.
+     */
+    public static DeathContext contextView(DeathEntry entry, PlayerPrivacy privacy,
+                                           boolean viewerIsSelfOrAdmin) {
+        if (entry == null) {
+            return DeathContext.EMPTY;
+        }
+        DeathContext context = entry.context() == null ? DeathContext.EMPTY : entry.context();
+        PlayerPrivacy effective = privacy == null ? PlayerPrivacy.none() : privacy;
+        if (viewerIsSelfOrAdmin || !effective.hideCoordinates() || context.biome().isEmpty()) {
+            return context;
+        }
+        return context.withBiome(COORDINATE_MARKER);
     }
 
     /** True when the entry carries the NaN coordinate sentinel written by {@link #apply}. */

@@ -702,7 +702,35 @@ public final class CensusCommands {
                 + (e.excuse().isEmpty() ? "" : " · \"" + e.excuse() + "\"")
                 + (e.lastWords().isEmpty() ? "" : " · last words: \"" + e.lastWords() + "\"")
                 + (e.fCount() > 0 ? " · F x" + e.fCount() : "")
-                + witnessSuffix(raw, names, privacyById, privileged, language);
+                + witnessSuffix(raw, names, privacyById, privileged, language)
+                + contextSuffix(e.context(), language);
+    }
+
+    /** PR-3: localized context fragments appended only to the /dc history detail line. */
+    private static String contextSuffix(DeathContext context, String language) {
+        if (context == null || context.isEmpty()) {
+            return " · " + ServerLang.formatForLang(language,
+                    "command.deathcensus.ui.detail.context.empty");
+        }
+        StringBuilder sb = new StringBuilder(64);
+        appendContextPart(sb, language, "command.deathcensus.ui.detail.context.main_hand", context.mainHand());
+        appendContextPart(sb, language, "command.deathcensus.ui.detail.context.armor",
+                String.join(", ", context.armor()));
+        appendContextPart(sb, language, "command.deathcensus.ui.detail.context.effects",
+                String.join(", ", context.effects()));
+        appendContextPart(sb, language, "command.deathcensus.ui.detail.context.biome", context.biome());
+        appendContextPart(sb, language, "command.deathcensus.ui.detail.context.weather", context.weather());
+        return sb.length() == 0 ? "" : " · " + sb;
+    }
+
+    private static void appendContextPart(StringBuilder sb, String language, String key, String value) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
+        if (sb.length() > 0) {
+            sb.append(" · ");
+        }
+        sb.append(ServerLang.formatForLang(language, key, value));
     }
 
     /** The "Witnesses: A, B" detail suffix; absent when no witness was captured. */

@@ -87,10 +87,13 @@ public final class CensusExport {
         }
         long now = System.currentTimeMillis();
         ZoneId zone = Config.displayTimeZone();
+        boolean includeContext = Config.deathContextInExports();
+        String contextHeader = ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                "command.deathcensus.export.context");
         String content = switch (format) {
-            case "json" -> ExportRenderers.toJson(players, now, anonymize);
-            case "csv" -> ExportRenderers.toCsv(players, anonymize);
-            default -> ExportRenderers.toHtml(players, now, zone, anonymize);
+            case "json" -> ExportRenderers.toJson(players, now, anonymize, includeContext);
+            case "csv" -> ExportRenderers.toCsv(players, anonymize, includeContext);
+            default -> ExportRenderers.toHtml(players, now, zone, anonymize, includeContext, contextHeader);
         };
         String playerName = onlyPlayer != null && !players.isEmpty() ? players.get(0).name() : null;
         Path file = exportsDir(server).resolve(exportFileName(format, playerName, anonymize, zone));
@@ -124,7 +127,9 @@ public final class CensusExport {
             }
         }
         ZoneId zone = Config.displayTimeZone();
-        String content = ExportRenderers.toHtml(players, System.currentTimeMillis(), zone);
+        String content = ExportRenderers.toHtml(players, System.currentTimeMillis(), zone, false,
+                Config.deathContextInExports(), ServerLang.formatForLang(ServerLang.DEFAULT_LANG,
+                        "command.deathcensus.export.context"));
         Path file = exportsDir(server).resolve("season-" + range.fileNameStamp(zone) + ".html");
         try {
             Files.createDirectories(file.getParent());
